@@ -1,5 +1,16 @@
 # CUP Piemonte - controllo disponibilità automatico
 
+Sei stanco di doverti sedere lì ogni ora, aggiornare la pagina e sperare che
+per una volta compaia un appuntamento libero invece del solito "Nessun
+appuntamento disponibile"? Bene, da oggi ci pensa il checker al posto tuo.
+
+Visto che il Servizio Sanitario Nazionale non è (ancora?) in grado di
+automatizzare in modo decente qualcosa di così banale come avvisarti quando
+si libera un posto, ci ha pensato uno stanco cittadino con Python e un bot
+Telegram. Nessuna sovvenzione statale, nessuna gara d'appalto, nessun
+consulente esterno: solo uno script che controlla al posto tuo e ti scrive
+quando c'è qualcosa da prenotare.
+
 ## Cos'è
 
 È un programma Python che gira sul tuo PC. Ogni tot minuti apre un vero browser
@@ -20,13 +31,52 @@ Avvia nella interfaccia).
 C'è un'interfaccia grafica (`gui.py`, consigliata) e la versione a riga di comando
 (`checker.py`, per chi preferisce Task Scheduler).
 
+**Niente gira sul cloud, niente passa da server terzi**: tutto (browser, controllo,
+dati) resta sul tuo computer. Questo repository su GitHub contiene solo il codice:
+zero codici fiscali, zero token, zero dati personali di nessuno.
+
+## Cosa ti serve prima di iniziare
+
+- **Windows, macOS o Linux** con accesso a internet.
+- **Python 3.10 o superiore** installato.
+  - Non ce l'hai? Scaricalo da [python.org/downloads](https://www.python.org/downloads/)
+    e installalo. **Su Windows, durante l'installazione spunta la casella "Add
+    python.exe to PATH"** (è il passaggio che quasi tutti saltano e poi i comandi
+    sotto non funzionano) — poi riavvia il terminale.
+  - Per controllare se ce l'hai già, apri un terminale (PowerShell su Windows,
+    Terminale su macOS/Linux) e scrivi:
+    ```bash
+    python --version
+    ```
+    Se vedi un numero tipo `Python 3.11.x` sei a posto.
+- **Un account Telegram** (l'app che probabilmente hai già sul telefono), serve solo
+  per ricevere la notifica.
+- Il tuo **codice fiscale** e il **numero della ricetta elettronica (NRE)** che vuoi
+  monitorare (li trovi sul promemoria/ricetta dematerializzata).
+
+Non serve installare Git: basta scaricare lo ZIP del progetto.
+
+## 0. Scarica il progetto
+
+In alto in questa pagina GitHub premi il pulsante verde **"Code"** → **"Download ZIP"**,
+poi estrai la cartella `cup-piemonte-checker` dove preferisci (es. Desktop).
+
+Apri un terminale dentro quella cartella (su Windows: apri la cartella in Esplora
+File, poi scrivi `cmd` nella barra dell'indirizzo e premi Invio) e da lì copia-incolla
+i comandi dei passaggi successivi.
+
 ## 1. Installazione (una tantum)
 
+Copia e incolla questi comandi nel terminale, uno alla volta:
+
 ```bash
-cd cup-piemonte-checker
 pip install -r requirements.txt
 playwright install chromium
 ```
+
+Il primo installa le librerie Python necessarie, il secondo scarica il browser
+(Chromium) che lo script userà per navigare al posto tuo: sono solo file sul tuo PC,
+non vengono condivisi con nessuno.
 
 ## 2. Crea il bot Telegram (una tantum, ~2 minuti)
 
