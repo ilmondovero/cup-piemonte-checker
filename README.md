@@ -1,5 +1,7 @@
 # CUP Piemonte - controllo disponibilità automatico
 
+![Il checker ce la fa (al posto tuo)](banner.png)
+
 Sei stanco di doverti sedere lì ogni ora, aggiornare la pagina e sperare che
 per una volta compaia un appuntamento libero invece del solito "Nessun
 appuntamento disponibile"? Bene, da oggi ci pensa il checker al posto tuo.
