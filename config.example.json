@@ -1,0 +1,12 @@
+{
+  "codice_fiscale": "INSERISCI_QUI_IL_TUO_CODICE_FISCALE",
+  "nre": "INSERISCI_QUI_IL_NUMERO_RICETTA_ELETTRONICA",
+
+  "telegram_bot_token": "INSERISCI_QUI_IL_TOKEN_DEL_BOT",
+  "telegram_chat_id": "INSERISCI_QUI_IL_TUO_CHAT_ID",
+
+  "interval_minutes": 15,
+  "headless": false,
+
+  "_note": "Copia questo file in config.json e compila i valori sopra. config.json non va mai condiviso: contiene il tuo codice fiscale e il numero ricetta."
+}

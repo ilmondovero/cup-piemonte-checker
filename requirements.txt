@@ -1,0 +1,4 @@
+playwright>=1.47
+requests>=2.31
+pystray>=0.19
+Pillow>=10.0
