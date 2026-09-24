@@ -50,9 +50,10 @@ class Store:
         self.f = Fernet(key)
         self.hkey = hashlib.sha256(b"cup-bot-hmac|" + key).digest()
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(path)
+        self.db = sqlite3.connect(path, timeout=30)  # bot e Mini App scrivono da thread diversi
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA secure_delete = ON")  # i dati cancellati vengono sovrascritti nel file
+        self.db.execute("PRAGMA journal_mode = WAL")  # bot e Mini App leggono e scrivono senza bloccarsi a vicenda
         self.db.executescript(SCHEMA)
         self._migra()
 
@@ -97,22 +98,45 @@ class Store:
         return [self._riga(r) for r in self.db.execute("SELECT * FROM pratiche WHERE chat_id = ? ORDER BY id", (chat_id,))]
 
     def save(self, p):
+        try:
+            self._scrivi(p)
+        except sqlite3.IntegrityError:
+            self.db.rollback()
+            raise GiaRegistrata()
+        self.db.commit()
+
+    def modifica(self, pid, fn):
+        """Legge, modifica con fn(pratica) e riscrive in un'unica transazione: il bot (dopo un controllo
+        lungo) e la Mini App non si sovrascrivono le modifiche. Ritorna la pratica aggiornata o None."""
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            p = self.get(pid)
+            if p is None:
+                self.db.rollback()
+                return None
+            fn(p)
+            self._scrivi(p)
+        except sqlite3.IntegrityError:
+            self.db.rollback()
+            raise GiaRegistrata()
+        except BaseException:
+            self.db.rollback()
+            raise
+        self.db.commit()
+        return p
+
+    def _scrivi(self, p):
         dati = {k: v for k, v in p.items() if k not in BASE}
         # una ricetta in pausa perche' non piu' trovata non resta "occupata"
         coppia = self.hash(f"{p['cf']}|{p['nre']}") if p.get("cf") and p.get("nre") and not p.get("libera") else None
         valori = (p["chat_id"], p["stato"], p.get("prossimo", 0), p.get("errori", 0), p.get("creato", time.time()),
                   self.f.encrypt(json.dumps(dati).encode()), coppia)
-        try:
-            if p.get("id"):
-                self.db.execute("UPDATE pratiche SET chat_id=?, stato=?, prossimo=?, errori=?, creato=?, dati=?, coppia=? "
-                                "WHERE id=?", valori + (p["id"],))
-            else:
-                p["id"] = self.db.execute("INSERT INTO pratiche (chat_id, stato, prossimo, errori, creato, dati, coppia) "
-                                          "VALUES (?, ?, ?, ?, ?, ?, ?)", valori).lastrowid
-        except sqlite3.IntegrityError:
-            self.db.rollback()
-            raise GiaRegistrata()
-        self.db.commit()
+        if p.get("id"):
+            self.db.execute("UPDATE pratiche SET chat_id=?, stato=?, prossimo=?, errori=?, creato=?, dati=?, coppia=? "
+                            "WHERE id=?", valori + (p["id"],))
+        else:
+            p["id"] = self.db.execute("INSERT INTO pratiche (chat_id, stato, prossimo, errori, creato, dati, coppia) "
+                                      "VALUES (?, ?, ?, ?, ?, ?, ?)", valori).lastrowid
 
     def new(self, chat_id, **dati):
         p = {"chat_id": chat_id, "stato": "cf", "prossimo": 0, "errori": 0, "creato": time.time(), **dati}

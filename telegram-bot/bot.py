@@ -16,11 +16,14 @@ Configurazione da variabili d'ambiente (vedi .env.example):
     ADMIN_INTERVALLO_MIN intervallo solo per ADMIN_CHAT_ID (default come INTERVALLO_MIN, minimo 5)
     DISTANZA_PORTALE_S   secondi minimi tra due sessioni sul portale, fra tutti gli utenti (default 20)
     MODALITA_PROVA       1 = i pulsanti si fermano al riepilogo senza confermare (default 0)
+    WEBAPP_URL           indirizzo HTTPS pubblico della Mini App (facoltativa; senza, niente Mini App)
+    WEBAPP_PORTA         porta locale su cui ascolta la Mini App, dietro il reverse proxy (default 8095)
 """
 import hmac
 import json
 import logging
 import os
+import queue
 import random
 import re
 import secrets
@@ -237,7 +240,7 @@ def maschera(s, visibili=4):
 
 class Bot:
     def __init__(self, store, token, admin=None, max_utenti=30, intervallo=45, distanza=20, prova=False, contatto="",
-                 admin_intervallo=None, max_pratiche=3):
+                 admin_intervallo=None, max_pratiche=3, webapp_url=""):
         global UID_KEY
         UID_KEY = store.hkey
         self.store, self.admin, self.token, self.contatto = store, str(admin or ""), token, contatto
@@ -253,6 +256,8 @@ class Bot:
         self.offerte = {}   # id pratica -> {"token", "ts", "sessione", "slots"}: in memoria, come le sessioni del portale
         self.ultimo_portale = 0.0
         self.offset = None
+        self.webapp_url = webapp_url
+        self.coda = queue.Queue(maxsize=200)  # azioni chieste dalla Mini App: le esegue questo thread
 
     # --- Telegram -----------------------------------------------------------------------
     def redact(self, e):
@@ -323,6 +328,22 @@ class Bot:
     def intervallo_di(self, chat_id):
         return self.admin_intervallo if self.admin and str(chat_id) == self.admin else self.intervallo
 
+    def salva(self, p, *campi):
+        """Scrive solo i campi indicati sopra la versione attuale nel database: un controllo lungo non
+        cancella le modifiche fatte nel frattempo dalla Mini App (zona, automatica, pausa...)."""
+        nuovi = {k: p[k] for k in campi if k in p}
+        tolti = [k for k in campi if k not in p]
+
+        def applica(fresca):
+            fresca.update(nuovi)
+            for k in tolti:
+                fresca.pop(k, None)
+        aggiornata = self.store.modifica(p["id"], applica)
+        if aggiornata:
+            p.clear()
+            p.update(aggiornata)
+        return aggiornata
+
     def offerta_valida(self, pid):
         o = self.offerte.get(pid)
         return bool(o) and time.time() - o["ts"] <= TTL_OFFERTA
@@ -333,7 +354,7 @@ class Bot:
             res = self.portale(cup_http.check, p["cf"], p["nre"], zona_di(p))
         except (cup_http.NonTrovata, cup_http.NonAttiva) as e:
             p.update(stato="pausa", pausa_da=time.time(), libera=True)
-            self.store.save(p)
+            self.salva(p, "stato", "pausa_da", "libera")
             self.aggiorna_pannello(chat)
             self.dire(p, f"Non trovo piu' una prenotazione attiva per questa ricetta ({e}): forse e' stata "
                          "disdetta, spostata altrove o gia' effettuata. Ho sospeso i controlli.\n"
@@ -347,7 +368,7 @@ class Bot:
             p["errori"] = p.get("errori", 0) + 1
             p["ultimo"] = {"ts": time.time(), "testo": f"errore: {e}"}
             p["riassunto"] = {**(p.get("riassunto") or {}), "ts": time.time(), "errore": True}
-            self.store.save(p)
+            self.salva(p, "errori", "ultimo", "riassunto")
             self.aggiorna_pannello(chat)
             log.info("controllo %s/%s: errore %d: %s", uid(chat), p["id"], p["errori"], type(e).__name__)
             if manuale or p["errori"] in AVVISA_ERRORI:
@@ -375,7 +396,8 @@ class Bot:
         if isinstance(notificati, list):
             notificati = dict.fromkeys(notificati, 0)
         ignorati = set(p.get("ignorati", []))
-        auto = p.get("auto")
+        self.salva(p, "errori", "attuale", "ultimo", "riassunto")
+        auto = p.get("auto")  # appena riletta: se nel frattempo l'hanno spenta dall'app, niente prenotazione da solo
         if auto:
             # un solo tentativo automatico per data; le date gia' offerte col pulsante valgono comunque
             tentati = set(p.get("tentati_auto", []))
@@ -384,7 +406,7 @@ class Bot:
             if candidati:
                 slot = candidati[0]  # la piu' vicina tra quelle ammesse
                 p["tentati_auto"] = sorted(tentati | {slot.key()})
-                self.store.save(p)
+                self.salva(p, "tentati_auto")
                 self.dire(p, "⚡ Conferma automatica: ho trovato una data prima.\n\n" + descrivi(res) +
                           "\n\n" + self.regola(p))
                 if self.prenota(p, slot, res["sessione"], automatica=True) != "fallita":
@@ -398,9 +420,9 @@ class Bot:
         if nuove and self.offri(p, res, ignorati):
             notificati.update({x.key(): ora for x in res["migliori"]})
             p["notificati"] = notificati
+            self.salva(p, "notificati")
         elif manuale:
             self.dire(p, descrivi(res) + "\n\n" + self.regola(p))
-        self.store.save(p)
         self.aggiorna_pannello(chat)
         return res
 
@@ -426,8 +448,12 @@ class Bot:
         """Ritorna "ok", "fallita" o "incerta" (conferma inviata ma esito non verificato)."""
         chat = p["chat_id"]
         self.dire(p, f"Sposto la prenotazione a:\n📅 {fmt(slot.quando)}\n📍 {slot.luogo}…")
-        if not self.store.get(p["id"]):
+        attuale_db = self.store.get(p["id"])
+        if not attuale_db:
             log.info("prenotazione %s/%s annullata: dati cancellati nel frattempo", uid(chat), p["id"])
+            return "fallita"
+        if automatica and (not attuale_db.get("auto") or attuale_db["stato"] != "attivo"):
+            self.dire(p, "Nel frattempo hai spento la conferma automatica o messo in pausa: non prenoto da solo.")
             return "fallita"
         try:
             esito = self.portale(cup_http.prenota, p["cf"], p["nre"], slot, sessione=sessione,
@@ -459,7 +485,7 @@ class Bot:
         p["attuale"] = {**p.get("attuale", {}), "quando": slot.quando.isoformat(), "sede": slot.luogo.sede,
                         "ambulatorio": slot.luogo.ambulatorio, "indirizzo": slot.luogo.indirizzo}
         p["prossimo"] = time.time() + self.intervallo_di(chat) * 60
-        self.store.save(p)
+        self.salva(p, "notificati", "ignorati", "tentati_auto", "attuale", "prossimo")
         self.dire(p, f"✅ Prenotazione spostata{' (conferma automatica)' if automatica else ''}!\n"
                      f"📅 {fmt(slot.quando)}\n📍 {slot.luogo}\n\n"
                      "Arriveranno SMS/email dal CUP con il nuovo promemoria; controlla anche il codice di "
@@ -472,7 +498,7 @@ class Bot:
         """Dopo un esito incerto niente altri tentativi automatici: decide l'utente."""
         if p.get("auto"):
             p["auto"] = None
-            self.store.save(p)
+            self.salva(p, "auto")
             self.dire(p, "Per sicurezza ho disattivato la conferma automatica. Verifica la prenotazione, "
                          "poi riattivala con /auto se vuoi.")
 
@@ -569,7 +595,7 @@ class Bot:
         p.pop("attende_comune", None)
         if nuova:
             p.update(stato="attivo", prossimo=time.time() + 60)
-        self.store.save(p)
+        self.salva(p, "zona", "stessa_sede", "attende_comune", "stato", "prossimo")
         self.dire(p, f"Ok: cerco {descr_zona(zona, att)}." +
                   (f"\n\nFatto! Controllo ogni {self.intervallo_di(p['chat_id'])} minuti e ti scrivo appena esce una "
                    f"data prima del {fmt(att.quando)}.\n\n{AIUTO}" if nuova else ""))
@@ -603,7 +629,7 @@ class Bot:
             self.chiedi_auto(p)
         elif azione == "pausa":
             p.update(stato="pausa", pausa_da=time.time())
-            self.store.save(p)
+            self.salva(p, "stato", "pausa_da")
             self.aggiorna_pannello(p["chat_id"])
         elif azione == "controlla":
             self.controlla_ora(p)
@@ -611,7 +637,7 @@ class Bot:
             p.update(stato="attivo", prossimo=time.time(), errori=0)
             p.pop("libera", None)
             try:
-                self.store.save(p)
+                self.salva(p, "stato", "prossimo", "errori", "libera")
             except storemod.GiaRegistrata:
                 self.dire(p, "Nel frattempo questa ricetta e' stata registrata da un'altra chat: non posso riattivarla.")
                 return
@@ -695,6 +721,8 @@ class Bot:
             attive = [p for p in pratiche if p["stato"] in ("attivo", "pausa")]
             righe = [r for p, pulsanti in zip(attive, righe)
                      for r in ([{"text": f"👤 {self.nome(p)}", "callback_data": "pn:nome"}], pulsanti)]
+        if self.webapp_url:
+            righe = [[{"text": "📱 Apri l'app", "web_app": {"url": self.webapp_url}}]] + righe
         testo = (f"📋 Le tue ricette · aggiornato alle {adesso():%H:%M}\n\n" +
                  "\n\n".join(self.scheda(p) for p in pratiche))
         return testo, righe
@@ -772,7 +800,7 @@ class Bot:
         attende = next((p for p in pratiche if p.get("attende_comune")), None)
         if attende and (cmd or time.time() - attende["attende_comune"] > ATTESA_COMUNE):
             attende.pop("attende_comune")  # un comando o troppo tempo: la richiesta del comune decade
-            self.store.save(attende)
+            self.salva(attende, "attende_comune")
             attende = None
         if attende and not reg and not cmd:
             self.ricevi_comune(attende, testo)
@@ -907,7 +935,7 @@ class Bot:
                     p["stato"] = "comune"  # ancora in registrazione
                 else:
                     p["attende_comune"] = time.time()  # ricetta gia' attiva: cambia solo l'area, lo stato resta
-                self.store.save(p)
+                self.salva(p, "stato", "attende_comune")
                 self.dire(p, "Scrivi il comune in cui cercare, per esempio: Torino.")
                 return
             valore = {"sede": att.luogo.sede, "comune": cup_http.comune(att.luogo),
@@ -922,7 +950,7 @@ class Bot:
             togli_pulsanti()
             giorni = int(parts[2])
             p["auto"] = {"giorni": giorni} if giorni else None
-            self.store.save(p)
+            self.salva(p, "auto")
             if giorni:
                 self.dire(p, "⚡ Conferma automatica attiva: prenoto da solo la prima data prima di quella attuale.\n"
                              + self.regola(p))
@@ -933,17 +961,23 @@ class Bot:
             self.on_offerta(p, parts, togli_pulsanti)
 
     def on_offerta(self, p, parts, togli_pulsanti):
-        o = self.offerte.get(p["id"])
-        valida = o and len(parts) >= 3 and parts[2] == o["token"] and (
-            parts[0] == "x" or (len(parts) == 4 and parts[3].isdecimal() and int(parts[3]) < len(o["slots"])))
         togli_pulsanti()  # niente doppi tocchi
+        self.usa_offerta(p, parts[0], parts[2] if len(parts) > 2 else "", parts[3] if len(parts) > 3 else "")
+
+    def usa_offerta(self, p, tipo, token, indice, chiave=None):
+        """tipo "p" = prenota la data numero `indice`, "x" = ignora. Stessa strada per chat e Mini App.
+        chiave: se data (Mini App), la data a quell'indice dev'essere proprio quella mostrata all'utente."""
+        o = self.offerte.get(p["id"])
+        valida = o and token == o["token"] and (
+            tipo == "x" or (tipo == "p" and str(indice).isdecimal() and int(indice) < len(o["slots"])
+                            and (chiave is None or o["slots"][int(indice)].key() == chiave)))
         if not valida:
             self.dire(p, "Questa offerta non e' piu' valida.")
             return
         del self.offerte[p["id"]]
-        if parts[0] == "x":
+        if tipo == "x":
             p["ignorati"] = sorted(set(p.get("ignorati", [])) | {x.key() for x in o["slots"]})
-            self.store.save(p)
+            self.salva(p, "ignorati")
             self.dire(p, "Ok, non ti ripropongo queste date.")
             return
         if time.time() - o["ts"] > TTL_OFFERTA:
@@ -952,7 +986,30 @@ class Bot:
         if p["stato"] not in ("attivo", "pausa"):
             self.dire(p, "Registrazione non completa: non posso prenotare.")
             return
-        self.prenota(p, o["slots"][int(parts[3])], o["sessione"])
+        self.prenota(p, o["slots"][int(indice)], o["sessione"])
+
+    def esegui_coda(self):
+        """Azioni arrivate dalla Mini App. Ognuna porta la chat che l'ha chiesta: si ricontrolla che la
+        ricetta sia sua anche qui, non solo nella Mini App."""
+        while True:
+            try:
+                azione, chat, pid, *altro = self.coda.get_nowait()
+            except queue.Empty:
+                return
+            if azione == "pannello":  # impostazioni cambiate dalla Mini App
+                self.aggiorna_pannello(chat)
+                continue
+            p = self.della_chat(chat, pid)
+            if not p or p["stato"] not in ("attivo", "pausa"):
+                continue
+            try:
+                if azione == "controlla":
+                    self.controlla_ora(p)
+                elif azione == "offerta":
+                    self.usa_offerta(p, *altro)
+            except Exception as e:
+                log.error("coda: errore imprevisto %s\n%s", type(e).__name__, "".join(traceback.format_tb(e.__traceback__)))
+                self.alert_admin(f"Errore imprevisto in un'azione dalla Mini App: {type(e).__name__}")
 
     # --- ciclo principale ---------------------------------------------------------------
     def poll(self, timeout):
@@ -1003,7 +1060,7 @@ class Bot:
                 continue  # la sua sessione tiene la data offerta: un nuovo controllo non la vedrebbe
             p = self.store.get(pid)
             p["prossimo"] = time.time() + self.intervallo_di(p["chat_id"]) * 60 * random.uniform(0.9, 1.1)
-            self.store.save(p)
+            self.salva(p, "prossimo")
             self.controlla(p)
             return True
         return False
@@ -1017,7 +1074,11 @@ class Bot:
         if self.admin:
             self.tg("setMyCommands", scope={"type": "chat", "chat_id": int(self.admin)},
                     commands=comandi + [{"command": "admin", "description": "Statistiche del bot"}])
-        self.tg("setChatMenuButton", menu_button={"type": "commands"})
+        if self.webapp_url:
+            self.tg("setChatMenuButton", menu_button={"type": "web_app", "text": "📱 App",
+                                                       "web_app": {"url": self.webapp_url}})
+        else:
+            self.tg("setChatMenuButton", menu_button={"type": "commands"})
 
     def run(self):
         me = self.tg("getMe")
@@ -1028,8 +1089,11 @@ class Bot:
         while True:
             try:
                 self.pulizia()
+                self.esegui_coda()
                 fatto = self.controllo_pianificato()
-                self.poll(1 if fatto or self.store.due(time.time()) else 25)
+                # con la Mini App il giro e' piu' corto: le sue azioni aspettano al massimo qualche secondo
+                self.poll(1 if fatto or self.store.due(time.time()) or not self.coda.empty()
+                          else 3 if self.webapp_url else 25)
             except KeyboardInterrupt:
                 raise
             except Exception as e:
@@ -1047,7 +1111,12 @@ def main():
     bot = Bot(store, token, admin=os.environ.get("ADMIN_CHAT_ID"), max_utenti=env_int("MAX_UTENTI", 30),
               intervallo=env_int("INTERVALLO_MIN", 45), distanza=env_int("DISTANZA_PORTALE_S", 20),
               prova=os.environ.get("MODALITA_PROVA", "0") == "1", contatto=os.environ.get("CONTATTO_GESTORE", ""),
-              admin_intervallo=env_int("ADMIN_INTERVALLO_MIN", 0) or None, max_pratiche=env_int("MAX_PRATICHE", 3))
+              admin_intervallo=env_int("ADMIN_INTERVALLO_MIN", 0) or None, max_pratiche=env_int("MAX_PRATICHE", 3),
+              webapp_url=os.environ.get("WEBAPP_URL", "").strip())
+    if bot.webapp_url:
+        import webapp
+        webapp.avvia(bot, os.environ.get("DB_PATH", "data/cup.db"), os.environ.get("CUP_BOT_KEY"),
+                     porta=env_int("WEBAPP_PORTA", 8095))
     try:
         bot.run()
     except KeyboardInterrupt:

@@ -41,6 +41,31 @@ piccolo, senza Chromium.
 Comandi: `/stato`, `/controlla`, `/aggiungi`, `/dati`, `/modifica`, `/sede`, `/auto`, `/pausa`, `/riprendi`, `/cancella`,
 `/privacy`. Chi gestisce il bot ha anche `/admin`.
 
+## Mini App (facoltativa)
+
+Con `WEBAPP_URL` impostato il bot serve anche una **Mini App Telegram**. Si apre dal pulsante "📱 App"
+accanto al campo di scrittura o dal pannello in chat, e mostra le stesse cose del pannello in formato
+app. Si può: cambiare dove cercare e la conferma automatica, mettere in pausa, controllare subito e
+prenotare un'offerta aperta, con conferma nativa di Telegram.
+
+- **Accesso:** firma `initData` di Telegram, verificata a ogni richiesta con il token del bot
+  (intestazione `Authorization: tma …`). Per prenotare serve una firma di meno di 2 ore.
+- **Permessi:** ognuno vede e modifica solo le sue ricette. Codice fiscale e NRE non compaiono mai.
+- **Portale:** le azioni che toccano il portale passano dalla coda del bot. È il bot che tiene le
+  sessioni e le date bloccate, e prenota solo la data esatta che l'utente ha confermato.
+- **Sicurezza web:** server in un thread del bot, solo su `127.0.0.1`. Content Security Policy
+  rigida, limite di frequenza, nessun cookie.
+- Serve un indirizzo HTTPS pubblico: Telegram apre le Mini App solo così. Esempio con Caddy:
+
+  ```
+  app.example.org {
+      header Strict-Transport-Security "max-age=31536000"
+      reverse_proxy 127.0.0.1:8095 {
+          request_buffers 4KiB
+      }
+  }
+  ```
+
 ## Limiti da conoscere
 
 - **Conferma.** Il clic su "Conferma" replica il form del Riepilogo come lo invia il browser. Dopo la
@@ -186,5 +211,6 @@ File:
 - `cup_http.py`: client HTTP del portale (sessione, parsing, prenotazione).
 - `store.py`: archivio SQLite cifrato.
 - `bot.py`: bot Telegram.
+- `webapp.py`, `web/static/`: Mini App (htmx 4.0.0 incluso, CSS e JS senza build).
 - `deploy/`: servizio systemd e script di installazione.
 - `Dockerfile`, `docker-compose.yml`: immagine e avvio con Docker.

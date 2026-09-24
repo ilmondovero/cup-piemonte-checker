@@ -1,0 +1,109 @@
+/* Colori dal tema di Telegram (chiaro o scuro), con valori di riserva fuori da Telegram */
+:root {
+  --sfondo: var(--tg-theme-secondary-bg-color, #f2f2f7);
+  --scheda: var(--tg-theme-section-bg-color, var(--tg-theme-bg-color, #ffffff));
+  --testo: var(--tg-theme-text-color, #1c1c1e);
+  --tenue: var(--tg-theme-hint-color, #8e8e93);
+  --accento: var(--tg-theme-accent-text-color, var(--tg-theme-link-color, #2481cc));
+  --bottone: var(--tg-theme-button-color, #2481cc);
+  --bottone-testo: var(--tg-theme-button-text-color, #ffffff);
+  --pericolo: var(--tg-theme-destructive-text-color, #e53935);
+  --separatore: var(--tg-theme-section-separator-color, rgba(128, 128, 128, 0.2));
+  --raggio: 16px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([style*="--tg-theme"]) {
+    --sfondo: #000000; --scheda: #1c1c1e; --testo: #f2f2f7; --tenue: #8e8e93; --separatore: rgba(255, 255, 255, 0.12);
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--sfondo);
+  color: var(--testo);
+  font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  padding: 12px 12px calc(24px + env(safe-area-inset-bottom));
+  -webkit-font-smoothing: antialiased;
+}
+
+.caricamento, .vuoto, .errore { text-align: center; color: var(--tenue); margin: 32px 16px; }
+.errore { color: var(--pericolo); }
+.avviso {
+  background: var(--scheda); border-radius: var(--raggio); padding: 10px 14px; margin: 0 0 12px;
+  border-left: 4px solid var(--accento); font-size: 15px;
+}
+
+/* --- scheda di una ricetta --- */
+.scheda {
+  background: var(--scheda); border-radius: var(--raggio); padding: 16px; margin: 0 0 14px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+.scheda.in-pausa { opacity: 0.7; }
+.scheda header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.scheda h2 { font-size: 20px; margin: 0; }
+.stato {
+  font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--accento); background: color-mix(in srgb, var(--accento) 12%, transparent);
+  padding: 3px 8px; border-radius: 999px;
+}
+.in-pausa .stato { color: var(--tenue); background: color-mix(in srgb, var(--tenue) 15%, transparent); }
+.cosa { color: var(--tenue); margin: 4px 0 12px; font-size: 14px; }
+.quando { font-size: 22px; line-height: 1.25; }
+.quando .giorno { text-transform: capitalize; color: var(--tenue); font-size: 16px; }
+.dove { margin: 8px 0 12px; font-weight: 600; }
+.dove small { display: block; font-weight: 400; color: var(--tenue); font-size: 14px; margin-top: 2px; }
+
+.regole { margin: 0; border-top: 1px solid var(--separatore); }
+.regole div { display: grid; grid-template-columns: 9.5em 1fr; gap: 8px; padding: 9px 0; border-bottom: 1px solid var(--separatore); }
+.regole dt { color: var(--tenue); font-size: 14px; }
+.regole dd { margin: 0; font-size: 15px; }
+.regole dd small { display: block; color: var(--tenue); font-size: 13px; }
+
+.azioni { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
+.azioni form { margin: 0; display: contents; }
+button {
+  font: inherit; font-size: 14px; border: 0; border-radius: 12px; padding: 10px 6px; cursor: pointer;
+  background: color-mix(in srgb, var(--accento) 10%, transparent); color: var(--accento);
+}
+button:active { transform: scale(0.97); }
+button.primario { background: var(--bottone); color: var(--bottone-testo); font-weight: 600; padding: 12px 16px; width: 100%; }
+button.secondario { background: transparent; color: var(--tenue); width: 100%; }
+
+/* --- offerta: data migliore da prenotare --- */
+.offerta {
+  border-radius: 12px; padding: 12px; margin: 0 0 12px;
+  background: color-mix(in srgb, #34c759 12%, var(--scheda)); border: 1px solid color-mix(in srgb, #34c759 40%, transparent);
+}
+.offerta h3 { margin: 0 0 8px; font-size: 16px; }
+.offerta ul { list-style: none; margin: 0; padding: 0; }
+.offerta li { padding: 8px 0; border-bottom: 1px solid var(--separatore); }
+.offerta li .quando { font-size: 18px; font-weight: 600; display: block; }
+.offerta li small { display: block; color: var(--tenue); margin: 2px 0 8px; }
+.offerta > small { display: block; color: var(--tenue); margin-top: 6px; font-size: 13px; }
+
+/* --- foglio dal basso per le impostazioni --- */
+#velo { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); z-index: 10; }
+#foglio {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 11; max-height: 85vh; overflow: auto;
+  background: var(--scheda); border-radius: 20px 20px 0 0; padding: 20px 16px calc(20px + env(safe-area-inset-bottom));
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.15); animation: sale 0.18s ease-out;
+}
+@keyframes sale { from { transform: translateY(30px); opacity: 0; } to { transform: none; opacity: 1; } }
+#foglio h2 { margin: 0 0 6px; font-size: 18px; }
+.nota { color: var(--tenue); font-size: 14px; margin: 0 0 12px; }
+.scelte { display: grid; gap: 8px; }
+.scelta {
+  display: flex; gap: 10px; align-items: flex-start; padding: 12px; border-radius: 12px;
+  background: var(--sfondo); cursor: pointer;
+}
+.scelta input[type="radio"] { margin-top: 3px; accent-color: var(--bottone); }
+.scelta input[type="text"] {
+  display: block; width: 100%; margin-top: 8px; font: inherit; padding: 8px 10px; border-radius: 8px;
+  border: 1px solid var(--separatore); background: var(--scheda); color: var(--testo);
+}
+
+@media (max-width: 360px) {
+  .azioni { grid-template-columns: repeat(2, 1fr); }
+  .regole div { grid-template-columns: 1fr; gap: 2px; }
+}
