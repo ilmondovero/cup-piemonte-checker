@@ -16,21 +16,28 @@ libera una data **prima** della tua prenotazione e, se vuoi, la sposta per te.
 - **Pulsante "Prenota".** Quando esce una data migliore arriva un messaggio con data, ora e luogo; un
   tocco sposta la prenotazione. Poi il bot verifica con una sessione nuova che lo spostamento sia
   avvenuto davvero.
+- **Dove cercare.** Stessa sede, un comune, la provincia o ovunque proponga il CUP. Per comune e
+  provincia il bot estende l'area di ricerca del portale, così vede anche le aziende sanitarie lontane.
+- **Più ricette per chat.** Con `/aggiungi` si segue anche la ricetta di un familiare, con nome, area e
+  impostazioni proprie.
 - **Conferma automatica facoltativa (`/auto`).** Il bot prenota da solo la prima data migliore,
   rispettando le sedi scelte e un anticipo minimo.
+- **Mini App facoltativa.** Un'app dentro Telegram per gestire le ricette: aggiungere, cambiare e
+  cancellare, scegliere dove cercare, vedere tutte le date dell'ultimo controllo e prenotarne una con un
+  tocco, storico della prima data utile. Serve un indirizzo HTTPS pubblico.
 - **Dati protetti.** Codice fiscale e ricetta sono cifrati nel database, e i messaggi che li contengono
   vengono cancellati dalla chat. L'utente ha `/dati`, `/modifica` e `/cancella`. I dati si cancellano
   da soli quando la visita è passata.
 
-Comandi: `/stato` `/controlla` `/dati` `/modifica` `/sede` `/auto` `/pausa` `/riprendi` `/cancella`
-`/privacy` `/help`.
+Comandi: `/stato` `/controlla` `/aggiungi` `/dati` `/modifica` `/sede` `/auto` `/pausa` `/riprendi`
+`/cancella` `/privacy` `/help`.
 
 Funziona per appuntamenti **già prenotati** sul CUP: anticipa una prenotazione esistente.
 
 ### Installazione su qualsiasi VPS
 
 Basta una VPS Linux piccola (1 vCPU, 512 MB). **Non servono porte aperte, dominio o certificati**: al
-bot basta la connessione in uscita. Crea il bot con [@BotFather](https://t.me/BotFather), poi scegli:
+bot basta la connessione in uscita. Solo la Mini App, se la vuoi, richiede un indirizzo HTTPS. Crea il bot con [@BotFather](https://t.me/BotFather), poi scegli:
 
 **Debian / Ubuntu (systemd)**, da root:
 

@@ -44,17 +44,41 @@ Comandi: `/stato`, `/controlla`, `/aggiungi`, `/dati`, `/modifica`, `/sede`, `/a
 ## Mini App (facoltativa)
 
 Con `WEBAPP_URL` impostato il bot serve anche una **Mini App Telegram**. Si apre dal pulsante "📱 App"
-accanto al campo di scrittura o dal pannello in chat, e mostra le stesse cose del pannello in formato
-app. Si può: cambiare dove cercare e la conferma automatica, mettere in pausa, controllare subito e
-prenotare un'offerta aperta, con conferma nativa di Telegram.
+accanto al campo di scrittura o dal pannello in chat. Ogni ricetta ha la sua scheda con prenotazione
+attuale, area di ricerca, ultimo controllo e ora del prossimo. Dall'app si può fare tutto quello che si
+fa in chat:
+
+- **Ricette.** Aggiungere una ricetta (codice fiscale, NRE, nome; per il primo utente anche il consenso
+  all'informativa), cambiarla, rinominarla, cancellarla. C'è anche "cancella tutti i miei dati". La
+  ricerca sul portale la fa il bot e l'app aspetta il risultato.
+- **Dove cercare.** Stessa sede, comune, provincia, ovunque, oppure una delle sedi già viste nei
+  controlli. I comuni visti compaiono come suggerimenti.
+- **Date viste.** Tutte le date dell'ultimo controllo, divise in "prima della tua, dove cerchi", "dove
+  cerchi ma dopo la tua" e "fuori da dove cerchi". Finché la sessione del controllo è valida (20
+  minuti) ogni data si prenota con un tocco e la conferma nativa di Telegram, anche fuori area o più
+  tardi dell'attuale: è una scelta esplicita dell'utente, e valgono gli stessi controlli sul Riepilogo
+  e dopo la conferma. Poi c'è "🔄 Aggiorna le date". Un tocco su un comune restringe la ricerca lì.
+- **Storico.** La prima data utile degli ultimi 7 giorni, in grafico e in tabella.
+- **Altro.** Conferma automatica, pausa, "controlla ora", prenotazione di un'offerta aperta.
+- **Admin** (solo `ADMIN_CHAT_ID`): contatori e tempi delle sessioni sul portale degli ultimi 7
+  giorni. Le metriche stanno nel database (solo orario, durata ed esito, nessun dato personale), quindi
+  sopravvivono ai riavvii.
+
+Come è protetta:
 
 - **Accesso:** firma `initData` di Telegram, verificata a ogni richiesta con il token del bot
-  (intestazione `Authorization: tma …`). Per prenotare serve una firma di meno di 2 ore.
+  (intestazione `Authorization: tma …`). Per prenotare, cambiare o cancellare dati serve una firma di
+  meno di 2 ore.
 - **Permessi:** ognuno vede e modifica solo le sue ricette. Codice fiscale e NRE non compaiono mai.
-- **Portale:** le azioni che toccano il portale passano dalla coda del bot. È il bot che tiene le
-  sessioni e le date bloccate, e prenota solo la data esatta che l'utente ha confermato.
+- **Portale:** le azioni che toccano il portale (cercare una ricetta, controllare, prenotare) passano
+  dalla coda del bot. È il bot che tiene le sessioni e le date bloccate, e prenota solo la data esatta
+  che l'utente ha confermato, e solo se la prenotazione mostrata nell'app è ancora quella attuale.
+- **Limiti:** una ricerca di ricetta alla volta e al massimo 10 al giorno per chat; il bot esegue al
+  massimo 20 azioni dell'app per giro; il tetto utenti viene ricontrollato all'attivazione.
 - **Sicurezza web:** server in un thread del bot, solo su `127.0.0.1`. Content Security Policy
-  rigida, limite di frequenza, nessun cookie.
+  rigida, limite di frequenza, nessun cookie. CSS e JS hanno un hash del contenuto nell'indirizzo
+  (`?v=…`) e sono serviti come immutabili, così dopo un aggiornamento Telegram non tiene la versione
+  vecchia in cache.
 - Serve un indirizzo HTTPS pubblico: Telegram apre le Mini App solo così. Esempio con Caddy:
 
   ```
@@ -123,7 +147,8 @@ Va bene **qualsiasi VPS Linux**, anche la più piccola:
 - 1 vCPU e 512 MB di RAM bastano (il bot occupa circa 25 MB);
 - niente browser, niente database esterno;
 - **nessuna porta in ingresso, dominio o certificato**: il bot usa il long polling di Telegram, quindi
-  gli serve solo la connessione in uscita verso `api.telegram.org` e `cup.isan.csi.it`.
+  gli serve solo la connessione in uscita verso `api.telegram.org` e `cup.isan.csi.it`. Fa eccezione
+  la Mini App facoltativa, che vuole un indirizzo HTTPS pubblico (vedi sopra).
 
 Prima di tutto crea il bot con [@BotFather](https://t.me/BotFather) (`/newbot`) e copia il token.
 
@@ -196,6 +221,8 @@ database sta nel volume `cup-data`. Per aggiornare: `git pull && docker compose 
 | `ADMIN_INTERVALLO_MIN` | come sopra | Intervallo solo per `ADMIN_CHAT_ID` (minimo 5) |
 | `DISTANZA_PORTALE_S` | 20 | Secondi minimi tra due sessioni sul portale, fra tutti gli utenti |
 | `MODALITA_PROVA` | 0 | 1 = i pulsanti si fermano al Riepilogo senza confermare |
+| `WEBAPP_URL` | — | Indirizzo HTTPS pubblico della Mini App; vuoto = Mini App spenta |
+| `WEBAPP_PORTA` | 8095 | Porta locale (`127.0.0.1`) a cui il reverse proxy inoltra la Mini App |
 
 ## Sviluppo
 
