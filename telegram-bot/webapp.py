@@ -796,7 +796,7 @@ class App:
         chat_attive = s.chat_count()
         per_stato = dict(s.db.execute("SELECT stato, COUNT(*) FROM pratiche GROUP BY stato").fetchall())
         ora = time.time()
-        metriche = list(self.bot.metriche)
+        metriche, prima = s.metriche(ora - 86400)  # dal database: i riavvii del bot non le azzerano
 
         def finestra(sec):
             m = [x for x in metriche if x[0] > ora - sec]
@@ -820,6 +820,7 @@ class App:
   {tile(offerte, "offerte aperte")}
   {tile(self.bot.coda.qsize(), "azioni in coda")}
 </div>
+<p class="nota">{e("Dati dal " + botmod.orario(prima).strftime("%d/%m %H:%M") if prima else "Ancora nessuna sessione sul portale registrata.")}</p>
 <h3>Portale, ultima ora</h3>
 <div class="tiles">
   {tile(n1, "sessioni")}

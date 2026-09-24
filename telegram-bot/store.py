@@ -29,6 +29,12 @@ CREATE TABLE IF NOT EXISTS pratiche (
     coppia    TEXT UNIQUE                 -- HMAC di codice fiscale + NRE: una ricetta, una sola pratica
 );
 CREATE INDEX IF NOT EXISTS ix_pratiche_chat ON pratiche(chat_id);
+CREATE TABLE IF NOT EXISTS metriche (
+    ts       REAL NOT NULL,              -- inizio di una sessione sul portale (niente dati personali)
+    durata   REAL NOT NULL,
+    riuscita INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_metriche_ts ON metriche(ts);
 CREATE TABLE IF NOT EXISTS pannelli (
     chat_id    INTEGER PRIMARY KEY,
     message_id INTEGER NOT NULL           -- messaggio fissato che il bot aggiorna con lo stato delle ricette
@@ -193,6 +199,17 @@ class Store:
         if via:
             self._vacuum()
         return via
+
+    def metrica(self, ts, durata, riuscita, tieni_giorni=7):
+        self.db.execute("INSERT INTO metriche (ts, durata, riuscita) VALUES (?, ?, ?)", (ts, durata, int(riuscita)))
+        self.db.execute("DELETE FROM metriche WHERE ts < ?", (ts - tieni_giorni * 86400,))
+        self.db.commit()
+
+    def metriche(self, dal):
+        """[(ts, durata, riuscita)] dal momento indicato, e l'ora della metrica piu' vecchia conservata."""
+        righe = [tuple(r) for r in self.db.execute("SELECT ts, durata, riuscita FROM metriche WHERE ts >= ? ORDER BY ts", (dal,))]
+        prima = self.db.execute("SELECT MIN(ts) FROM metriche").fetchone()[0]
+        return righe, prima
 
     def due(self, now):
         """Pratiche attive il cui controllo e' scaduto, dalla piu' in ritardo."""

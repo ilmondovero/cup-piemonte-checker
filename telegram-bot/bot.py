@@ -341,6 +341,10 @@ class Bot:
         finally:
             self.ultimo_portale = time.time()
             self.metriche.append((inizio, self.ultimo_portale - inizio, riuscita))
+            try:
+                self.store.metrica(inizio, self.ultimo_portale - inizio, riuscita)  # sopravvive ai riavvii
+            except Exception as e:
+                log.warning("metrica non salvata: %s", type(e).__name__)
 
     # --- controllo periodico ------------------------------------------------------------
     def intervallo_di(self, chat_id):

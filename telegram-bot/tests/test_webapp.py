@@ -454,3 +454,14 @@ def test_chiave_doppia_non_si_prenota(app):
     s["slots"] = s["slots"] + [s["slots"][0]]  # due date con la stessa chiave
     att = b.store.get(fam["id"])["attuale"]["quando"]
     assert b.prenota_vista(b.store.get(fam["id"]), s["slots"][0].key(), att) == "fallita" and not b.chiamate
+
+
+def test_metriche_sopravvivono_al_riavvio(app):
+    b = app.bot
+    b.admin = "1"
+    b.portale(lambda: None)
+    b.metriche.clear()  # come dopo un riavvio: la memoria si svuota, il database no
+    _, _, corpo = get(app, "/ui/admin", chat=1)
+    t = corpo.decode()
+    n = app.store.db.execute("SELECT COUNT(*) FROM metriche").fetchone()[0]
+    assert n >= 1 and "Dati dal" in t and f"<strong>{n}</strong><span>sessioni</span>" in t
