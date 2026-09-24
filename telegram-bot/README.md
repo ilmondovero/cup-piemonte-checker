@@ -36,8 +36,8 @@ Comandi: `/stato`, `/controlla`, `/dati`, `/modifica`, `/sede`, `/auto`, `/pausa
 
 ## Limiti da conoscere
 
-- **Conferma verificata dal vivo una volta** (settembre 2026, spostamento automatico riuscito). Dopo la
-  conferma il bot ricontrolla comunque con una sessione nuova e, se l'esito non torna, avvisa subito
+- **Conferma.** Il clic su "Conferma" replica il form del Riepilogo come lo invia il browser. Dopo la
+  conferma il bot ricontrolla sempre con una sessione nuova e, se l'esito non torna, avvisa subito
   l'utente con il numero del call center. Per provare senza rischi c'è `MODALITA_PROVA=1`.
 - **Solo appuntamenti già prenotati.** Il bot anticipa una prenotazione esistente. Non cerca il primo
   appuntamento di una ricetta mai prenotata: quel flusso del portale non è ancora mappato.
