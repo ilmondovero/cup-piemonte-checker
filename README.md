@@ -1,5 +1,10 @@
 # CUP Piemonte - controllo disponibilità automatico
 
+> **In questo fork:** la cartella [`telegram-bot/`](telegram-bot/) contiene un bot Telegram multiutente
+> **senza browser**. Parla con il portale via HTTP (il reCAPTCHA risulta disattivato lato server),
+> avvisa quando si libera una data prima della tua prenotazione e, se tocchi il pulsante, la sposta
+> per te. Si installa su un piccolo VPS. Istruzioni in [`telegram-bot/README.md`](telegram-bot/README.md).
+
 ![Il checker ce la fa (al posto tuo)](banner.png)
 
 Sei stanco di doverti sedere lì ogni ora, aggiornare la pagina e sperare che

@@ -1,0 +1,41 @@
+[Unit]
+Description=Bot Telegram CUP Piemonte
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cupbot
+Group=cupbot
+WorkingDirectory=/opt/cup-piemonte-checker/telegram-bot
+EnvironmentFile=/etc/cup-bot.env
+ExecStart=/opt/cup-piemonte-checker/telegram-bot/venv/bin/python bot.py
+Restart=always
+RestartSec=30
+
+# il database vive in /var/lib/cup-bot; il resto del sistema e' in sola lettura per il servizio
+StateDirectory=cup-bot
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target
