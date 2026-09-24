@@ -23,12 +23,15 @@ CUP = "https://cup.isan.csi.it"
 LISTA_URL = CUP + "/web/guest/lista-prenotazioni"
 RICETTA_URL = CUP + "/ricetta-dematerializzata"
 CALL_CENTER = "800 000 500"
+LENTO = 90  # secondi: la ricerca delle disponibilita' (soprattutto estendendo l'area) puo' richiedere un minuto
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36"
 
 L = "_listaprenotazioni_WAR_cupprenotazione_:prescrizioniForm"
 A = "_ricettaelettronica_WAR_cupprenotazione_:appuntamentiForm"
 AVANTI = "_ricettaelettronica_WAR_cupprenotazione_:appuntamenti-form-main"
 RIEPILOGO = "_ricettaelettronica_WAR_cupprenotazione_:riepilogoForm"
+# filtri Macrozona/Zona/Sede degli "Appuntamenti Disponibili": il browser li manda sempre, "-" = nessun filtro
+GEO = {A + f":localGeoSelectorsavailable:{n}SelectMenuavailable_input": "NO_VALUE" for n in ("macrozona", "zona", "sede")}
 
 MESI = {m: i for i, m in enumerate(
     ["gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno", "luglio",
@@ -74,9 +77,10 @@ class Prenotazione:
 
 
 class Slot:
-    def __init__(self, quando, luogo, seleziona_id):
+    def __init__(self, quando, luogo, seleziona_id, proposta=False):
         self.quando, self.luogo = quando, luogo
-        self.seleziona_id = seleziona_id  # None = e' la proposta, gia' selezionata dal portale
+        self.seleziona_id = seleziona_id  # pulsante "Seleziona"; la proposta non ne ha, e' gia' selezionata
+        self.proposta = proposta
 
     def key(self):
         return f"{self.quando:%Y%m%d%H%M}|{self.luogo.key()}"
@@ -174,7 +178,7 @@ class _Form:
         data = {form: form, "javax.faces.encodedURL": self.enc, "ice.window": self.win, "ice.view": self.view}
         data.update(fields)
         data["javax.faces.ViewState"] = self.vs
-        r = self.s.post(self.enc, data=data, timeout=60, headers={
+        r = self.s.post(self.enc, data=data, timeout=LENTO, headers={
             "Faces-Request": "partial/ajax", "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"})
         r.raise_for_status()
         return r.text
@@ -225,26 +229,29 @@ class CupSession:
             raise CupError("Data dell'appuntamento attuale non leggibile")
         return Prenotazione(quando, _luogo(riga), _cosa(riga))
 
-    def alternative(self):
-        """Slot offerti da "Sposta appuntamento": la proposta e gli "Appuntamenti Disponibili"."""
+    def alternative(self, estendi=0):
+        """Slot offerti da "Sposta appuntamento": la proposta e gli "Appuntamenti Disponibili".
+        estendi: quante volte premere "Estendi area di ricerca" (le aziende piu' lontane compaiono
+        solo se hanno posti); l'elenco finale comprende le aree precedenti."""
         sposta = re.search(r'id="(%s:[^"]*:%d:spostaButton)"' % (re.escape(L), self.riga), self.lista_xml)
         if not sposta:
             raise CupError("Pulsante 'Sposta appuntamento' non presente")
         self.lista.post({**self.search, **_event(sposta.group(1), "activate")})
-        page = self.s.get(RICETTA_URL, timeout=30).text
+        page = self.s.get(RICETTA_URL, timeout=LENTO).text  # qui il portale calcola le disponibilita': puo' essere lento
         if "Appuntamenti Proposti" not in page:
             raise CupError("Il portale non ha aperto la pagina degli appuntamenti dopo 'Sposta'")
         self.app = _Form(self.s, page, A)
         prop_html = page[page.find("Appuntamenti Proposti"):]
         q = _date(_text(prop_html[:6000]))
-        proposta = Slot(q, _luogo(prop_html), None) if q else None
+        ha_proposta = re.search(r"'%s:[^']*:0:app_selector'" % re.escape(A), page)
+        proposta = Slot(q, _luogo(prop_html), None, proposta=True) if q and ha_proposta else None
 
         # il click su "Altre disponibilita'" risale al pannello della proposta: il browser invia
-        # prima il suo app_selector (evidenzia la proposta), ed e' quella risposta che contiene
-        # il pannello Appuntamenti Disponibili
+        # prima il suo selettore (app_selector, o indisp_selector se non c'e' nessuna proposta),
+        # ed e' quella risposta che contiene il pannello Appuntamenti Disponibili
         altre = re.search(r'<div class="[^"]*\bbtn\b[^"]*" id="(%s:[^"]+)"[^>]*>(?:(?!</div>).){0,800}?Altre disponibilit'
                           % re.escape(A), page, re.S)
-        sel = re.search(r"'(%s:[^']*:0:app_selector)'" % re.escape(A), page)
+        sel = re.search(r"'(%s:[^']*:0:(?:app|indisp)_selector)'" % re.escape(A), page)
         disp_html = ""
         if altre and sel:
             for xml in (self.app.post({**_event(A, param=False), sel.group(1): sel.group(1), "javax.faces.partial.event": "click",
@@ -253,6 +260,20 @@ class CupSession:
                 if "Appuntamenti Disponibili" in _text(xml):
                     disp_html = xml[xml.find("Appuntamenti Disponibili"):]
                     break
+        for _ in range(estendi if disp_html else 0):
+            area = re.search(r'id="(%s:nextArea)"' % re.escape(A), disp_html)
+            if not area:
+                break
+            xml = self.app.post({**GEO, **_event(area.group(1), "activate"),
+                                 "javax.faces.partial.render": f"{A} _ricettaelettronica_WAR_cupprenotazione_:allMsgs"})
+            if "Appuntamenti Disponibili" not in _text(xml):
+                break
+            disp_html = xml[xml.find("Appuntamenti Disponibili"):]
+            pulisci = re.search(r"'(%s:notifyCleaner)'" % re.escape(A), xml)
+            if pulisci:  # come il browser: chiude l'avviso "area estesa"
+                self.app.post({**GEO, **_event(A, param=False), pulisci.group(1): pulisci.group(1),
+                               "javax.faces.partial.event": "click", "ice.submit.type": "ice.s",
+                               "ice.submit.serialization": "form"})
 
         slots = [proposta] if proposta else []
         # ogni slot disponibile: data, luogo e (se non e' la proposta) il suo pulsante "Seleziona"
@@ -269,11 +290,10 @@ class CupSession:
 
     def riepilogo(self, slot):
         """Seleziona lo slot e va al Riepilogo. Ritorna (testo, data letta, testo dopo la data, pagina html)."""
+        if not slot.seleziona_id and not slot.proposta:
+            raise CupError("Questa data non ha un pulsante 'Seleziona': non posso sceglierla")
         if slot.seleziona_id:
-            xml = self.app.post({A + ":localGeoSelectorsavailable:macrozonaSelectMenuavailable_input": "NO_VALUE",
-                                 A + ":localGeoSelectorsavailable:zonaSelectMenuavailable_input": "NO_VALUE",
-                                 A + ":localGeoSelectorsavailable:sedeSelectMenuavailable_input": "NO_VALUE",
-                                 **_event(slot.seleziona_id)})
+            xml = self.app.post({**GEO, **_event(slot.seleziona_id)})
             if "alert-danger" in xml:
                 raise CupError("Il portale ha rifiutato la selezione della data")
         xml = self.app.post(_event(AVANTI + ":appuntamenti-nextButton-main"), form=AVANTI)
@@ -299,10 +319,52 @@ class CupSession:
 
 
 # --- API usata dal bot ------------------------------------------------------------------
-def ammesso(slot, attuale, stessa_sede):
+ZONE = ("sede", "comune", "provincia", "tutte")  # dove l'utente accetta una data nuova
+ESTENDI_MAX = 4  # "Estendi area di ricerca" premuto al massimo tante volte (le aree lontane compaiono solo se hanno posti)
+
+
+def provincia(luogo):
+    """Sigla della provincia dall'indirizzo del portale ("Via Roma, 1 - TORINO (TO)" -> "TO")."""
+    m = re.search(r"\(([A-Z]{2})\)\s*$", luogo.indirizzo.upper())
+    return m.group(1) if m else ""
+
+
+def comune(luogo):
+    m = re.search(r"-\s*([^-()]+?)\s*\([A-Z]{2}\)\s*$", luogo.indirizzo.upper())
+    return m.group(1).strip() if m else ""
+
+
+def zona_norm(zona):
+    """{"tipo": sede|comune|provincia|tutte, "valore": ...}. Accetta anche i formati precedenti
+    (True/False = stessa sede si'/no, oppure solo il tipo come stringa)."""
+    if isinstance(zona, dict) and zona.get("tipo") in ZONE:
+        return {"tipo": zona["tipo"], "valore": zona.get("valore") or ""}
+    zona = {True: "sede", False: "tutte"}.get(zona, zona)
+    return {"tipo": zona if zona in ZONE else "sede", "valore": ""}
+
+
+def estensioni(zona):
+    """Per comune e provincia serve estendere l'area: le sedi fuori dall'azienda della prenotazione
+    compaiono solo cosi'. "sede" e "tutte" restano nell'area proposta dal CUP."""
+    return ESTENDI_MAX if zona_norm(zona)["tipo"] in ("comune", "provincia") else 0
+
+
+def ammesso(slot, attuale, zona="sede"):
+    """Se il dato che serve al confronto non si legge, la data non e' ammessa."""
+    z = zona_norm(zona)
+    tipo, rif = z["tipo"], z["valore"]
     if not slot.luogo.sede:
         return False  # luogo non leggibile: mai proporlo
-    return not stessa_sede or (bool(attuale.luogo.sede) and _norm(slot.luogo.sede) == _norm(attuale.luogo.sede))
+    if tipo == "sede":
+        rif = rif or attuale.luogo.sede
+        return bool(rif) and _norm(slot.luogo.sede) == _norm(rif)
+    if tipo == "comune":
+        rif = rif or comune(attuale.luogo)
+        return bool(rif) and _norm(comune(slot.luogo)) == _norm(rif)
+    if tipo == "provincia":
+        rif = rif or provincia(attuale.luogo)
+        return bool(rif) and provincia(slot.luogo) == rif.upper()
+    return tipo == "tutte"
 
 
 def cerca(cf, nre):
@@ -310,14 +372,15 @@ def cerca(cf, nre):
     return CupSession(cf, nre).attuale()
 
 
-def check(cf, nre, stessa_sede=True):
+def check(cf, nre, zona="sede"):
     """{"attuale": Prenotazione, "slots": [Slot], "migliori": [Slot], "sessione": CupSession}.
     La sessione tiene lo slot proposto: se c'e' una data migliore la prenotazione deve continuare li'."""
     cup = CupSession(cf, nre)
     att = cup.attuale()
-    slots = cup.alternative()
+    slots = cup.alternative(estendi=estensioni(zona))
     return {"attuale": att, "slots": slots, "sessione": cup,
-            "migliori": [x for x in slots if x.quando < att.quando and ammesso(x, att, stessa_sede)]}
+            "migliori": [x for x in slots if (x.proposta or x.seleziona_id) and x.quando < att.quando
+                         and ammesso(x, att, zona)]}
 
 
 def _verifica_riepilogo(testo, data_riep, dopo_data, slot, cosa):
@@ -332,7 +395,7 @@ def _verifica_riepilogo(testo, data_riep, dopo_data, slot, cosa):
         raise CupError("Il riepilogo riporta un luogo diverso da quello scelto")
 
 
-def prenota(cf, nre, slot, sessione=None, stessa_sede=True, dry_run=True):
+def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True):
     """Sposta la prenotazione sullo slot. sessione: quella del controllo che ha trovato lo slot
     (lo tiene bloccato per noi); se manca o fallisce si riparte da una sessione nuova.
     Con dry_run si ferma al Riepilogo. Ritorna un messaggio; CupError se un controllo fallisce."""
@@ -340,8 +403,12 @@ def prenota(cf, nre, slot, sessione=None, stessa_sede=True, dry_run=True):
     if not dry_run and slot.quando >= att.quando:
         raise CupError(f"Lo slot {slot.quando:%d/%m/%Y %H:%M} non e' prima dell'appuntamento attuale "
                        f"({att.quando:%d/%m/%Y %H:%M})")
-    if not ammesso(slot, att, stessa_sede):
-        raise CupError(f"Sede non ammessa dalle tue preferenze: {slot.luogo.sede}")
+    if not ammesso(slot, att, zona):
+        raise CupError(f"Sede non ammessa dalle tue preferenze: {slot.luogo}")
+    if not (slot.proposta or slot.seleziona_id):
+        raise CupError("Questa data non ha un pulsante 'Seleziona': non posso sceglierla")
+    if sessione is not None and sessione.search.get(L + ":IDSearchValueInput") != nre:
+        sessione = None  # sessione di un'altra ricetta: mai usarla
 
     def arriva_al_riepilogo(cup):
         s = next((x for x in cup.slots if x.key() == slot.key()), None)
@@ -358,7 +425,7 @@ def prenota(cf, nre, slot, sessione=None, stessa_sede=True, dry_run=True):
         primo_errore = str(e)
         cup = CupSession(cf, nre)
         cup.attuale()
-        cup.alternative()
+        cup.alternative(estendi=estensioni(zona))
         try:
             s, testo, data_riep, dopo, page = arriva_al_riepilogo(cup)
         except CupError as e2:

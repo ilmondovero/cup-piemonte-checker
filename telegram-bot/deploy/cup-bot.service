@@ -9,6 +9,7 @@ User=cupbot
 Group=cupbot
 WorkingDirectory=/opt/cup-piemonte-checker/telegram-bot
 EnvironmentFile=/etc/cup-bot.env
+Environment=TZ=Europe/Rome
 ExecStart=/opt/cup-piemonte-checker/telegram-bot/venv/bin/python bot.py
 Restart=always
 RestartSec=30

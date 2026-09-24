@@ -12,8 +12,15 @@ piccolo, senza Chromium.
 ## Cosa fa
 
 1. **Registrazione in chat.** Informativa e consenso, poi codice fiscale e numero ricetta (NRE). Il bot
-   verifica subito la prenotazione sul portale e mostra prestazione, data, ora e luogo. Chiede se
-   segnalare solo date nella stessa sede o in qualsiasi sede proposta dal CUP.
+   verifica subito la prenotazione sul portale e mostra prestazione, data, ora e luogo. Poi chiede
+   **dove cercare**: stessa sede, un comune (quello della prenotazione o un altro, per esempio Novara),
+   la provincia, oppure qualsiasi sede proposta dal CUP.
+   - Per comune e provincia il bot preme "Estendi area di ricerca" del portale, fino a 4 volte: le
+     aziende sanitarie lontane compaiono solo così, e solo se hanno posti. Il controllo è più lento
+     (anche un minuto e mezzo), ma vede tutta la regione.
+   - **Più ricette per chat.** Con `/aggiungi` si segue anche la ricetta di un familiare. Ogni ricetta
+     ha nome, area, conferma automatica e offerte proprie, e i messaggi portano il suo nome davanti,
+     per esempio "[Mamma]".
 2. **Controlli periodici** (default ogni 45 minuti per utente). Per ogni utente il bot apre
    *Recupera Prenotazioni → Sposta appuntamento → Altre disponibilità* e legge le date offerte.
 3. **Offerta.** Se c'è una data prima di quella attuale, invia data, ora e luogo con il pulsante
@@ -31,7 +38,7 @@ piccolo, senza Chromium.
    - Prima di attivarla il bot ricorda due cose: la data vecchia si perde, e se poi non si può andare
      bisogna disdire almeno 2 giorni lavorativi prima, altrimenti si paga la prestazione.
 
-Comandi: `/stato`, `/controlla`, `/dati`, `/modifica`, `/sede`, `/auto`, `/pausa`, `/riprendi`, `/cancella`,
+Comandi: `/stato`, `/controlla`, `/aggiungi`, `/dati`, `/modifica`, `/sede`, `/auto`, `/pausa`, `/riprendi`, `/cancella`,
 `/privacy`. Chi gestisce il bot ha anche `/admin`.
 
 ## Limiti da conoscere
@@ -158,7 +165,8 @@ database sta nel volume `cup-data`. Per aggiornare: `git pull && docker compose 
 | `DB_PATH` | `data/cup.db` | File SQLite |
 | `CONTATTO_GESTORE` | — | Contatto del gestore mostrato nell'informativa |
 | `ADMIN_CHAT_ID` | — | Chat privata del gestore: riceve gli errori e ha `/admin` |
-| `MAX_UTENTI` | 30 | Utenti registrabili al massimo |
+| `MAX_UTENTI` | 30 | Chat registrabili al massimo |
+| `MAX_PRATICHE` | 3 | Ricette seguite al massimo da una stessa chat |
 | `INTERVALLO_MIN` | 45 | Minuti tra due controlli dello stesso utente (minimo 30) |
 | `ADMIN_INTERVALLO_MIN` | come sopra | Intervallo solo per `ADMIN_CHAT_ID` (minimo 5) |
 | `DISTANZA_PORTALE_S` | 20 | Secondi minimi tra due sessioni sul portale, fra tutti gli utenti |
