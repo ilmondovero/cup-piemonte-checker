@@ -28,6 +28,11 @@ Comandi: `/stato`, `/controlla`, `/dati`, `/modifica`, `/sede`, `/pausa`, `/ripr
 
 ## Limiti da conoscere
 
+- **La conferma finale non è ancora stata usata dal vivo.** Tutto il percorso fino al Riepilogo è
+  verificato sul portale reale. Il clic su "Conferma" replica il form del Riepilogo come lo invia il
+  browser, ma non è mai stato eseguito su una prenotazione vera. Per questo, dopo la conferma, il bot
+  ricontrolla con una sessione nuova e, se l'esito non torna, avvisa subito l'utente con il numero
+  del call center. Per provare senza rischi c'è `MODALITA_PROVA=1`.
 - **Solo appuntamenti già prenotati.** Il bot anticipa una prenotazione esistente. Non cerca il primo
   appuntamento di una ricetta mai prenotata: quel flusso del portale non è ancora mappato.
 - **Ogni controllo tiene bloccata una data per ~40 minuti.** Quando si apre "Sposta appuntamento", il

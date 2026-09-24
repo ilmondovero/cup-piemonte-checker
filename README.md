@@ -4,6 +4,10 @@
 > **senza browser**. Parla con il portale via HTTP (il reCAPTCHA risulta disattivato lato server),
 > avvisa quando si libera una data prima della tua prenotazione e, se tocchi il pulsante, la sposta
 > per te. Si installa su un piccolo VPS. Istruzioni in [`telegram-bot/README.md`](telegram-bot/README.md).
+>
+> Nota: il controllo anti-bot citato qui sotto, verificato a settembre 2026, risulta disattivato.
+> Il reCAPTCHA del portale viene caricato con chiave vuota e il pulsante di ricerca invia il form
+> senza token. Per questo il bot nella cartella `telegram-bot/` funziona senza browser.
 
 ![Il checker ce la fa (al posto tuo)](banner.png)
 
