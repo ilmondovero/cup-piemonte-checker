@@ -87,39 +87,84 @@ Chi lo mette online ne è responsabile. Il codice fa questo:
 
 Non è un servizio della Regione Piemonte né di CSI Piemonte.
 
-## Installazione su un server Debian/Ubuntu
+## Installazione su una VPS
 
-1. Crea il bot con [@BotFather](https://t.me/BotFather) (`/newbot`) e copia il token.
-2. Su un server Debian/Ubuntu (basta un piccolo VPS), entra via SSH come root ed esegui:
+Va bene **qualsiasi VPS Linux**, anche la più piccola:
+- 1 vCPU e 512 MB di RAM bastano (il bot occupa circa 25 MB);
+- niente browser, niente database esterno;
+- **nessuna porta in ingresso, dominio o certificato**: il bot usa il long polling di Telegram, quindi
+  gli serve solo la connessione in uscita verso `api.telegram.org` e `cup.isan.csi.it`.
 
-   ```bash
-   apt-get update && apt-get install -y git
-   git clone https://github.com/ilmondovero/cup-piemonte-checker /opt/cup-piemonte-checker
-   # leggi lo script prima di eseguirlo come root
-   bash /opt/cup-piemonte-checker/telegram-bot/deploy/install.sh https://github.com/ilmondovero/cup-piemonte-checker
-   ```
+Prima di tutto crea il bot con [@BotFather](https://t.me/BotFather) (`/newbot`) e copia il token.
 
-   Lo script crea l'utente di sistema `cupbot`, il virtualenv e il servizio systemd. Crea anche
-   `/etc/cup-bot.env` (permessi 600) con una **chiave di cifratura nuova**.
-3. **Salva una copia di `CUP_BOT_KEY`** in un posto sicuro: senza, il database non è più leggibile.
-   Poi inserisci il token e, se vuoi, il tuo chat id come `ADMIN_CHAT_ID`:
+### Opzione A: Debian / Ubuntu con systemd
 
-   ```bash
-   nano /etc/cup-bot.env
-   systemctl enable --now cup-bot
-   journalctl -u cup-bot -f
-   ```
+Entra via SSH come root ed esegui:
 
-4. Aggiornamenti: `bash /opt/cup-piemonte-checker/telegram-bot/deploy/install.sh <url> [tag-o-commit]`.
-   Senza tag fa pull dell'ultima versione, con un tag o un commit si ferma su quella. In entrambi i casi
-   riavvia il servizio.
+```bash
+apt-get update && apt-get install -y git
+git clone https://github.com/ilmondovero/cup-piemonte-checker /opt/cup-piemonte-checker
+# leggi lo script prima di eseguirlo come root
+bash /opt/cup-piemonte-checker/telegram-bot/deploy/install.sh https://github.com/ilmondovero/cup-piemonte-checker
+```
 
-Il database sta in `/var/lib/cup-bot/cup.db`. Se fai un backup, tienilo separato dalla chiave. Gli
-snapshot del server copiano anche `/etc/cup-bot.env`, quindi la cifratura non protegge gli snapshot.
+Lo script crea l'utente di sistema `cupbot`, il virtualenv e il servizio systemd (con restrizioni di
+sicurezza). Crea anche `/etc/cup-bot.env` (permessi 600) con una **chiave di cifratura nuova**. Poi:
 
-Consigliato: limita la durata dei log con `MaxRetentionSec=14day` in `/etc/systemd/journald.conf`,
-poi `systemctl restart systemd-journald`. Imposta anche `CONTATTO_GESTORE` in `/etc/cup-bot.env`:
-l'informativa lo mostra agli utenti. `ADMIN_CHAT_ID` deve essere una chat privata, non un gruppo.
+```bash
+nano /etc/cup-bot.env            # inserisci TELEGRAM_BOT_TOKEN (e le opzioni che vuoi)
+systemctl enable --now cup-bot
+journalctl -u cup-bot -f         # log
+```
+
+Per aggiornare: `bash /opt/cup-piemonte-checker/telegram-bot/deploy/install.sh <url> [tag-o-commit]`.
+Senza tag fa pull dell'ultima versione, con un tag o un commit si ferma su quella. In entrambi i casi
+riavvia il servizio. Il database sta in `/var/lib/cup-bot/cup.db`.
+
+### Opzione B: Docker (qualsiasi distribuzione)
+
+Serve Docker con Compose (`docker compose` oppure `docker-compose`).
+
+```bash
+git clone https://github.com/ilmondovero/cup-piemonte-checker
+cd cup-piemonte-checker/telegram-bot
+cp .env.example .env && chmod 600 .env
+docker compose build
+docker compose run --rm cup-bot python store.py genkey   # copia la chiave in CUP_BOT_KEY dentro .env
+nano .env                                                # inserisci TELEGRAM_BOT_TOKEN
+docker compose up -d
+docker compose logs -f
+```
+
+Il container gira come utente senza privilegi, con filesystem in sola lettura e senza capability. Il
+database sta nel volume `cup-data`. Per aggiornare: `git pull && docker compose up -d --build`.
+
+### In entrambi i casi
+
+- **Salva una copia di `CUP_BOT_KEY`** in un posto sicuro (per esempio un password manager): senza,
+  il database non è più leggibile.
+- Se fai un backup del database, tienilo separato dalla chiave. Gli snapshot della VPS copiano anche
+  il file di configurazione, quindi la cifratura non protegge gli snapshot.
+- Imposta `CONTATTO_GESTORE` (compare nell'informativa agli utenti) e, se vuoi ricevere gli errori,
+  `ADMIN_CHAT_ID` con il tuo id Telegram (lo trovi scrivendo a @userinfobot). Deve essere una chat
+  privata, non un gruppo.
+- Con systemd, limita la durata dei log: `MaxRetentionSec=14day` in `/etc/systemd/journald.conf`, poi
+  `systemctl restart systemd-journald`. Con Docker la rotazione dei log è già impostata nel compose.
+
+### Configurazione
+
+| Variabile | Default | Cosa fa |
+|---|---|---|
+| `TELEGRAM_BOT_TOKEN` | — | Token di @BotFather (obbligatoria) |
+| `CUP_BOT_KEY` | — | Chiave di cifratura del database (obbligatoria) |
+| `DB_PATH` | `data/cup.db` | File SQLite |
+| `CONTATTO_GESTORE` | — | Contatto del gestore mostrato nell'informativa |
+| `ADMIN_CHAT_ID` | — | Chat privata del gestore: riceve gli errori e ha `/admin` |
+| `MAX_UTENTI` | 30 | Utenti registrabili al massimo |
+| `INTERVALLO_MIN` | 45 | Minuti tra due controlli dello stesso utente (minimo 30) |
+| `ADMIN_INTERVALLO_MIN` | come sopra | Intervallo solo per `ADMIN_CHAT_ID` (minimo 5) |
+| `DISTANZA_PORTALE_S` | 20 | Secondi minimi tra due sessioni sul portale, fra tutti gli utenti |
+| `MODALITA_PROVA` | 0 | 1 = i pulsanti si fermano al Riepilogo senza confermare |
 
 ## Sviluppo
 
@@ -136,3 +181,4 @@ File:
 - `store.py`: archivio SQLite cifrato.
 - `bot.py`: bot Telegram.
 - `deploy/`: servizio systemd e script di installazione.
+- `Dockerfile`, `docker-compose.yml`: immagine e avvio con Docker.

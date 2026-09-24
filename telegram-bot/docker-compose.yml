@@ -1,0 +1,20 @@
+services:
+  cup-bot:
+    build: .
+    image: cup-bot
+    env_file: .env
+    environment:
+      DB_PATH: /data/cup.db   # nel container il database sta nel volume, qualunque cosa dica .env
+    volumes:
+      - cup-data:/data
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    logging:
+      driver: json-file
+      options: {max-size: "5m", max-file: "3"}
+
+volumes:
+  cup-data:

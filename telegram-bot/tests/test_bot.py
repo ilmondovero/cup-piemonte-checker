@@ -401,6 +401,17 @@ def test_intervallo_utenti_mai_sotto_il_minimo(tmp_path):
     assert botmod.Bot(s, "x", admin="1", admin_intervallo=1).admin_intervallo == botmod.MIN_INTERVALLO_ADMIN
 
 
+def test_menu_con_tutti_i_comandi(b):
+    b.admin = "999"
+    b.imposta_menu()
+    menu = {d["scope"]["type"]: [c["command"] for c in d["commands"]] for m, d in b.out if m == "setMyCommands"}
+    for scope in ("default", "all_private_chats", "chat"):
+        assert {"auto", "sede", "dati", "cancella", "help"} <= set(menu[scope])
+    assert "admin" in menu["chat"] and "admin" not in menu["default"]
+    comandi_aiuto = {w[1:].strip(",.") for w in botmod.AIUTO.split() if w.startswith("/")}
+    assert {c for c, _ in botmod.COMANDI if c != "help"} <= comandi_aiuto
+
+
 def test_pulizia(tmp_path):
     s = Store(tmp_path / "db.sqlite", Fernet.generate_key().decode())
     vecchia = s.new(1)

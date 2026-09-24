@@ -78,7 +78,7 @@ COMANDI = [("stato", "Ultimo controllo e prenotazione"), ("controlla", "Controll
            ("sede", "Cambia le sedi accettate"), ("auto", "Conferma automatica"),
            ("pausa", "Sospendi i controlli"),
            ("riprendi", "Riattiva i controlli"), ("cancella", "Elimina tutti i tuoi dati"),
-           ("privacy", "Come tratto i tuoi dati")]
+           ("privacy", "Come tratto i tuoi dati"), ("help", "Elenco dei comandi")]
 
 
 def env_int(name, default):
@@ -639,11 +639,22 @@ class Bot:
             return True
         return False
 
+    def imposta_menu(self):
+        """Menu dei comandi: per tutti, per le chat private e (con /admin) solo per chi gestisce il bot.
+        Le app Telegram lo aggiornano quando si riapre la chat."""
+        comandi = [{"command": c, "description": d} for c, d in COMANDI]
+        for scope in ({"type": "default"}, {"type": "all_private_chats"}):
+            self.tg("setMyCommands", commands=comandi, scope=scope)
+        if self.admin:
+            self.tg("setMyCommands", scope={"type": "chat", "chat_id": int(self.admin)},
+                    commands=comandi + [{"command": "admin", "description": "Statistiche del bot"}])
+        self.tg("setChatMenuButton", menu_button={"type": "commands"})
+
     def run(self):
         me = self.tg("getMe")
         if not me.get("ok"):
             raise SystemExit("Token Telegram non valido.")
-        self.tg("setMyCommands", commands=[{"command": c, "description": d} for c, d in COMANDI])
+        self.imposta_menu()
         log.info("Bot @%s avviato%s", me["result"]["username"], " in MODALITA' PROVA" if self.prova else "")
         while True:
             try:
@@ -658,6 +669,7 @@ class Bot:
 
 
 def main():
+    os.umask(0o077)  # database e file creati dal bot leggibili solo dal suo utente
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", stream=sys.stdout)
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not token:

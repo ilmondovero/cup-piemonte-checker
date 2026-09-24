@@ -1,13 +1,64 @@
 # CUP Piemonte - controllo disponibilità automatico
 
-> **In questo fork:** la cartella [`telegram-bot/`](telegram-bot/) contiene un bot Telegram multiutente
-> **senza browser**. Parla con il portale via HTTP (il reCAPTCHA risulta disattivato lato server),
-> avvisa quando si libera una data prima della tua prenotazione e, se tocchi il pulsante, la sposta
-> per te. Si installa su un piccolo VPS. Istruzioni in [`telegram-bot/README.md`](telegram-bot/README.md).
->
-> Nota: il controllo anti-bot citato qui sotto, verificato a settembre 2026, risulta disattivato.
-> Il reCAPTCHA del portale viene caricato con chiave vuota e il pulsante di ricerca invia il form
-> senza token. Per questo il bot nella cartella `telegram-bot/` funziona senza browser.
+Questo fork aggiunge un **bot Telegram multiutente che non usa il browser** e si installa su
+qualsiasi VPS. Lo script originale, con il browser, è più sotto ed è rimasto invariato.
+
+## Bot Telegram senza browser (cartella [`telegram-bot/`](telegram-bot/))
+
+Il bot controlla il portale [CUP Piemonte](https://cup.isan.csi.it/) al posto tuo. Ti avvisa quando si
+libera una data **prima** della tua prenotazione e, se vuoi, la sposta per te.
+
+- **Niente browser.** Parla con il portale via HTTP e replica le richieste che farebbe il browser. Il
+  "controllo anti-bot" di cui parla lo script originale, verificato a settembre 2026, risulta
+  disattivato: il reCAPTCHA viene caricato con chiave vuota e il form parte senza token.
+- **Multiutente, tutto in chat.** Ognuno si registra con `/start`: informativa, codice fiscale e numero
+  ricetta. Il bot verifica subito la prenotazione e mostra prestazione, data, ora e luogo.
+- **Pulsante "Prenota".** Quando esce una data migliore arriva un messaggio con data, ora e luogo; un
+  tocco sposta la prenotazione. Poi il bot verifica con una sessione nuova che lo spostamento sia
+  avvenuto davvero.
+- **Conferma automatica facoltativa (`/auto`).** Il bot prenota da solo la prima data migliore,
+  rispettando le sedi scelte e un anticipo minimo.
+- **Dati protetti.** Codice fiscale e ricetta sono cifrati nel database, e i messaggi che li contengono
+  vengono cancellati dalla chat. L'utente ha `/dati`, `/modifica` e `/cancella`. I dati si cancellano
+  da soli quando la visita è passata.
+
+Comandi: `/stato` `/controlla` `/dati` `/modifica` `/sede` `/auto` `/pausa` `/riprendi` `/cancella`
+`/privacy` `/help`.
+
+Funziona per appuntamenti **già prenotati** sul CUP: anticipa una prenotazione esistente.
+
+### Installazione su qualsiasi VPS
+
+Basta una VPS Linux piccola (1 vCPU, 512 MB). **Non servono porte aperte, dominio o certificati**: al
+bot basta la connessione in uscita. Crea il bot con [@BotFather](https://t.me/BotFather), poi scegli:
+
+**Debian / Ubuntu (systemd)**, da root:
+
+```bash
+apt-get update && apt-get install -y git
+git clone https://github.com/ilmondovero/cup-piemonte-checker /opt/cup-piemonte-checker
+bash /opt/cup-piemonte-checker/telegram-bot/deploy/install.sh https://github.com/ilmondovero/cup-piemonte-checker
+nano /etc/cup-bot.env            # inserisci TELEGRAM_BOT_TOKEN
+systemctl enable --now cup-bot
+```
+
+**Docker (qualsiasi distribuzione):**
+
+```bash
+git clone https://github.com/ilmondovero/cup-piemonte-checker && cd cup-piemonte-checker/telegram-bot
+cp .env.example .env && chmod 600 .env
+docker compose build
+docker compose run --rm cup-bot python store.py genkey   # copia la chiave in CUP_BOT_KEY dentro .env
+nano .env                                                # inserisci TELEGRAM_BOT_TOKEN
+docker compose up -d
+```
+
+Configurazione, limiti (ogni controllo tiene bloccata una data per circa 40 minuti), privacy e
+aggiornamenti: [`telegram-bot/README.md`](telegram-bot/README.md).
+
+---
+
+# Script originale (con browser)
 
 ![Il checker ce la fa (al posto tuo)](banner.png)
 
