@@ -22,6 +22,7 @@ Configurazione da variabili d'ambiente (vedi .env.example):
 import hmac
 import json
 import logging
+import collections
 import os
 import queue
 import random
@@ -47,10 +48,15 @@ MIN_INTERVALLO = 30  # minuti: ogni controllo tiene bloccata una data per un po'
 MIN_INTERVALLO_ADMIN = 5  # solo per chi gestisce il bot: come una persona che aggiorna la pagina
 PAUSA_CONTROLLA = 15 * 60  # secondi tra due /controlla della stessa ricetta
 MAX_RICERCHE_FALLITE = 5  # ricerche CF+NRE fallite per chat al giorno
+MAX_RICERCHE_APP = 10  # ricerche dalla Mini App per chat al giorno, riuscite o no: ognuna e' una sessione sul portale
+AZIONI_PER_GIRO = 20  # azioni della Mini App eseguite prima di tornare a Telegram e ai controlli
 PAUSA_MESSAGGI = 1.5  # secondi minimi tra due messaggi della stessa chat
 ANTICIPI_AUTO = (1, 3, 7)  # giorni minimi da oggi per la conferma automatica, a scelta dell'utente
 GIORNI = ["lun", "mar", "mer", "gio", "ven", "sab", "dom"]
 COMUNE_RE = re.compile(r"^[A-ZÀ-Ý][A-ZÀ-Ý' .-]{1,39}$")
+STORICO_GIORNI = 7  # quanto indietro si tiene l'andamento delle date trovate
+MAX_VISTE = 40  # date dell'ultimo controllo conservate per l'app
+MAX_LUOGHI = 80  # sedi viste nei controlli, per scegliere dove cercare dall'app
 ATTESA_COMUNE = 10 * 60  # secondi: dopo "Un altro comune…" il prossimo testo vale come comune solo per poco
 TZ = ZoneInfo("Europe/Rome")  # gli orari del portale sono italiani, anche se il server gira in UTC
 
@@ -251,6 +257,8 @@ class Bot:
         self.admin_intervallo = max(MIN_INTERVALLO_ADMIN, admin_intervallo or self.intervallo)
         self.distanza, self.prova = distanza, prova
         self.ricerche_fallite = {}  # chat_id -> [timestamp]
+        self.ricerche_app = {}      # chat_id -> [timestamp]: tutte le ricerche chieste dalla Mini App
+        self.cancellate = {}        # chat_id -> ora in cui ha cancellato tutti i dati (ricerche piu' vecchie: scartate)
         self.ultimo_msg = {}        # chat_id -> timestamp
         self.ultima_pulizia = 0.0
         self.offerte = {}   # id pratica -> {"token", "ts", "sessione", "slots"}: in memoria, come le sessioni del portale
@@ -258,6 +266,9 @@ class Bot:
         self.offset = None
         self.webapp_url = webapp_url
         self.coda = queue.Queue(maxsize=200)  # azioni chieste dalla Mini App: le esegue questo thread
+        self.risultati = {}  # esiti delle ricerche chieste dalla Mini App: token -> {"chat", "ts", "pid" | "errore"}
+        self.sessioni = {}   # id pratica -> {"ts", "sessione", "slots"}: l'ultimo controllo, per prenotare una data vista
+        self.metriche = collections.deque(maxlen=5000)  # (ora, secondi, riuscita) di ogni sessione sul portale
 
     # --- Telegram -----------------------------------------------------------------------
     def redact(self, e):
@@ -278,7 +289,7 @@ class Bot:
         pratiche = self.store.della_chat(chat_id)
         if pratiche:
             for p in pratiche:
-                self.offerte.pop(p["id"], None)
+                self.scarta(p["id"])
             self.store.delete_chat(chat_id)
             log.info("utente %s cancellato: %s", uid(chat_id), motivo)
 
@@ -319,14 +330,27 @@ class Bot:
         attesa = self.distanza - (time.time() - self.ultimo_portale)
         if attesa > 0:
             time.sleep(attesa)
+        inizio, riuscita = time.time(), False
         try:
-            return fn(*args, **kwargs)
+            risultato = fn(*args, **kwargs)
+            riuscita = True
+            return risultato
+        except (cup_http.NonTrovata, cup_http.NonAttiva):
+            riuscita = True  # il portale ha risposto: e' la ricetta che non va
+            raise
         finally:
             self.ultimo_portale = time.time()
+            self.metriche.append((inizio, self.ultimo_portale - inizio, riuscita))
 
     # --- controllo periodico ------------------------------------------------------------
     def intervallo_di(self, chat_id):
         return self.admin_intervallo if self.admin and str(chat_id) == self.admin else self.intervallo
+
+    def scarta(self, pid):
+        """Offerta aperta e sessione dell'ultimo controllo di una ricetta: via insieme (contengono i dati
+        della ricetta e tengono una sessione sul portale)."""
+        self.offerte.pop(pid, None)
+        self.sessioni.pop(pid, None)
 
     def salva(self, p, *campi):
         """Scrive solo i campi indicati sopra la versione attuale nel database: un controllo lungo non
@@ -378,8 +402,9 @@ class Bot:
             return None
 
         att = res["attuale"]
+        self.sessioni[p["id"]] = {"ts": time.time(), "sessione": res["sessione"], "slots": res["slots"]}
         if att.quando < adesso():
-            self.offerte.pop(p["id"], None)
+            self.scarta(p["id"])
             self.store.delete(p["id"])
             self.dire(p, f"La data della prenotazione ({fmt(att.quando)}) e' passata: ho cancellato i dati di "
                          "questa ricetta. Per seguirne un'altra: /aggiungi.")
@@ -387,6 +412,7 @@ class Bot:
             return None
         zona = zona_di(p)
         nell_area = [x for x in res["slots"] if cup_http.ammesso(x, att, zona)]
+        self.registra_viste(p, res, nell_area)
         p.update(errori=0, attuale=pren_to_dict(att), ultimo={"ts": time.time(), "testo": descrivi(res)},
                  riassunto={"ts": time.time(), "viste": len(res["slots"]), "area": len(nell_area),
                             "migliori": len(res["migliori"]), "estesa": bool(cup_http.estensioni(zona)),
@@ -396,7 +422,7 @@ class Bot:
         if isinstance(notificati, list):
             notificati = dict.fromkeys(notificati, 0)
         ignorati = set(p.get("ignorati", []))
-        self.salva(p, "errori", "attuale", "ultimo", "riassunto")
+        self.salva(p, "errori", "attuale", "ultimo", "riassunto", "viste", "luoghi", "storico")
         auto = p.get("auto")  # appena riletta: se nel frattempo l'hanno spenta dall'app, niente prenotazione da solo
         if auto:
             # un solo tentativo automatico per data; le date gia' offerte col pulsante valgono comunque
@@ -426,6 +452,28 @@ class Bot:
         self.aggiorna_pannello(chat)
         return res
 
+    def registra_viste(self, p, res, nell_area):
+        """Per la Mini App: date dell'ultimo controllo, sedi viste finora e andamento della prima data utile."""
+        migliori = {x.key() for x in res["migliori"]}
+        area = {x.key() for x in nell_area}
+        p["viste"] = [{"q": x.quando.isoformat(), "sede": x.luogo.sede, "amb": x.luogo.ambulatorio,
+                       "ind": x.luogo.indirizzo, "area": x.key() in area, "ok": x.key() in migliori,
+                       "k": x.key(), "sel": bool(x.proposta or x.seleziona_id)}
+                      for x in res["slots"][:MAX_VISTE]]
+        luoghi = {l["sede"]: l for l in p.get("luoghi", [])}
+        for x in res["slots"]:
+            luoghi[x.luogo.sede] = {"sede": x.luogo.sede, "comune": cup_http.comune(x.luogo),
+                                    "prov": cup_http.provincia(x.luogo)}
+        p["luoghi"] = list(luoghi.values())[-MAX_LUOGHI:]
+        ora = time.time()
+        voce = {"t": ora, "a": nell_area[0].quando.isoformat() if nell_area else None,
+                "r": res["attuale"].quando.isoformat()}
+        storico = [v for v in p.get("storico", []) if v["t"] > ora - STORICO_GIORNI * 86400]
+        # si aggiunge un punto quando qualcosa cambia, o almeno una volta l'ora
+        if not storico or (storico[-1]["a"], storico[-1]["r"]) != (voce["a"], voce["r"]) or ora - storico[-1]["t"] > 3600:
+            storico.append(voce)
+        p["storico"] = storico[-400:]
+
     def offri(self, p, res, ignorati=()):
         """Messaggio con un pulsante per ogni data migliore (max 3). La sessione del controllo resta
         in memoria: e' lei che tiene bloccata la data proposta."""
@@ -444,9 +492,31 @@ class Bot:
             self.offerte[pid] = {"token": token, "ts": time.time(), "sessione": res["sessione"], "slots": slots}
         return ok
 
-    def prenota(self, p, slot, sessione, automatica=False):
+    def prenota_vista(self, p, chiave, attuale_vista=""):
+        """Una data scelta dall'utente tra quelle viste (Mini App), anche fuori da dove cerca o piu' tardi.
+        attuale_vista: la prenotazione che l'utente aveva sullo schermo quando ha confermato."""
+        if (p.get("attuale") or {}).get("quando") != attuale_vista:
+            self.dire(p, "La prenotazione è cambiata nel frattempo: riapri le date e scegli di nuovo.")
+            return "fallita"
+        s = self.sessioni.get(p["id"])
+        if not s or time.time() - s["ts"] > TTL_OFFERTA:
+            self.dire(p, "Le date viste sono di un controllo vecchio: tocca 🔄 Ora e riprova.")
+            return "fallita"
+        uguali = [x for x in s["slots"] if x.key() == chiave]
+        if len(uguali) != 1 or not (uguali[0].proposta or uguali[0].seleziona_id):
+            self.dire(p, "Questa data non è più prenotabile dal controllo di prima: tocca 🔄 Ora e riprova.")
+            return "fallita"
+        slot = uguali[0]
+        if slot.quando == attuale_di(p).quando:
+            self.dire(p, "Questa data è alla stessa ora della prenotazione attuale: non la sposto.")
+            return "fallita"
+        self.scarta(p["id"])
+        return self.prenota(p, slot, s["sessione"], libera=True)
+
+    def prenota(self, p, slot, sessione, automatica=False, libera=False):
         """Ritorna "ok", "fallita" o "incerta" (conferma inviata ma esito non verificato)."""
         chat = p["chat_id"]
+        self.sessioni.pop(p["id"], None)  # la sessione va al Riepilogo: nessun'altra data la riusa
         self.dire(p, f"Sposto la prenotazione a:\n📅 {fmt(slot.quando)}\n📍 {slot.luogo}…")
         attuale_db = self.store.get(p["id"])
         if not attuale_db:
@@ -457,7 +527,7 @@ class Bot:
             return "fallita"
         try:
             esito = self.portale(cup_http.prenota, p["cf"], p["nre"], slot, sessione=sessione,
-                                 zona=zona_di(p), dry_run=self.prova)
+                                 zona=zona_di(p), dry_run=self.prova, libera=libera)
         except (cup_http.CupError, requests.RequestException) as e:
             urgente = "Conferma inviata" in str(e)
             self.dire(p, ("🚨 " if urgente else "❌ Non spostata: ") + str(e))
@@ -506,6 +576,8 @@ class Bot:
     def chiedi_cf(self, p):
         p.pop("nre", None)  # la coppia CF+NRE si riforma solo a ricerca riuscita
         p.pop("attende_comune", None)
+        p.pop("viste", None)  # le date viste erano della ricetta vecchia
+        self.scarta(p["id"])
         p.pop("libera", None)
         p.update(stato="cf", creato=time.time(), auto=None, notificati={}, ignorati=[], tentati_auto=[])
         self.store.save(p)
@@ -587,9 +659,17 @@ class Bot:
         self.dire(p, "Dove cerco le date?\n(Comune e provincia allargano la ricerca con \"Estendi area\" del "
                      "portale: il controllo e' piu' lento ma vede anche le altre aziende sanitarie.)", righe)
 
+    def posto_libero(self, chat):
+        """Una chat nuova si attiva solo se c'e' posto (il limite si ricontrolla all'attivazione)."""
+        gia_attiva = any(x["stato"] in ("attivo", "pausa") for x in self.store.della_chat(chat))
+        return gia_attiva or self.store.chat_count() < self.max_utenti
+
     def imposta_zona(self, p, zona):
         att = attuale_di(p)
         nuova = p["stato"] in REGISTRAZIONE
+        if nuova and not self.posto_libero(p["chat_id"]):
+            self.dire(p, "Mi dispiace, nel frattempo i posti sono finiti: al momento non accetto nuovi utenti.")
+            return
         p["zona"] = zona
         p.pop("stessa_sede", None)
         p.pop("attende_comune", None)
@@ -643,7 +723,7 @@ class Bot:
                 return
             self.aggiorna_pannello(p["chat_id"])
         elif azione == "modifica":
-            self.offerte.pop(p["id"], None)
+            self.scarta(p["id"])
             self.chiedi_cf(p)
         elif azione == "cancella":
             self.dire(p, f"Cancello i dati di questa ricetta ({self.nome(p)})? I suoi controlli si fermano.",
@@ -885,13 +965,13 @@ class Bot:
             elif self.store.chat_count() >= self.max_utenti:
                 self.send(chat, "Mi dispiace, al momento non accetto nuovi utenti.")
             else:
-                self.chiedi_cf(self.store.new(chat))
+                self.chiedi_cf(self.store.new(chat, consenso_ts=time.time()))
             return
         if parts[:3] == ["del", "tutte", "1"]:
             togli_pulsanti()
             if self.store.della_chat(chat):
                 for p in self.store.della_chat(chat):
-                    self.offerte.pop(p["id"], None)
+                    self.scarta(p["id"])
                 mid = self.store.pannello(chat)
                 if mid:
                     self.tg("unpinChatMessage", chat_id=chat, message_id=mid)
@@ -920,7 +1000,7 @@ class Bot:
         elif kind == "del" and len(parts) == 3:
             togli_pulsanti()
             if parts[2] == "1":
-                self.offerte.pop(p["id"], None)
+                self.scarta(p["id"])
                 self.store.delete(p["id"])
                 resto = self.store.della_chat(chat)
                 self.send(chat, f"Fatto: ho cancellato i dati di \"{self.nome(p)}\"." +
@@ -988,16 +1068,100 @@ class Bot:
             return
         self.prenota(p, o["slots"][int(indice)], o["sessione"])
 
+    def cerca_da_app(self, chat, pid, token, cf, nre, nome, modo, chiesta=0.0, consenso=False):
+        """Nuova ricetta (modo "nuova") o cambio di ricetta (modo "modifica") chiesti dalla Mini App.
+        Codice fiscale e NRE arrivano solo in memoria; l'esito per l'app non li contiene."""
+        def esito(**kw):
+            self.risultati[token] = {"chat": chat, "ts": time.time(), **kw}
+        ora = time.time()
+        for k in [k for k, v in self.risultati.items() if v["ts"] < ora - 900]:
+            self.risultati.pop(k, None)
+        if self.cancellate.get(chat, 0) >= chiesta:
+            return  # l'utente ha cancellato tutti i dati dopo aver chiesto la ricerca: cf e nre si buttano
+        tutte = [t for t in self.ricerche_app.get(chat, []) if t > ora - 86400]
+        if len(tutte) >= MAX_RICERCHE_APP:
+            return esito(errore="Troppe ricerche oggi. Riprova domani.")
+        self.ricerche_app[chat] = tutte + [ora]
+        pratiche = self.store.della_chat(chat)
+        if modo == "nuova":
+            if not pratiche and self.store.chat_count() >= self.max_utenti:
+                return esito(errore="Mi dispiace, al momento non accetto nuovi utenti.")
+            if len(pratiche) >= self.max_pratiche:
+                return esito(errore=f"Puoi seguire al massimo {self.max_pratiche} ricette.")
+        else:
+            p = self.della_chat(chat, pid)
+            if not p or p["stato"] not in ("attivo", "pausa"):
+                return esito(errore="Ricetta non trovata.")
+        recenti = [t for t in self.ricerche_fallite.get(chat, []) if t > ora - 86400]
+        self.ricerche_fallite[chat] = recenti
+        if len(recenti) >= MAX_RICERCHE_FALLITE:
+            return esito(errore="Troppe ricerche non riuscite oggi. Riprova domani.")
+        try:
+            att = self.portale(cup_http.cerca, cf, nre)
+        except cup_http.NonTrovata:
+            recenti.append(ora)
+            return esito(errore="Il portale non trova prenotazioni con questo codice fiscale e questa ricetta. "
+                                "Il bot segue solo appuntamenti già prenotati sul CUP Piemonte.")
+        except cup_http.NonAttiva as e:
+            recenti.append(ora)
+            return esito(errore=f"La prenotazione di questa ricetta non è attiva ({e}).")
+        except (cup_http.CupError, requests.RequestException):
+            return esito(errore="Il portale CUP non risponde: riprova tra qualche minuto.")
+        nuovi = {"cf": cf, "nre": nre, "attuale": pren_to_dict(att), "auto": None, "notificati": {}, "ignorati": [],
+                 "tentati_auto": [], "creato": time.time(), "errori": 0}
+        try:
+            if modo == "nuova":
+                p = {"chat_id": chat, "stato": "sede", "prossimo": 0, "nome": nome, **nuovi}
+                if consenso:
+                    p["consenso_ts"] = ora
+                self.store.save(p)  # "sede": l'app chiede subito dove cercare, poi diventa attiva
+            else:
+                def cambia(f):
+                    f.update(nuovi)
+                    for k in ("libera", "viste", "storico", "riassunto", "ultimo"):
+                        f.pop(k, None)
+                p = self.store.modifica(pid, cambia)
+                self.scarta(pid)
+        except storemod.GiaRegistrata:
+            return esito(errore="Questa ricetta è già seguita dal bot (in questa o in un'altra chat).")
+        log.info("ricetta %s/%s %s dalla Mini App", uid(chat), p["id"], "aggiunta" if modo == "nuova" else "cambiata")
+        esito(pid=p["id"])
+        self.aggiorna_pannello(chat)
+
     def esegui_coda(self):
         """Azioni arrivate dalla Mini App. Ognuna porta la chat che l'ha chiesta: si ricontrolla che la
-        ricetta sia sua anche qui, non solo nella Mini App."""
-        while True:
+        ricetta sia sua anche qui, non solo nella Mini App. Al massimo AZIONI_PER_GIRO per volta, poi si
+        torna a Telegram e ai controlli."""
+        ora = time.time()
+        for diz in (self.ricerche_fallite, self.ricerche_app):  # niente crescita senza fine
+            for k in [k for k, v in diz.items() if not v or v[-1] < ora - 86400]:
+                diz.pop(k, None)
+        for k in [k for k, t in self.cancellate.items() if t < ora - 3600]:
+            self.cancellate.pop(k, None)
+        for k in [k for k, v in self.sessioni.items() if ora - v["ts"] > TTL_OFFERTA and not self.offerta_valida(k)]:
+            self.sessioni.pop(k, None)
+        for _ in range(AZIONI_PER_GIRO):
             try:
                 azione, chat, pid, *altro = self.coda.get_nowait()
             except queue.Empty:
                 return
             if azione == "pannello":  # impostazioni cambiate dalla Mini App
                 self.aggiorna_pannello(chat)
+                continue
+            if azione == "dimentica":  # ricetta cancellata dalla Mini App
+                self.scarta(pid)
+                self.aggiorna_pannello(chat)
+                continue
+            if azione == "sgancia":  # tutti i dati cancellati dalla Mini App: via anche il pannello fissato
+                self.tg("unpinChatMessage", chat_id=chat, message_id=pid)
+                self.tg("deleteMessage", chat_id=chat, message_id=pid)
+                continue
+            if azione == "cerca":
+                try:
+                    self.cerca_da_app(chat, pid, *altro)
+                except Exception as e:
+                    log.error("coda: errore imprevisto %s\n%s", type(e).__name__, "".join(traceback.format_tb(e.__traceback__)))
+                    self.risultati.setdefault(altro[0], {"chat": chat, "ts": time.time(), "errore": "Errore imprevisto: riprova."})
                 continue
             p = self.della_chat(chat, pid)
             if not p or p["stato"] not in ("attivo", "pausa"):
@@ -1007,6 +1171,8 @@ class Bot:
                     self.controlla_ora(p)
                 elif azione == "offerta":
                     self.usa_offerta(p, *altro)
+                elif azione == "vista":
+                    self.prenota_vista(p, *altro)
             except Exception as e:
                 log.error("coda: errore imprevisto %s\n%s", type(e).__name__, "".join(traceback.format_tb(e.__traceback__)))
                 self.alert_admin(f"Errore imprevisto in un'azione dalla Mini App: {type(e).__name__}")
@@ -1046,7 +1212,7 @@ class Bot:
             return
         self.ultima_pulizia = time.time()
         for pid, chat in self.store.pulizia(time.time()):
-            self.offerte.pop(pid, None)
+            self.scarta(pid)
             log.info("pratica %s/%s cancellata: registrazione incompleta o pausa oltre 30 giorni", uid(chat), pid)
             self.send(chat, "Ho cancellato una ricetta lasciata a meta' (o in pausa da oltre 30 giorni). "
                             "Per seguirla di nuovo: /aggiungi.")

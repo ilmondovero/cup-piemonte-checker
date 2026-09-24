@@ -46,7 +46,12 @@
 
   // dopo "Salva" nel foglio: si chiude quando la risposta e' arrivata
   document.addEventListener("submit", (e) => {
-    if (e.target.closest && e.target.closest("#foglio")) invioDalFoglio = true;
+    // i form "data-resta" (ricerca di una ricetta) proseguono nel foglio invece di chiuderlo
+    // i form con conferma partono con fetch (niente htmx:after:request): si chiudono da soli dopo l'invio
+    const f = e.target;
+    if (f.closest && f.closest("#foglio") && !f.hasAttribute("data-resta") && !(f.dataset && f.dataset.conferma)) {
+      invioDalFoglio = true;
+    }
   }, true);
   document.addEventListener("htmx:after:request", () => {
     if (invioDalFoglio) {
@@ -74,6 +79,7 @@
       }).then(async (r) => {
         if (r.ok) {
           vibra();
+          chiudi();
         } else {
           // DOMParser legge il testo senza eseguire nulla della risposta
           const testo = new DOMParser().parseFromString(await r.text(), "text/html").body.textContent.trim();

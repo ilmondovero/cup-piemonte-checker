@@ -158,8 +158,11 @@ def b(tmp_path, monkeypatch):
                 "migliori": [x for x in slots if x.quando < att.quando and c.ammesso(x, att, zona)]}
     monkeypatch.setattr(c, "check", check)
 
-    def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True):
+    bot.libere = []
+
+    def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=False):
         bot.chiamate.append((cf, slot.key(), sessione, dry_run))
+        bot.libere.append(libera)
         return "Prenotazione spostata."
     monkeypatch.setattr(c, "prenota", prenota)
     return bot

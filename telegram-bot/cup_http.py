@@ -395,15 +395,17 @@ def _verifica_riepilogo(testo, data_riep, dopo_data, slot, cosa):
         raise CupError("Il riepilogo riporta un luogo diverso da quello scelto")
 
 
-def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True):
+def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=False):
     """Sposta la prenotazione sullo slot. sessione: quella del controllo che ha trovato lo slot
     (lo tiene bloccato per noi); se manca o fallisce si riparte da una sessione nuova.
-    Con dry_run si ferma al Riepilogo. Ritorna un messaggio; CupError se un controllo fallisce."""
+    Con dry_run si ferma al Riepilogo. Ritorna un messaggio; CupError se un controllo fallisce.
+    libera: scelta esplicita dell'utente di una data vista (anche fuori area o piu' tardi): niente filtro
+    su zona e anticipo, ma restano tutte le verifiche sul Riepilogo e dopo la conferma."""
     att = CupSession(cf, nre).attuale()  # sessione a parte: non tocca lo stato di quella del controllo
-    if not dry_run and slot.quando >= att.quando:
+    if not dry_run and not libera and slot.quando >= att.quando:
         raise CupError(f"Lo slot {slot.quando:%d/%m/%Y %H:%M} non e' prima dell'appuntamento attuale "
                        f"({att.quando:%d/%m/%Y %H:%M})")
-    if not ammesso(slot, att, zona):
+    if not libera and not ammesso(slot, att, zona):
         raise CupError(f"Sede non ammessa dalle tue preferenze: {slot.luogo}")
     if not (slot.proposta or slot.seleziona_id):
         raise CupError("Questa data non ha un pulsante 'Seleziona': non posso sceglierla")
@@ -411,9 +413,10 @@ def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True):
         sessione = None  # sessione di un'altra ricetta: mai usarla
 
     def arriva_al_riepilogo(cup):
-        s = next((x for x in cup.slots if x.key() == slot.key()), None)
-        if not s:
+        uguali = [x for x in cup.slots if x.key() == slot.key()]
+        if len(uguali) != 1:  # due date con la stessa chiave: meglio non scegliere a caso
             raise CupError(f"Slot {slot.quando:%d/%m/%Y %H:%M} non piu' disponibile")
+        s = uguali[0]
         return (s,) + cup.riepilogo(s)
 
     try:
@@ -441,7 +444,7 @@ def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True):
         for _ in range(3):
             try:
                 nuova = CupSession(cf, nre).attuale()
-                if nuova.quando == s.quando:
+                if nuova.quando == s.quando and nuova.luogo.key() == s.luogo.key():
                     return "Prenotazione spostata."
             except (CupError, requests.RequestException):
                 pass

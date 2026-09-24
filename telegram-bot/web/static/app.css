@@ -107,3 +107,78 @@ button.secondario { background: transparent; color: var(--tenue); width: 100%; }
   .azioni { grid-template-columns: repeat(2, 1fr); }
   .regole div { grid-template-columns: 1fr; gap: 2px; }
 }
+
+/* --- barra in alto --- */
+.barra { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 2px 2px 12px; }
+.barra h1 { font-size: 22px; margin: 0; }
+.barra nav { display: flex; gap: 6px; }
+.barra button { padding: 8px 12px; }
+.vuoto button.primario { width: auto; margin-top: 8px; }
+
+.azioni.secondarie { grid-template-columns: repeat(3, 1fr); margin-top: 8px; }
+.azioni.secondarie button { background: transparent; border: 1px solid var(--separatore); }
+button.pericolo { background: color-mix(in srgb, var(--pericolo) 12%, transparent); color: var(--pericolo); width: 100%; padding: 12px; font-weight: 600; }
+button.chip { padding: 6px 12px; border-radius: 999px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips form { margin: 0; }
+
+/* --- fogli: campi, elenchi, attesa --- */
+#foglio h3 { font-size: 15px; margin: 18px 0 8px; }
+.campo { display: grid; gap: 4px; font-size: 14px; color: var(--tenue); }
+.campo input, .scelta select {
+  font: inherit; font-size: 16px; padding: 10px 12px; border-radius: 10px; width: 100%;
+  border: 1px solid var(--separatore); background: var(--sfondo); color: var(--testo);
+}
+.scelta select { display: block; margin-top: 8px; background: var(--scheda); }
+.elenco { list-style: none; margin: 0; padding: 0; }
+.elenco li { padding: 8px 0; border-bottom: 1px solid var(--separatore); }
+.elenco small { display: block; color: var(--tenue); font-size: 13px; }
+.informativa { margin: 8px 0; font-size: 14px; }
+.informativa summary { color: var(--accento); cursor: pointer; }
+.informativa p { color: var(--tenue); }
+.attesa { text-align: center; padding: 24px 8px; }
+.rotella {
+  width: 36px; height: 36px; margin: 0 auto 12px; border-radius: 50%;
+  border: 3px solid var(--separatore); border-top-color: var(--accento); animation: gira 0.9s linear infinite;
+}
+@keyframes gira { to { transform: rotate(360deg); } }
+.trovata { background: var(--sfondo); border-radius: 12px; padding: 12px; margin: 0 0 12px; }
+.trovata small { display: block; color: var(--tenue); margin-top: 4px; }
+
+/* --- storico: numero in evidenza, grafico, tabella --- */
+.numero { margin: 4px 0 12px; }
+.numero span { display: block; color: var(--tenue); font-size: 14px; }
+.numero strong { display: block; font-size: 24px; margin: 2px 0; }
+.numero small { display: block; color: var(--tenue); font-size: 13px; }
+.grafico { margin: 0 0 12px; }
+.grafico figcaption { color: var(--tenue); font-size: 13px; margin-bottom: 4px; }
+.grafico svg { width: 100%; height: auto; display: block; overflow: visible; }
+.grafico .griglia { stroke: var(--separatore); stroke-width: 1; }
+.grafico .riferimento { stroke: var(--tenue); stroke-width: 1.5; stroke-dasharray: 4 4; }
+.grafico .serie { fill: none; stroke: var(--accento); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.grafico .punto { fill: var(--accento); stroke: var(--scheda); stroke-width: 2; }
+.grafico text { font-size: 11px; fill: var(--tenue); }
+.grafico .etichetta.forte { fill: var(--testo); font-weight: 600; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 8px; }
+th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--separatore); }
+th { color: var(--tenue); font-weight: 500; }
+details summary { cursor: pointer; color: var(--accento); }
+
+/* --- admin: numeri in evidenza --- */
+.tiles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.tile { background: var(--sfondo); border-radius: 12px; padding: 12px; }
+.tile strong { display: block; font-size: 24px; }
+.tile span { display: block; font-size: 14px; }
+.tile small { display: block; color: var(--tenue); font-size: 12px; min-height: 1em; }
+
+/* --- date disponibili: riga sulla scheda e voci prenotabili --- */
+button.riga-date {
+  display: block; width: 100%; text-align: left; margin: 0 0 12px; padding: 10px 12px;
+  background: var(--sfondo); color: var(--testo); font-size: 14px;
+}
+.elenco li.prenotabile { display: grid; grid-template-columns: 1fr auto; column-gap: 12px; align-items: center; }
+.elenco li.prenotabile strong, .elenco li.prenotabile small { grid-column: 1; }
+.elenco li.prenotabile form { margin: 0; grid-column: 2; grid-row: 1 / span 2; }
+.elenco li.prenotabile button { width: auto; padding: 8px 14px; }
+button.secondario-pieno { background: color-mix(in srgb, var(--accento) 12%, transparent); color: var(--accento); font-weight: 600; }
+.scheda.in-attesa { border: 1px dashed var(--accento); }
