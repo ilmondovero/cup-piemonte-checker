@@ -48,6 +48,14 @@ AZIONI_SENSIBILI = ("offerta", "vista", "cancella", "modifica")  # vogliono una 
 e = html.escape
 
 
+def versione_statico(nome, _cache={}):
+    """Codice legato al contenuto del file: se cambia, cambia l'indirizzo e l'app di Telegram non usa
+    la copia vecchia dalla cache (e' successo con app.css dopo un aggiornamento)."""
+    if nome not in _cache:
+        _cache[nome] = hashlib.sha256((STATIC / nome).read_bytes()).hexdigest()[:10]
+    return _cache[nome]
+
+
 def verifica_init_data(init_data, token, ora=None, max_eta=MAX_ETA_INITDATA):
     """Id dell'utente Telegram se initData e' firmato dal bot e recente, altrimenti None.
     https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app"""
@@ -190,7 +198,7 @@ class App:
     def statico(self, nome):
         if nome not in FILE_STATICI:
             raise Richiesta(404, "File non trovato.")
-        return 200, {"Content-Type": FILE_STATICI[nome], "Cache-Control": "public, max-age=3600"}, \
+        return 200, {"Content-Type": FILE_STATICI[nome], "Cache-Control": "public, max-age=31536000, immutable"}, \
             (STATIC / nome).read_bytes()
 
     # --- azioni su una ricetta ---------------------------------------------------------
@@ -381,9 +389,9 @@ class App:
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Le tue ricette</title>
 <script src="{TELEGRAM_JS}"></script>
-<script src="/static/htmx.min.js"></script>
-<script src="/static/app.js" defer></script>
-<link rel="stylesheet" href="/static/app.css">
+<script src="/static/htmx.min.js?v={versione_statico("htmx.min.js")}"></script>
+<script src="/static/app.js?v={versione_statico("app.js")}" defer></script>
+<link rel="stylesheet" href="/static/app.css?v={versione_statico("app.css")}">
 </head>
 <body>
 <main id="ricette" hx-get="/ui/ricette" hx-trigger="load, every 15s, aggiorna" hx-swap="innerMorph">

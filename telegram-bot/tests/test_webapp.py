@@ -465,3 +465,12 @@ def test_metriche_sopravvivono_al_riavvio(app):
     t = corpo.decode()
     n = app.store.db.execute("SELECT COUNT(*) FROM metriche").fetchone()[0]
     assert n >= 1 and "Dati dal" in t and f"<strong>{n}</strong><span>sessioni</span>" in t
+
+
+def test_file_statici_con_versione(app):
+    _, _, corpo = app.gestisci("GET", "/", {})
+    t = corpo.decode()
+    v = webapp.versione_statico("app.css")
+    assert f"/static/app.css?v={v}" in t and "/static/app.js?v=" in t and "/static/htmx.min.js?v=" in t
+    stato, h, _ = app.gestisci("GET", "/static/app.css", {})  # il gestore toglie ?v= prima di arrivare qui
+    assert stato == 200 and "immutable" in h["Cache-Control"]
