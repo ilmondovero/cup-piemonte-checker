@@ -319,6 +319,88 @@ def test_cf_scritto_fuori_registrazione_viene_cancellato(b):
     assert ("deleteMessage", {"chat_id": 1, "message_id": 77}) in b.out
 
 
+def attiva_auto(b, chat=1, giorni=1):
+    b.on_callback(cq(chat, f"auto:{giorni}"))
+    assert b.store.get(chat)["auto"] == {"giorni": giorni}
+
+
+def test_auto_prenota_senza_tocco_nella_stessa_sessione(b):
+    registra(b)
+    attiva_auto(b)
+    b.controlla(b.store.get(1))
+    assert b.chiamate == [(CF, MEGLIO.key(), "S", False)]
+    assert 1 not in b.offerte  # nessun pulsante: ha gia' prenotato
+    assert any("conferma automatica" in t and "📅" in t and "OSPEDALE A" in t for t in inviati(b))
+
+
+def test_auto_rispetta_anticipo_minimo(b, monkeypatch):
+    registra(b)
+    attiva_auto(b, giorni=7)
+    domani = c.Slot(datetime.now() + timedelta(days=1), c.Luogo("OSPEDALE A", "AMB 2", "Via Roma, 1"), None)
+    monkeypatch.setattr(c, "check", lambda *a: {"attuale": ATT, "slots": [domani], "migliori": [domani], "sessione": "S"})
+    b.controlla(b.store.get(1))
+    assert not b.chiamate and 1 in b.offerte  # troppo presto: solo offerta manuale
+
+
+def test_auto_rispetta_la_sede(b):
+    registra(b)  # solo stessa sede: ALTROVE (piu' vicina) non va presa
+    attiva_auto(b)
+    b.controlla(b.store.get(1))
+    assert b.chiamate[0][1] == MEGLIO.key()
+
+
+def test_auto_un_solo_tentativo_per_data(b, monkeypatch):
+    registra(b)
+    attiva_auto(b)
+    monkeypatch.setattr(c, "prenota", lambda *a, **k: (_ for _ in ()).throw(c.CupError("Slot non piu' disponibile")))
+    b.controlla(b.store.get(1))
+    n = len(inviati(b))
+    b.controlla(b.store.get(1))
+    assert len(inviati(b)) == n
+
+
+def test_auto_si_disattiva_dopo_esito_incerto(b, monkeypatch):
+    registra(b)
+    attiva_auto(b)
+    monkeypatch.setattr(c, "prenota", lambda *a, **k: (_ for _ in ()).throw(
+        c.CupError("Conferma inviata, esito incerto: la prenotazione risulta non verificabile.")))
+    b.controlla(b.store.get(1))
+    assert b.store.get(1)["auto"] is None
+    assert any(t.startswith("🚨") for t in inviati(b))
+
+
+def test_auto_disattivata_di_default_e_disattivabile(b):
+    registra(b)
+    assert not b.store.get(1).get("auto")
+    attiva_auto(b, giorni=3)
+    b.on_callback(cq(1, "auto:0"))
+    assert b.store.get(1)["auto"] is None
+    b.on_callback(cq(1, "auto:99"))  # valore non previsto: ignorato
+    assert b.store.get(1)["auto"] is None
+
+
+def test_intervallo_breve_solo_per_admin(b):
+    b.admin, b.admin_intervallo = "1", 5
+    registra(b, chat=1)
+    registra(b, chat=2, nre="010A00000000002")
+    assert b.intervallo_di(1) == 5 and b.intervallo_di(2) == 45
+    for chat in (1, 2):
+        u = b.store.get(chat)
+        u["prossimo"] = 0
+        b.store.save(u)
+    b.controllo_pianificato()
+    b.offerte.clear()
+    b.controllo_pianificato()
+    prossimi = {chat: b.store.get(chat)["prossimo"] - time.time() for chat in (1, 2)}
+    assert prossimi[1] < 6 * 60 and prossimi[2] > 40 * 60
+
+
+def test_intervallo_utenti_mai_sotto_il_minimo(tmp_path):
+    s = Store(tmp_path / "db.sqlite", Fernet.generate_key().decode())
+    assert botmod.Bot(s, "x", intervallo=5).intervallo == botmod.MIN_INTERVALLO
+    assert botmod.Bot(s, "x", admin="1", admin_intervallo=1).admin_intervallo == botmod.MIN_INTERVALLO_ADMIN
+
+
 def test_pulizia(tmp_path):
     s = Store(tmp_path / "db.sqlite", Fernet.generate_key().decode())
     vecchia = s.new(1)

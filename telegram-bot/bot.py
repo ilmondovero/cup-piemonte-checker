@@ -9,6 +9,7 @@ Configurazione da variabili d'ambiente (vedi .env.example):
     CONTATTO_GESTORE     come contattare chi gestisce il bot, mostrato nell'informativa (consigliata)
     MAX_UTENTI           utenti registrabili al massimo (default 30)
     INTERVALLO_MIN       minuti tra due controlli dello stesso utente (default 45, minimo 30)
+    ADMIN_INTERVALLO_MIN intervallo solo per ADMIN_CHAT_ID (default come INTERVALLO_MIN, minimo 5)
     DISTANZA_PORTALE_S   secondi minimi tra due sessioni sul portale, fra tutti gli utenti (default 20)
     MODALITA_PROVA       1 = i pulsanti si fermano al riepilogo senza confermare (default 0)
 """
@@ -21,7 +22,7 @@ import secrets
 import sys
 import time
 import traceback
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 import requests
 
@@ -34,16 +35,19 @@ log = logging.getLogger("cupbot")
 TTL_OFFERTA = 20 * 60  # secondi: oltre, la sessione che tiene lo slot potrebbe essere scaduta
 AVVISA_ERRORI = (1, 6, 20)  # avvisa al 1o, 6o e 20o errore consecutivo, non a ogni giro
 MIN_INTERVALLO = 30  # minuti: ogni controllo tiene bloccata una data ~40 minuti
+MIN_INTERVALLO_ADMIN = 5  # solo per chi gestisce il bot: come una persona che aggiorna la pagina
 PAUSA_CONTROLLA = 15 * 60  # secondi tra due /controlla dello stesso utente
 MAX_RICERCHE_FALLITE = 5  # ricerche CF+NRE fallite per chat al giorno
 PAUSA_MESSAGGI = 1.5  # secondi minimi tra due messaggi della stessa chat
+ANTICIPI_AUTO = (1, 3, 7)  # giorni minimi da oggi per la conferma automatica, a scelta dell'utente
 GIORNI = ["lun", "mar", "mer", "gio", "ven", "sab", "dom"]
 
 PRIVACY = (
     "🔒 Informativa, prima di iniziare\n\n"
     "Questo bot controlla per te il portale CUP Piemonte (cup.isan.csi.it) e ti avvisa se si libera "
     "una data PRIMA della tua prenotazione. Se tocchi il pulsante che ti mando, sposta la prenotazione "
-    "per te. Non fa mai nulla senza un tuo tocco. Non e' un servizio della Regione Piemonte o di CSI.\n\n"
+    "per te. Non sposta nulla senza un tuo tocco, a meno che tu non attivi la conferma automatica "
+    "(/auto). Non e' un servizio della Regione Piemonte o di CSI.\n\n"
     "Per funzionare deve conservare:\n"
     "• il tuo codice fiscale e il numero della ricetta (NRE);\n"
     "• data, ora e luogo della tua prenotazione, e le date che ti ha gia' segnalato.\n"
@@ -64,13 +68,15 @@ AIUTO = (
     "/dati – i dati che conservo\n"
     "/modifica – cambia codice fiscale e ricetta\n"
     "/sede – cambia le sedi accettate\n"
+    "/auto – conferma automatica delle date migliori\n"
     "/pausa, /riprendi – sospendi o riattiva i controlli\n"
     "/cancella – elimina tutti i tuoi dati\n"
     "/privacy – come tratto i tuoi dati")
 
 COMANDI = [("stato", "Ultimo controllo e prenotazione"), ("controlla", "Controlla adesso"),
            ("dati", "I dati che conservo"), ("modifica", "Cambia codice fiscale e ricetta"),
-           ("sede", "Cambia le sedi accettate"), ("pausa", "Sospendi i controlli"),
+           ("sede", "Cambia le sedi accettate"), ("auto", "Conferma automatica"),
+           ("pausa", "Sospendi i controlli"),
            ("riprendi", "Riattiva i controlli"), ("cancella", "Elimina tutti i tuoi dati"),
            ("privacy", "Come tratto i tuoi dati")]
 
@@ -119,17 +125,40 @@ def descrivi(res):
     return "\n".join(righe)
 
 
+AUTO_TESTO = (
+    "⚡ Conferma automatica\n\n"
+    "Se la attivi, quando trovo una data PRIMA della tua la prenoto subito, senza aspettare il tuo tocco: "
+    "le date buone spariscono in pochi minuti.\n\n"
+    "Da sapere:\n"
+    "• la prenotazione attuale viene sostituita: la data vecchia la perdi;\n"
+    "• se poi non puoi andare, devi disdire o spostare almeno 2 giorni lavorativi prima, altrimenti paghi "
+    "l'intera prestazione;\n"
+    "• rispetto le sedi che hai scelto (/sede) e l'anticipo minimo che scegli qui sotto;\n"
+    "• ti scrivo subito data, ora e luogo della nuova prenotazione.\n\n"
+    "Da quando accetti una data nuova?")
+
+
+def auto_descr(u):
+    a = u.get("auto")
+    if not a:
+        return "disattivata"
+    return "attiva, date da " + ("domani" if a["giorni"] == 1 else f"tra {a['giorni']} giorni") + " in poi"
+
+
 def maschera(s, visibili=4):
     return s[:3] + "•" * max(0, len(s) - 3 - visibili) + s[-visibili:] if s else "-"
 
 
 class Bot:
-    def __init__(self, store, token, admin=None, max_utenti=30, intervallo=45, distanza=20, prova=False, contatto=""):
+    def __init__(self, store, token, admin=None, max_utenti=30, intervallo=45, distanza=20, prova=False, contatto="",
+                 admin_intervallo=None):
         global UID_KEY
         UID_KEY = store.hkey
         self.store, self.admin, self.token, self.contatto = store, str(admin or ""), token, contatto
         self.api = f"https://api.telegram.org/bot{token}/"
         self.max_utenti, self.intervallo = max_utenti, max(MIN_INTERVALLO, intervallo)
+        # ogni controllo blocca una data: l'intervallo breve vale solo per chi gestisce il bot, non per tutti
+        self.admin_intervallo = max(MIN_INTERVALLO_ADMIN, admin_intervallo or self.intervallo)
         self.distanza, self.prova = distanza, prova
         self.ricerche_fallite = {}  # chat_id -> [timestamp]
         self.ultimo_msg = {}        # chat_id -> timestamp
@@ -181,6 +210,9 @@ class Bot:
             self.ultimo_portale = time.time()
 
     # --- controllo periodico ------------------------------------------------------------
+    def intervallo_di(self, chat_id):
+        return self.admin_intervallo if self.admin and str(chat_id) == self.admin else self.intervallo
+
     def offerta_valida(self, chat_id):
         o = self.offerte.get(chat_id)
         return bool(o) and time.time() - o["ts"] <= TTL_OFFERTA
@@ -220,6 +252,17 @@ class Bot:
         u.update(errori=0, attuale=pren_to_dict(att), ultimo={"ts": time.time(), "testo": descrivi(res)})
         log.info("controllo %s: %d date, %d migliori", uid(chat), len(res["slots"]), len(res["migliori"]))
         notificati = set(u.get("notificati", []))
+        auto = u.get("auto")
+        if auto:
+            dal = date.today() + timedelta(days=auto["giorni"])
+            candidati = [x for x in res["migliori"] if x.luogo.sede and x.quando.date() >= dal and x.key() not in notificati]
+            if candidati:
+                slot = candidati[0]  # la piu' vicina tra quelle ammesse
+                u["notificati"] = sorted(notificati | {slot.key()})  # un solo tentativo per data
+                self.store.save(u)
+                self.send(chat, "⚡ Conferma automatica: ho trovato una data prima della tua.\n\n" + descrivi(res))
+                self.prenota(u, slot, res["sessione"], automatica=True)
+                return res
         nuove = [x for x in res["migliori"] if x.key() not in notificati]
         if nuove and self.offri(u, res):
             u["notificati"] = sorted(notificati | {x.key() for x in nuove})
@@ -244,7 +287,8 @@ class Bot:
             self.offerte[u["chat_id"]] = {"token": token, "ts": time.time(), "sessione": res["sessione"], "slots": slots}
         return ok
 
-    def prenota(self, u, slot, sessione):
+    def prenota(self, u, slot, sessione, automatica=False):
+        """Ritorna "ok", "fallita" o "incerta" (conferma inviata ma esito non verificato)."""
         chat = u["chat_id"]
         self.send(chat, f"Sposto la prenotazione a:\n📅 {fmt(slot.quando)}\n📍 {slot.luogo}…")
         try:
@@ -255,27 +299,41 @@ class Bot:
             self.send(chat, ("🚨 " if urgente else "❌ Non spostata: ") + str(e))
             if urgente:
                 self.alert_admin(f"Esito incerto dopo la conferma per {uid(chat)}")
+                self.sospendi_auto(u)
             log.info("prenotazione %s fallita: %s%s", uid(chat), type(e).__name__, " (esito incerto)" if urgente else "")
-            return
+            return "incerta" if urgente else "fallita"
         except Exception as e:
             log.error("prenotazione %s: errore imprevisto %s\n%s", uid(chat), type(e).__name__,
                       "".join(traceback.format_tb(e.__traceback__)))
             self.send(chat, f"🚨 Errore imprevisto durante la prenotazione ({type(e).__name__}). Verifica subito su "
                             f"{cup_http.LISTA_URL} o al {cup_http.CALL_CENTER}.")
             self.alert_admin(f"Errore imprevisto nella prenotazione di {uid(chat)}: {type(e).__name__}")
-            return
-        log.info("prenotazione %s riuscita%s", uid(chat), " (prova)" if self.prova else "")
+            self.sospendi_auto(u)
+            return "incerta"
+        log.info("prenotazione %s riuscita%s%s", uid(chat), " (automatica)" if automatica else "",
+                 " (prova)" if self.prova else "")
         if self.prova:
             self.send(chat, "🧪 " + esito)
-            return
+            return "ok"
         u["notificati"] = []  # la nuova data diventa il riferimento dei prossimi controlli
         u["attuale"] = {**u.get("attuale", {}), "quando": slot.quando.isoformat(), "sede": slot.luogo.sede,
                         "ambulatorio": slot.luogo.ambulatorio, "indirizzo": slot.luogo.indirizzo}
-        u["prossimo"] = time.time() + self.intervallo * 60
+        u["prossimo"] = time.time() + self.intervallo_di(chat) * 60
         self.store.save(u)
-        self.send(chat, f"✅ Prenotazione spostata!\n📅 {fmt(slot.quando)}\n📍 {slot.luogo}\n\n"
+        self.send(chat, f"✅ Prenotazione spostata{' (conferma automatica)' if automatica else ''}!\n"
+                        f"📅 {fmt(slot.quando)}\n📍 {slot.luogo}\n\n"
                         "Riceverai SMS/email dal CUP con il nuovo promemoria; controlla anche il codice di "
-                        "pagamento del ticket. Continuo a cercare date ancora prima.")
+                        "pagamento del ticket. Se non puoi andare, disdici o sposta almeno 2 giorni lavorativi "
+                        "prima. Continuo a cercare date ancora prima.")
+        return "ok"
+
+    def sospendi_auto(self, u):
+        """Dopo un esito incerto niente altri tentativi automatici: decide l'utente."""
+        if u.get("auto"):
+            u["auto"] = None
+            self.store.save(u)
+            self.send(u["chat_id"], "Per sicurezza ho disattivato la conferma automatica. Verifica la prenotazione, "
+                                    "poi riattivala con /auto se vuoi.")
 
     # --- registrazione ------------------------------------------------------------------
     def chiedi_cf(self, u):
@@ -333,6 +391,12 @@ class Bot:
             return
         self.send(chat, descrivi_prenotazione(att, "Ho trovato la tua prenotazione"))
         self.chiedi_sede(u, att)
+
+    def chiedi_auto(self, u):
+        righe = [[{"text": "Da domani" if g == 1 else f"Da tra {g} giorni", "callback_data": f"auto:{g}"}
+                  for g in ANTICIPI_AUTO]]
+        righe.append([{"text": "Disattiva" if u.get("auto") else "Lascia disattivata", "callback_data": "auto:0"}])
+        self.send(u["chat_id"], AUTO_TESTO + f"\n\nStato attuale: {auto_descr(u)}.", righe)
 
     def privacy(self):
         return PRIVACY + (f"\n\nGestore del bot: {self.contatto}" if self.contatto else "")
@@ -402,11 +466,14 @@ class Bot:
             att = pren_from_dict(u["attuale"]) if u.get("attuale") else None
             self.send(chat, f"Codice fiscale: {maschera(u.get('cf', ''))}\nRicetta (NRE): {maschera(u.get('nre', ''))}\n"
                             f"Sedi: {'solo ' + att.luogo.sede if u.get('stessa_sede', True) and att else 'qualsiasi'}\n"
-                            f"Controlli: {'in pausa' if u['stato'] == 'pausa' else f'ogni {self.intervallo} minuti'}\n\n"
+                            f"Controlli: {'in pausa' if u['stato'] == 'pausa' else f'ogni {self.intervallo_di(chat)} minuti'}\n"
+                            f"Conferma automatica: {auto_descr(u)}\n\n"
                             + (descrivi_prenotazione(att) if att else ""))
         elif cmd == "/sede":
             if u.get("attuale"):
                 self.chiedi_sede(u, pren_from_dict(u["attuale"]))
+        elif cmd == "/auto":
+            self.chiedi_auto(u)
         elif cmd == "/stato":
             ult = u.get("ultimo")
             if ult:
@@ -418,10 +485,11 @@ class Bot:
             ultimo = (u.get("ultimo") or {}).get("ts", 0)
             if self.offerta_valida(chat):
                 self.send(chat, "Hai un'offerta aperta: usa i suoi pulsanti (o Ignora) prima di un nuovo controllo.")
-            elif time.time() - ultimo < PAUSA_CONTROLLA:
+            elif time.time() - ultimo < min(PAUSA_CONTROLLA, self.intervallo_di(chat) * 60):
                 # ogni controllo tiene bloccata una data per ~40 minuti: niente controlli a raffica
+                pausa = min(PAUSA_CONTROLLA, self.intervallo_di(chat) * 60)
                 self.send(chat, f"Ultimo controllo alle {datetime.fromtimestamp(ultimo):%H:%M}: il prossimo "
-                                f"/controlla e' possibile dalle {datetime.fromtimestamp(ultimo + PAUSA_CONTROLLA):%H:%M}.")
+                                f"/controlla e' possibile dalle {datetime.fromtimestamp(ultimo + pausa):%H:%M}.")
             else:
                 self.send(chat, "Controllo in corso…")
                 self.controlla(u, manuale=True)
@@ -477,8 +545,22 @@ class Bot:
             self.store.save(u)
             self.send(chat, (f"Ok: ti segnalo solo date a {att.luogo.sede}." if u["stessa_sede"]
                              else "Ok: ti segnalo date in qualsiasi sede proposta dal CUP.") +
-                      (f"\n\nFatto! Controllo ogni {self.intervallo} minuti e ti scrivo appena esce una data prima "
+                      (f"\n\nFatto! Controllo ogni {self.intervallo_di(chat)} minuti e ti scrivo appena esce una data prima "
                        f"del {fmt(att.quando)}.\n\n{AIUTO}" if nuovo else ""))
+        elif kind == "auto" and u["stato"] in ("attivo", "pausa") and len(parts) == 2 and \
+                parts[1] in {"0", *map(str, ANTICIPI_AUTO)}:
+            togli_pulsanti()
+            giorni = int(parts[1])
+            u["auto"] = {"giorni": giorni} if giorni else None
+            self.store.save(u)
+            if giorni:
+                self.send(chat, f"⚡ Conferma automatica attiva: prenoto da solo la prima data prima della tua, "
+                                f"da {'domani' if giorni == 1 else f'tra {giorni} giorni'} in poi"
+                                + (", solo a " + pren_from_dict(u["attuale"]).luogo.sede
+                                   if u.get("stessa_sede", True) and u.get("attuale") else ", in qualsiasi sede")
+                                + ". /auto per cambiarla o disattivarla.")
+            else:
+                self.send(chat, "Conferma automatica disattivata: ti mando il pulsante e decidi tu.")
         elif kind in ("p", "x"):
             self.on_offerta(u, parts, togli_pulsanti)
 
@@ -551,7 +633,7 @@ class Bot:
             if self.offerta_valida(chat):
                 continue  # la sua sessione tiene la data offerta: un nuovo controllo non la vedrebbe
             u = self.store.get(chat)
-            u["prossimo"] = time.time() + self.intervallo * 60 * random.uniform(0.9, 1.1)
+            u["prossimo"] = time.time() + self.intervallo_di(chat) * 60 * random.uniform(0.9, 1.1)
             self.store.save(u)
             self.controlla(u)
             return True
@@ -583,7 +665,8 @@ def main():
     store = Store(os.environ.get("DB_PATH", "data/cup.db"), os.environ.get("CUP_BOT_KEY"))
     bot = Bot(store, token, admin=os.environ.get("ADMIN_CHAT_ID"), max_utenti=env_int("MAX_UTENTI", 30),
               intervallo=env_int("INTERVALLO_MIN", 45), distanza=env_int("DISTANZA_PORTALE_S", 20),
-              prova=os.environ.get("MODALITA_PROVA", "0") == "1", contatto=os.environ.get("CONTATTO_GESTORE", ""))
+              prova=os.environ.get("MODALITA_PROVA", "0") == "1", contatto=os.environ.get("CONTATTO_GESTORE", ""),
+              admin_intervallo=env_int("ADMIN_INTERVALLO_MIN", 0) or None)
     try:
         bot.run()
     except KeyboardInterrupt:

@@ -22,8 +22,16 @@ piccolo, senza Chromium.
    stessa prestazione, la data scelta e lo stesso luogo. Poi verifica con una sessione nuova che la
    prenotazione risulti davvero spostata. Se l'esito è incerto, avvisa subito con il numero del call
    center (800 000 500).
+5. **Conferma automatica (facoltativa, `/auto`).** Le date buone spariscono in pochi minuti. Chi la
+   attiva lascia che il bot prenoti da solo la prima data migliore, senza aspettare il tocco.
+   - Rispetta le sedi scelte e un anticipo minimo scelto dall'utente: da domani, tra 3 giorni o tra
+     7 giorni.
+   - Fa un solo tentativo per ogni data.
+   - Dopo un esito incerto si disattiva da sola e avvisa l'utente.
+   - Prima di attivarla il bot ricorda due cose: la data vecchia si perde, e se poi non si può andare
+     bisogna disdire almeno 2 giorni lavorativi prima, altrimenti si paga la prestazione.
 
-Comandi: `/stato`, `/controlla`, `/dati`, `/modifica`, `/sede`, `/pausa`, `/riprendi`, `/cancella`,
+Comandi: `/stato`, `/controlla`, `/dati`, `/modifica`, `/sede`, `/auto`, `/pausa`, `/riprendi`, `/cancella`,
 `/privacy`. Chi gestisce il bot ha anche `/admin`.
 
 ## Limiti da conoscere
@@ -39,6 +47,9 @@ Comandi: `/stato`, `/controlla`, `/dati`, `/modifica`, `/sede`, `/pausa`, `/ripr
   portale riserva la data proposta a quella sessione, e né "Annulla" né il logout la liberano. Succede
   anche a chi lo fa a mano. Per questo:
   - l'intervallo minimo è 30 minuti (default 45) e `/controlla` è possibile al massimo ogni 15 minuti;
+  - solo chi gestisce il bot (`ADMIN_CHAT_ID`) può scendere fino a 5 minuti con `ADMIN_INTERVALLO_MIN`.
+    Vale per una sola persona, come chi aggiorna la pagina a mano: a 5 minuti tiene bloccate circa 8
+    date. Riusare la stessa sessione non aiuta, perché ogni "Sposta" ne blocca una nuova;
   - c'è una distanza minima tra le sessioni sul portale e un tetto al numero di utenti;
   - mentre un'offerta è aperta, quell'utente non viene ricontrollato;
   - la prenotazione continua **nella stessa sessione** che ha trovato la data. Una sessione nuova non
