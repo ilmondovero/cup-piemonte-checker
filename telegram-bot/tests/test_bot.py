@@ -145,7 +145,7 @@ def b(tmp_path, monkeypatch):
 
     def tg(method, **d):
         bot.out.append((method, d))
-        return {"ok": True}
+        return {"ok": True, "result": {"message_id": len(bot.out) + 1000}}
     bot.tg = tg
     bot.chiamate = []
     bot.zone_viste = []
@@ -174,12 +174,13 @@ def cq(chat, data):
 
 
 def inviati(b):
-    return [d["text"] for m, d in b.out if m == "sendMessage"]
+    """Messaggi mandati, escluso il pannello (che ha i suoi test)."""
+    return [d["text"] for m, d in b.out if m == "sendMessage" and not d["text"].startswith("📋")]
 
 
 def pulsanti(b):
-    """callback_data dei pulsanti dell'ultimo messaggio che ne aveva."""
-    ultimo = [d for m, d in b.out if m == "sendMessage" and d.get("reply_markup")][-1]
+    """callback_data dei pulsanti dell'ultimo messaggio (non pannello) che ne aveva."""
+    ultimo = [d for m, d in b.out if m == "sendMessage" and d.get("reply_markup") and not d["text"].startswith("📋")][-1]
     return [bt["callback_data"] for riga in ultimo["reply_markup"]["inline_keyboard"] for bt in riga]
 
 
@@ -261,7 +262,7 @@ def test_familiare_con_nome_e_comune(b):
     assert {20, 21} <= {d["message_id"] for m, d in b.out if m == "deleteMessage"}
     b.controlla(papa)
     assert b.zone_viste[-1] == {"tipo": "comune", "valore": "ALBA"}
-    offerta = [d for m, d in b.out if m == "sendMessage" and d.get("reply_markup")][-1]
+    offerta = [d for m, d in b.out if m == "sendMessage" and d.get("reply_markup") and not d["text"].startswith("📋")][-1]
     assert offerta["text"].startswith("[Familiare]") and "OSP ALBA" in offerta["text"]
     cb = pulsanti(b)
     assert len(cb) == 2  # Alba si', Asti (piu' vicina ma fuori comune) no
@@ -526,7 +527,7 @@ def test_controlla_non_a_raffica(b):
     b.offerte.clear()
     b.ultimo_msg.clear()
     b.on_message(msg(1, "/controlla"))
-    assert "il prossimo /controlla" in inviati(b)[-1]
+    assert "il prossimo e' possibile" in inviati(b)[-1]
 
 
 def test_cf_scritto_fuori_registrazione_viene_cancellato(b):
@@ -593,7 +594,7 @@ def test_menu_con_tutti_i_comandi(b):
     b.imposta_menu()
     menu = {d["scope"]["type"]: [x["command"] for x in d["commands"]] for m, d in b.out if m == "setMyCommands"}
     for scope in ("default", "all_private_chats", "chat"):
-        assert {"auto", "sede", "dati", "cancella", "help", "aggiungi"} <= set(menu[scope])
+        assert {"stato", "aggiungi", "help", "privacy"} <= set(menu[scope])
     assert "admin" in menu["chat"] and "admin" not in menu["default"]
     comandi_aiuto = {w[1:].strip(",.") for w in botmod.AIUTO.split() if w.startswith("/")}
     assert {x for x, _ in botmod.COMANDI if x != "help"} <= comandi_aiuto
@@ -687,3 +688,64 @@ def test_ricetta_non_piu_trovata_non_resta_occupata(b, monkeypatch):
     b.controlla(pratica(b))
     registra(b, chat=2)  # stessa ricetta, altra chat: ora si puo'
     assert pratica(b, 2)["stato"] == "attivo"
+
+
+def pannello(b, chat=1):
+    """Ultimo testo del pannello (inviato o modificato sul posto)."""
+    return [d["text"] for m, d in b.out if m in ("sendMessage", "editMessageText") and d["text"].startswith("📋")][-1]
+
+
+def test_pannello_fissato_e_aggiornato_sul_posto(b):
+    registra(b)
+    creati = [d for m, d in b.out if m == "sendMessage" and d["text"].startswith("📋")]
+    assert len(creati) == 1 and any(m == "pinChatMessage" for m, d in b.out)
+    b.controlla(pratica(b))
+    assert len([d for m, d in b.out if m == "sendMessage" and d["text"].startswith("📋")]) == 1  # modificato, non rimandato
+    t = pannello(b)
+    assert "📅" in t and "📍 Ospedale A, Via Roma, 1 - Torino (TO)" in t and "🔎 Cerco: solo in questa sede (Ospedale A)" in t
+    assert "⚡ Prenoto da solo: no" in t and "⏱" in t and "3 date viste" in t
+
+
+def test_pannello_spiega_la_zona_e_il_risultato(b):
+    registra(b)
+    aggiungi_familiare(b)
+    io, fam = b.store.della_chat(1)
+    b.controlla(fam)
+    t = pannello(b)
+    assert "👤 Familiare" in t and "🔎 Cerco: solo nel comune di Alba" in t and "allargo la ricerca" in t
+    assert "2 date viste in Piemonte, 1 a Alba, ✅ 1 prima della tua" in t
+    attiva_auto(b, n=1, giorni=3)
+    assert "⚡ Prenoto da solo: sì, date da" in pannello(b)
+
+
+def test_pannello_pulsanti_per_ricetta(b):
+    registra(b)
+    aggiungi_familiare(b)
+    io, fam = b.store.della_chat(1)
+    b.aggiorna_pannello(1)
+    ultimo = [d for m, d in b.out if m in ("sendMessage", "editMessageText") and d["text"].startswith("📋")][-1]
+    cb = [bt["callback_data"] for r in ultimo["reply_markup"]["inline_keyboard"] for bt in r]
+    assert f"sc:pausa:{fam['id']}:{botmod.versione(fam)}" in cb and f"sc:sede:{io['id']}:{botmod.versione(io)}" in cb
+    b.on_callback(cq(1, f"sc:pausa:{fam['id']}:{botmod.versione(fam)}"))
+    assert b.store.get(fam["id"])["stato"] == "pausa" and "⏸ Controlli in pausa" in pannello(b)
+
+
+def test_regola_in_ogni_avviso(b):
+    registra(b)
+    b.controlla(pratica(b))
+    offerta = [d for m, d in b.out if m == "sendMessage" and d.get("reply_markup") and not d["text"].startswith("📋")][-1]
+    assert "🔎 Solo in questa sede" in offerta["text"] and "⚡ decidi tu" in offerta["text"]
+
+
+def test_stato_rimanda_il_pannello_in_fondo(b):
+    registra(b)
+    vecchio = b.store.pannello(1)
+    b.ultimo_msg.clear()
+    b.on_message(msg(1, "/stato"))
+    assert b.store.pannello(1) != vecchio and ("deleteMessage", {"chat_id": 1, "message_id": vecchio}) in b.out
+
+
+def test_nomi_leggibili():
+    assert botmod.prestazione("TC DEL TORACE E DELL ADDOME SUPERIORE, CON E SENZA MEZZO DI CONTRASTO - 12.34") ==         "TC del torace e dell addome superiore, con e…"
+    assert botmod.prestazione("VISITA GENERALE DI CONTROLLO - 11.11") == "Visita generale di controllo"
+    assert botmod.indirizzo(c.Luogo("X", "Y", "VIA ESEMPIO 10 - ASTI (AT)")) == "Via Esempio 10 - Asti (AT)"

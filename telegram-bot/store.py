@@ -29,6 +29,10 @@ CREATE TABLE IF NOT EXISTS pratiche (
     coppia    TEXT UNIQUE                 -- HMAC di codice fiscale + NRE: una ricetta, una sola pratica
 );
 CREATE INDEX IF NOT EXISTS ix_pratiche_chat ON pratiche(chat_id);
+CREATE TABLE IF NOT EXISTS pannelli (
+    chat_id    INTEGER PRIMARY KEY,
+    message_id INTEGER NOT NULL           -- messaggio fissato che il bot aggiorna con lo stato delle ricette
+);
 """
 REGISTRAZIONE = ("cf", "nre", "nome", "sede", "comune")
 BASE = ("id", "chat_id", "stato", "prossimo", "errori", "creato")
@@ -120,7 +124,19 @@ class Store:
         self.db.commit()
         self._vacuum()
 
+    def pannello(self, chat_id):
+        r = self.db.execute("SELECT message_id FROM pannelli WHERE chat_id = ?", (chat_id,)).fetchone()
+        return r["message_id"] if r else None
+
+    def set_pannello(self, chat_id, message_id):
+        if message_id:
+            self.db.execute("INSERT OR REPLACE INTO pannelli (chat_id, message_id) VALUES (?, ?)", (chat_id, message_id))
+        else:
+            self.db.execute("DELETE FROM pannelli WHERE chat_id = ?", (chat_id,))
+        self.db.commit()
+
     def delete_chat(self, chat_id):
+        self.db.execute("DELETE FROM pannelli WHERE chat_id = ?", (chat_id,))
         self.db.execute("DELETE FROM pratiche WHERE chat_id = ?", (chat_id,))
         self.db.commit()
         self._vacuum()

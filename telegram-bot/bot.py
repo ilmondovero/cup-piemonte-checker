@@ -80,24 +80,20 @@ PRIVACY = (
     "I messaggi in cui mi scrivi codice fiscale e NRE li cancello dalla chat appena letti.")
 
 AIUTO = (
-    "Comandi:\n"
-    "/stato – ultimo controllo e prenotazioni\n"
-    "/controlla – controlla adesso\n"
+    "📋 In alto nella chat trovi il pannello fissato con le tue ricette: prenotazione, dove cerco, "
+    "conferma automatica ed esito dell'ultimo controllo. Si aggiorna da solo; i pulsanti sotto ogni "
+    "ricetta cambiano dove cercare (🔎), la conferma automatica (⚡), la pausa (⏸) o controllano subito (🔄).\n\n"
+    "/stato – riporta il pannello in fondo alla chat\n"
     "/aggiungi – segui un'altra ricetta (per esempio di un familiare)\n"
     "/dati – i dati che conservo\n"
     "/modifica – cambia codice fiscale e ricetta\n"
-    "/sede – dove cercare\n"
-    "/auto – conferma automatica delle date migliori\n"
-    "/pausa, /riprendi – sospendi o riattiva i controlli\n"
     "/cancella – elimina una ricetta o tutti i dati\n"
-    "/privacy – come tratto i tuoi dati")
+    "/privacy – come tratto i tuoi dati\n\n"
+    "Funzionano anche /sede, /auto, /pausa, /riprendi e /controlla.")
 
-COMANDI = [("stato", "Ultimo controllo e prenotazioni"), ("controlla", "Controlla adesso"),
-           ("aggiungi", "Segui un'altra ricetta"), ("dati", "I dati che conservo"),
-           ("modifica", "Cambia codice fiscale e ricetta"), ("sede", "Dove cercare"),
-           ("auto", "Conferma automatica"), ("pausa", "Sospendi i controlli"),
-           ("riprendi", "Riattiva i controlli"), ("cancella", "Elimina una ricetta o tutti i dati"),
-           ("privacy", "Come tratto i tuoi dati"), ("help", "Elenco dei comandi")]
+COMANDI = [("stato", "Il pannello delle tue ricette"), ("aggiungi", "Segui un'altra ricetta"),
+           ("help", "Come funziona"), ("privacy", "Come tratto i tuoi dati")]
+PICCOLE = {"di", "da", "del", "della", "dei", "degli", "delle", "in", "per"}  # gli articoli no: nei nomi contano
 
 AUTO_TESTO = (
     "⚡ Conferma automatica\n\n"
@@ -167,11 +163,42 @@ def descrivi(res):
     return "\n".join(righe)
 
 
-def auto_descr(p):
+def titolo(s):
+    """"OSPEDALE DI ESEMPIO NORD" -> "Ospedale di Esempio Nord" (i nomi del portale sono in maiuscolo)."""
+    parole = s.lower().split()
+    # "a"/"e" di una sola lettera restano maiuscole: nei nomi sono piu' spesso sigle ("OSPEDALE A") che preposizioni
+    return " ".join(w if i and w in PICCOLE and len(w) > 1 else w[:1].upper() + w[1:] for i, w in enumerate(parole))
+
+
+PAROLINE = {"DI", "DA", "DEL", "DAL", "AL", "E", "ED", "CON", "PER", "IN", "NEL", "SU", "SUL", "TRA", "FRA",
+            "DEI", "GLI", "LE", "LA", "IL", "LO", "UN", "UNA", "A", "O"}  # parole corte che non sono sigle
+
+
+def indirizzo(luogo):
+    """"VIA ROMA, 1 - TORINO (TO)" -> "Via Roma, 1 - Torino (TO)"."""
+    m = re.match(r"^(.*?)\s*(\([A-Z]{2}\))?\s*$", luogo.indirizzo)
+    return (titolo(m.group(1)) + (" " + m.group(2) if m.group(2) else "")).strip()
+
+
+def prestazione(cosa, massimo=45):
+    """Nome della prestazione leggibile: sigle (RM, TC, ECG) maiuscole, taglio a fine parola."""
+    parole = cosa.split(" - ")[0].split()
+    testo = " ".join(w if len(w) <= 3 and w.isupper() and w.isalpha() and w not in PAROLINE else w.lower()
+                     for w in parole)
+    testo = testo[:1].upper() + testo[1:]
+    return testo if len(testo) <= massimo else testo[:massimo + 1].rsplit(" ", 1)[0].rstrip(",") + "…"
+
+
+def dal_giorno(p):
     a = p.get("auto")
-    if not a:
-        return "disattivata"
-    return "attiva, date da " + ("domani" if a["giorni"] == 1 else f"tra {a['giorni']} giorni") + " in poi"
+    return adesso().date() + timedelta(days=a["giorni"]) if a else None
+
+
+def auto_descr(p):
+    d = dal_giorno(p)
+    if not d:
+        return "no, ti chiedo prima di prenotare"
+    return f"sì, date da {GIORNI[d.weekday()]} {d:%d/%m} in poi"
 
 
 def zona_di(p):
@@ -186,12 +213,22 @@ def descr_zona(zona, att):
     z = cup_http.zona_norm(zona)
     tipo, v = z["tipo"], z["valore"]
     if tipo == "sede":
-        return f"solo {v or (att.luogo.sede if att else 'la sede attuale')}"
+        return f"solo in questa sede ({titolo(v or (att.luogo.sede if att else ''))})"
     if tipo == "comune":
-        return f"solo nel comune di {(v or (cup_http.comune(att.luogo) if att else '')).title()}"
+        return f"solo nel comune di {titolo(v or (cup_http.comune(att.luogo) if att else ''))}"
     if tipo == "provincia":
-        return f"solo in provincia / citta' metropolitana ({v or (cup_http.provincia(att.luogo) if att else '')})"
-    return "qualsiasi sede proposta dal CUP"
+        return f"in tutta la provincia ({v or (cup_http.provincia(att.luogo) if att else '')})"
+    return "ovunque proponga il CUP"
+
+
+def area_breve(zona, att):
+    """Per il riepilogo del controllo: "18 date viste in Piemonte, 0 a Torino"."""
+    z = cup_http.zona_norm(zona)
+    if z["tipo"] == "comune":
+        return f"a {titolo(z['valore'] or (cup_http.comune(att.luogo) if att else ''))}"
+    if z["tipo"] == "provincia":
+        return f"in provincia ({z['valore'] or (cup_http.provincia(att.luogo) if att else '')})"
+    return ""
 
 
 def maschera(s, visibili=4):
@@ -297,6 +334,7 @@ class Bot:
         except (cup_http.NonTrovata, cup_http.NonAttiva) as e:
             p.update(stato="pausa", pausa_da=time.time(), libera=True)
             self.store.save(p)
+            self.aggiorna_pannello(chat)
             self.dire(p, f"Non trovo piu' una prenotazione attiva per questa ricetta ({e}): forse e' stata "
                          "disdetta, spostata altrove o gia' effettuata. Ho sospeso i controlli.\n"
                          "/modifica per un'altra ricetta, /riprendi per riprovare, /cancella per eliminarla.")
@@ -308,7 +346,9 @@ class Bot:
                 self.alert_admin(f"Errore imprevisto nel controllo di {uid(chat)}: {type(e).__name__}")
             p["errori"] = p.get("errori", 0) + 1
             p["ultimo"] = {"ts": time.time(), "testo": f"errore: {e}"}
+            p["riassunto"] = {**(p.get("riassunto") or {}), "ts": time.time(), "errore": True}
             self.store.save(p)
+            self.aggiorna_pannello(chat)
             log.info("controllo %s/%s: errore %d: %s", uid(chat), p["id"], p["errori"], type(e).__name__)
             if manuale or p["errori"] in AVVISA_ERRORI:
                 motivo = "il portale CUP non risponde" if isinstance(e, requests.RequestException) else str(e)
@@ -322,8 +362,14 @@ class Bot:
             self.store.delete(p["id"])
             self.dire(p, f"La data della prenotazione ({fmt(att.quando)}) e' passata: ho cancellato i dati di "
                          "questa ricetta. Per seguirne un'altra: /aggiungi.")
+            self.aggiorna_pannello(chat)
             return None
-        p.update(errori=0, attuale=pren_to_dict(att), ultimo={"ts": time.time(), "testo": descrivi(res)})
+        zona = zona_di(p)
+        nell_area = [x for x in res["slots"] if cup_http.ammesso(x, att, zona)]
+        p.update(errori=0, attuale=pren_to_dict(att), ultimo={"ts": time.time(), "testo": descrivi(res)},
+                 riassunto={"ts": time.time(), "viste": len(res["slots"]), "area": len(nell_area),
+                            "migliori": len(res["migliori"]), "estesa": bool(cup_http.estensioni(zona)),
+                            "prima_area": fmt(nell_area[0].quando) if nell_area else ""})
         log.info("controllo %s/%s: %d date, %d migliori", uid(chat), p["id"], len(res["slots"]), len(res["migliori"]))
         notificati = p.get("notificati") or {}  # data -> quando e' stata offerta l'ultima volta
         if isinstance(notificati, list):
@@ -339,7 +385,8 @@ class Bot:
                 slot = candidati[0]  # la piu' vicina tra quelle ammesse
                 p["tentati_auto"] = sorted(tentati | {slot.key()})
                 self.store.save(p)
-                self.dire(p, "⚡ Conferma automatica: ho trovato una data prima.\n\n" + descrivi(res))
+                self.dire(p, "⚡ Conferma automatica: ho trovato una data prima.\n\n" + descrivi(res) +
+                          "\n\n" + self.regola(p))
                 if self.prenota(p, slot, res["sessione"], automatica=True) != "fallita":
                     return res
                 p = self.store.get(p["id"])
@@ -352,8 +399,9 @@ class Bot:
             notificati.update({x.key(): ora for x in res["migliori"]})
             p["notificati"] = notificati
         elif manuale:
-            self.dire(p, descrivi(res))
+            self.dire(p, descrivi(res) + "\n\n" + self.regola(p))
         self.store.save(p)
+        self.aggiorna_pannello(chat)
         return res
 
     def offri(self, p, res, ignorati=()):
@@ -368,7 +416,7 @@ class Bot:
                    for i, x in enumerate(slots)]
         buttons.append([{"text": "Ignora", "callback_data": f"x:{pid}:{token}"}])
         prova = "\n(MODALITA' PROVA: il pulsante si ferma al riepilogo, non conferma)" if self.prova else ""
-        ok = self.dire(p, "🎉 C'e' una data PRIMA!\n\n" + descrivi(res) +
+        ok = self.dire(p, "🎉 C'e' una data PRIMA!\n\n" + descrivi(res) + "\n\n" + self.regola(p) +
                        f"\n\nTocca per spostare la prenotazione (valido {TTL_OFFERTA // 60} minuti).{prova}", buttons)
         if ok:
             self.offerte[pid] = {"token": token, "ts": time.time(), "sessione": res["sessione"], "slots": slots}
@@ -416,7 +464,8 @@ class Bot:
                      f"📅 {fmt(slot.quando)}\n📍 {slot.luogo}\n\n"
                      "Arriveranno SMS/email dal CUP con il nuovo promemoria; controlla anche il codice di "
                      "pagamento del ticket. Se non si puo' andare, disdire o spostare almeno 2 giorni lavorativi "
-                     "prima. Continuo a cercare date ancora prima.")
+                     "prima. Continuo a cercare date ancora prima.\n\n" + self.regola(p))
+        self.aggiorna_pannello(chat)
         return "ok"
 
     def sospendi_auto(self, p):
@@ -521,9 +570,10 @@ class Bot:
         if nuova:
             p.update(stato="attivo", prossimo=time.time() + 60)
         self.store.save(p)
-        self.dire(p, f"Ok: cerco date {descr_zona(zona, att)}." +
+        self.dire(p, f"Ok: cerco {descr_zona(zona, att)}." +
                   (f"\n\nFatto! Controllo ogni {self.intervallo_di(p['chat_id'])} minuti e ti scrivo appena esce una "
                    f"data prima del {fmt(att.quando)}.\n\n{AIUTO}" if nuova else ""))
+        self.aggiorna_pannello(p["chat_id"], nuovo=nuova)
 
     def ricevi_comune(self, p, testo):
         comune = " ".join(testo.split()).upper()
@@ -543,7 +593,7 @@ class Bot:
         return PRIVACY + (f"\n\nGestore del bot: {self.contatto}" if self.contatto else "")
 
     # --- azioni su una pratica (dopo la scelta, se ce n'e' piu' d'una) ------------------
-    AZIONI = ("sede", "auto", "pausa", "riprendi", "modifica", "cancella")
+    AZIONI = ("sede", "auto", "pausa", "riprendi", "modifica", "cancella", "controlla")
 
     def esegui(self, azione, p):
         if azione == "sede":
@@ -554,7 +604,9 @@ class Bot:
         elif azione == "pausa":
             p.update(stato="pausa", pausa_da=time.time())
             self.store.save(p)
-            self.dire(p, "Controlli sospesi. /riprendi per ripartire.")
+            self.aggiorna_pannello(p["chat_id"])
+        elif azione == "controlla":
+            self.controlla_ora(p)
         elif azione == "riprendi":
             p.update(stato="attivo", prossimo=time.time(), errori=0)
             p.pop("libera", None)
@@ -563,7 +615,7 @@ class Bot:
             except storemod.GiaRegistrata:
                 self.dire(p, "Nel frattempo questa ricetta e' stata registrata da un'altra chat: non posso riattivarla.")
                 return
-            self.dire(p, "Controlli riattivati.")
+            self.aggiorna_pannello(p["chat_id"])
         elif azione == "modifica":
             self.offerte.pop(p["id"], None)
             self.chiedi_cf(p)
@@ -571,6 +623,103 @@ class Bot:
             self.dire(p, f"Cancello i dati di questa ricetta ({self.nome(p)})? I suoi controlli si fermano.",
                       [[{"text": "Si', cancella", "callback_data": f"del:{p['id']}:{versione(p)}:1"},
                         {"text": "No", "callback_data": f"del:{p['id']}:{versione(p)}:0"}]])
+
+    def controlla_ora(self, p):
+        ultimo = (p.get("ultimo") or {}).get("ts", 0)
+        pausa = min(PAUSA_CONTROLLA, self.intervallo_di(p["chat_id"]) * 60)
+        if self.offerta_valida(p["id"]):
+            self.dire(p, "C'e' un'offerta aperta: usa i suoi pulsanti (o Ignora) prima di un nuovo controllo.")
+        elif time.time() - ultimo < pausa:
+            # ogni controllo tiene bloccata una data: niente controlli a raffica
+            self.dire(p, f"Ultimo controllo alle {orario(ultimo):%H:%M}: il prossimo e' possibile dalle "
+                         f"{orario(ultimo + pausa):%H:%M}.")
+        else:
+            self.dire(p, "Controllo in corso…")
+            self.controlla(p, manuale=True)
+
+    # --- pannello fissato: una sola vista, aggiornata sul posto -------------------------
+    def regola(self, p):
+        """La regola con cui il bot sta cercando, ripetuta in ogni avviso."""
+        att = attuale_di(p)
+        z = descr_zona(zona_di(p), att)
+        d = dal_giorno(p)
+        return (f"🔎 {z[0].upper()}{z[1:]} · ⚡ " +
+                (f"prenoto da solo date da {GIORNI[d.weekday()]} {d:%d/%m} in poi" if d else "decidi tu"))
+
+    def riassunto(self, p):
+        r = p.get("riassunto")
+        if p["stato"] == "pausa":
+            return "⏸ Controlli in pausa"
+        if not r:
+            return "⏱ Primo controllo tra poco"
+        ora = orario(r["ts"]).strftime("%H:%M")
+        if r.get("errore"):
+            return f"⏱ {ora} · il portale non ha risposto, riprovo da solo"
+        att, zona = attuale_di(p), zona_di(p)
+        pezzi = [f"{r['viste']} date viste" + (" in Piemonte" if r.get("estesa") else "")]
+        if area_breve(zona, att):
+            pezzi.append(f"{r['area']} {area_breve(zona, att)}")
+        if r["migliori"]:
+            pezzi.append(f"✅ {r['migliori']} prima della tua")
+        elif r.get("prima_area") and area_breve(zona, att):
+            pezzi.append(f"la prima {area_breve(zona, att)} e' {r['prima_area']}, dopo la tua")
+        else:
+            pezzi.append("nessuna prima della tua")
+        return f"⏱ {ora} · " + ", ".join(pezzi)
+
+    def scheda(self, p):
+        if p["stato"] in REGISTRAZIONE or not p.get("attuale"):
+            return f"👤 {self.nome(p)}\n📝 Registrazione in corso"
+        att = attuale_di(p)
+        righe = [f"👤 {self.nome(p)} — {prestazione(att.cosa)}",
+                 f"📅 {fmt(att.quando)}",
+                 f"📍 {titolo(att.luogo.sede)}, {indirizzo(att.luogo)}",
+                 f"🔎 Cerco: {descr_zona(zona_di(p), att)}"]
+        if cup_http.estensioni(zona_di(p)):
+            righe.append("     (allargo la ricerca a tutto il Piemonte, poi filtro)")
+        righe.append(f"⚡ Prenoto da solo: {auto_descr(p)}")
+        righe.append(self.riassunto(p))
+        return "\n".join(righe)
+
+    def testo_pannello(self, chat):
+        pratiche = self.store.della_chat(chat)
+        if not pratiche:
+            return None, None
+        righe = [[{"text": "🔎 Dove", "callback_data": f"sc:sede:{p['id']}:{versione(p)}"},
+                  {"text": "⚡ Auto", "callback_data": f"sc:auto:{p['id']}:{versione(p)}"},
+                  {"text": "▶️ Riprendi" if p["stato"] == "pausa" else "⏸ Pausa",
+                   "callback_data": f"sc:{'riprendi' if p['stato'] == 'pausa' else 'pausa'}:{p['id']}:{versione(p)}"},
+                  {"text": "🔄 Ora", "callback_data": f"sc:controlla:{p['id']}:{versione(p)}"}]
+                 for p in pratiche if p["stato"] in ("attivo", "pausa")]
+        if len(pratiche) > 1:  # con piu' ricette, una riga col nome sopra i suoi pulsanti
+            attive = [p for p in pratiche if p["stato"] in ("attivo", "pausa")]
+            righe = [r for p, pulsanti in zip(attive, righe)
+                     for r in ([{"text": f"👤 {self.nome(p)}", "callback_data": "pn:nome"}], pulsanti)]
+        testo = (f"📋 Le tue ricette · aggiornato alle {adesso():%H:%M}\n\n" +
+                 "\n\n".join(self.scheda(p) for p in pratiche))
+        return testo, righe
+
+    def aggiorna_pannello(self, chat, nuovo=False):
+        """Aggiorna il messaggio fissato; con nuovo=True lo rimanda in fondo alla chat e lo fissa di nuovo."""
+        testo, righe = self.testo_pannello(chat)
+        mid = self.store.pannello(chat)
+        if not testo:
+            if mid:
+                self.tg("unpinChatMessage", chat_id=chat, message_id=mid)
+                self.store.set_pannello(chat, None)
+            return
+        markup = {"inline_keyboard": righe or []}
+        if mid and not nuovo:
+            r = self.tg("editMessageText", chat_id=chat, message_id=mid, text=testo[:4000], reply_markup=markup)
+            if r.get("ok") or "not modified" in (r.get("description") or ""):
+                return
+        if mid:
+            self.tg("deleteMessage", chat_id=chat, message_id=mid)
+        r = self.tg("sendMessage", chat_id=chat, text=testo[:4000], reply_markup=markup)
+        nuovo_id = (r.get("result") or {}).get("message_id")
+        if nuovo_id:
+            self.tg("pinChatMessage", chat_id=chat, message_id=nuovo_id, disable_notification=True)
+        self.store.set_pannello(chat, nuovo_id)
 
     def scegli(self, chat, azione, pratiche):
         righe = [[{"text": self.nome(p), "callback_data": f"sc:{azione}:{p['id']}:{versione(p)}"}] for p in pratiche]
@@ -665,26 +814,10 @@ class Bot:
                              f"Conferma automatica: {auto_descr(p)}\n\n"
                              + (descrivi_prenotazione(att) if att else "Registrazione non completata."))
         elif cmd == "/stato":
-            for p in attive:
-                ult = p.get("ultimo")
-                if ult:
-                    self.dire(p, f"Ultimo controllo {orario(ult['ts']):%d/%m %H:%M}"
-                                 f"{' (IN PAUSA)' if p['stato'] == 'pausa' else ''}:\n\n{ult['testo']}")
-                elif p.get("attuale"):
-                    self.dire(p, descrivi_prenotazione(attuale_di(p)) + "\n\nNessun controllo ancora eseguito.")
+            self.aggiorna_pannello(chat, nuovo=True)
         elif cmd == "/controlla":
             for p in attive:
-                ultimo = (p.get("ultimo") or {}).get("ts", 0)
-                pausa = min(PAUSA_CONTROLLA, self.intervallo_di(chat) * 60)
-                if self.offerta_valida(p["id"]):
-                    self.dire(p, "C'e' un'offerta aperta: usa i suoi pulsanti (o Ignora) prima di un nuovo controllo.")
-                elif time.time() - ultimo < pausa:
-                    # ogni controllo tiene bloccata una data: niente controlli a raffica
-                    self.dire(p, f"Ultimo controllo alle {orario(ultimo):%H:%M}: il prossimo "
-                                 f"/controlla e' possibile dalle {orario(ultimo + pausa):%H:%M}.")
-                else:
-                    self.dire(p, "Controllo in corso…")
-                    self.controlla(p, manuale=True)
+                self.controlla_ora(p)
         elif cmd[1:] in self.AZIONI:
             if len(attive) == 1:
                 self.esegui(cmd[1:], attive[0])
@@ -731,6 +864,9 @@ class Bot:
             if self.store.della_chat(chat):
                 for p in self.store.della_chat(chat):
                     self.offerte.pop(p["id"], None)
+                mid = self.store.pannello(chat)
+                if mid:
+                    self.tg("unpinChatMessage", chat_id=chat, message_id=mid)
                 self.store.delete_chat(chat)
                 self.send(chat, "Fatto: ho cancellato tutti i tuoi dati. Se ti serve di nuovo, scrivi /start.")
             return
@@ -761,6 +897,7 @@ class Bot:
                 resto = self.store.della_chat(chat)
                 self.send(chat, f"Fatto: ho cancellato i dati di \"{self.nome(p)}\"." +
                           ("" if resto else " Non seguo piu' nessuna ricetta: per ricominciare scrivi /start."))
+                self.aggiorna_pannello(chat)
         elif kind == "sede" and len(parts) == 3 and p.get("attuale") and \
                 p["stato"] in ("sede", "attivo", "pausa") and parts[2] in ("sede", "comune", "provincia", "tutte", "altro"):
             togli_pulsanti()
@@ -787,11 +924,11 @@ class Bot:
             p["auto"] = {"giorni": giorni} if giorni else None
             self.store.save(p)
             if giorni:
-                self.dire(p, f"⚡ Conferma automatica attiva: prenoto da sola la prima data prima di quella attuale, "
-                             f"da {'domani' if giorni == 1 else f'tra {giorni} giorni'} in poi, "
-                             f"{descr_zona(zona_di(p), attuale_di(p))}. /auto per cambiarla o disattivarla.")
+                self.dire(p, "⚡ Conferma automatica attiva: prenoto da solo la prima data prima di quella attuale.\n"
+                             + self.regola(p))
             else:
                 self.dire(p, "Conferma automatica disattivata: ti mando il pulsante e decidi tu.")
+            self.aggiorna_pannello(chat)
         elif kind in ("p", "x"):
             self.on_offerta(p, parts, togli_pulsanti)
 
