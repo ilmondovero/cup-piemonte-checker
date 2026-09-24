@@ -33,7 +33,7 @@ from store import Store
 log = logging.getLogger("cupbot")
 
 TTL_OFFERTA = 20 * 60  # secondi: oltre, la sessione che tiene lo slot potrebbe essere scaduta
-AVVISA_ERRORI = (1, 6, 20)  # avvisa al 1o, 6o e 20o errore consecutivo, non a ogni giro
+AVVISA_ERRORI = (3, 12, 40)  # un timeout isolato del portale e' normale: avvisa solo se continua
 MIN_INTERVALLO = 30  # minuti: ogni controllo tiene bloccata una data ~40 minuti
 MIN_INTERVALLO_ADMIN = 5  # solo per chi gestisce il bot: come una persona che aggiorna la pagina
 PAUSA_CONTROLLA = 15 * 60  # secondi tra due /controlla dello stesso utente
@@ -238,8 +238,9 @@ class Bot:
             self.store.save(u)
             log.info("controllo %s: errore %d: %s", uid(chat), u["errori"], type(e).__name__)
             if manuale or u["errori"] in AVVISA_ERRORI:
-                self.send(chat, f"⚠️ Il portale CUP non ha risposto come previsto: {e}"
-                                + ("" if manuale else "\nRiprovo automaticamente."))
+                motivo = "il portale CUP non risponde" if isinstance(e, requests.RequestException) else str(e)
+                self.send(chat, f"⚠️ {motivo[0].upper()}{motivo[1:]}" + (
+                    "" if manuale else f" (da {u['errori']} controlli di fila). Continuo a riprovare da solo."))
             return None
 
         att = res["attuale"]
@@ -251,31 +252,39 @@ class Bot:
             return None
         u.update(errori=0, attuale=pren_to_dict(att), ultimo={"ts": time.time(), "testo": descrivi(res)})
         log.info("controllo %s: %d date, %d migliori", uid(chat), len(res["slots"]), len(res["migliori"]))
-        notificati = set(u.get("notificati", []))
+        notificati = u.get("notificati") or {}  # data -> quando e' stata offerta l'ultima volta
+        if isinstance(notificati, list):
+            notificati = dict.fromkeys(notificati, 0)
+        ignorati = set(u.get("ignorati", []))
         auto = u.get("auto")
         if auto:
+            # un solo tentativo automatico per data; le date gia' offerte col pulsante valgono comunque
+            tentati = set(u.get("tentati_auto", []))
             dal = date.today() + timedelta(days=auto["giorni"])
-            candidati = [x for x in res["migliori"] if x.luogo.sede and x.quando.date() >= dal and x.key() not in notificati]
+            candidati = [x for x in res["migliori"] if x.luogo.sede and x.quando.date() >= dal and x.key() not in tentati]
             if candidati:
                 slot = candidati[0]  # la piu' vicina tra quelle ammesse
-                u["notificati"] = sorted(notificati | {slot.key()})  # un solo tentativo per data
+                u["tentati_auto"] = sorted(tentati | {slot.key()})
                 self.store.save(u)
                 self.send(chat, "⚡ Conferma automatica: ho trovato una data prima della tua.\n\n" + descrivi(res))
                 self.prenota(u, slot, res["sessione"], automatica=True)
                 return res
-        nuove = [x for x in res["migliori"] if x.key() not in notificati]
-        if nuove and self.offri(u, res):
-            u["notificati"] = sorted(notificati | {x.key() for x in nuove})
+        # si ripropone una data se la sua offerta e' scaduta o persa (es. riavvio), non se l'utente l'ha ignorata
+        ora = time.time()
+        nuove = [x for x in res["migliori"] if x.key() not in ignorati and ora - notificati.get(x.key(), 0) > TTL_OFFERTA]
+        if nuove and self.offri(u, res, ignorati):
+            notificati.update({x.key(): ora for x in res["migliori"]})
+            u["notificati"] = notificati
         elif manuale:
             self.send(chat, descrivi(res))
         self.store.save(u)
         return res
 
-    def offri(self, u, res):
+    def offri(self, u, res, ignorati=()):
         """Messaggio con un pulsante per ogni data migliore (max 3). La sessione del controllo resta
         in memoria: e' lei che tiene bloccata la data proposta."""
         token = secrets.token_hex(4)
-        slots = [x for x in res["migliori"] if x.luogo.sede][:3]
+        slots = [x for x in res["migliori"] if x.luogo.sede and x.key() not in ignorati][:3]
         if not slots:
             return False
         buttons = [[{"text": f"✅ Prenota {fmt(x.quando)}", "callback_data": f"p:{token}:{i}"}] for i, x in enumerate(slots)]
@@ -315,7 +324,8 @@ class Bot:
         if self.prova:
             self.send(chat, "🧪 " + esito)
             return "ok"
-        u["notificati"] = []  # la nuova data diventa il riferimento dei prossimi controlli
+        # la nuova data diventa il riferimento dei prossimi controlli
+        u.update(notificati={}, ignorati=[], tentati_auto=[])
         u["attuale"] = {**u.get("attuale", {}), "quando": slot.quando.isoformat(), "sede": slot.luogo.sede,
                         "ambulatorio": slot.luogo.ambulatorio, "indirizzo": slot.luogo.indirizzo}
         u["prossimo"] = time.time() + self.intervallo_di(chat) * 60
@@ -575,11 +585,11 @@ class Bot:
             return
         del self.offerte[chat]
         if parts[0] == "x":
-            self.send(chat, "Ok, ignorata.")
+            u["ignorati"] = sorted(set(u.get("ignorati", [])) | {x.key() for x in o["slots"]})
+            self.store.save(u)
+            self.send(chat, "Ok, non ti ripropongo queste date.")
             return
         if time.time() - o["ts"] > TTL_OFFERTA:
-            u["notificati"] = [k for k in u.get("notificati", []) if k not in {x.key() for x in o["slots"]}]
-            self.store.save(u)
             self.send(chat, "Offerta scaduta. Se la data c'e' ancora te la ripropongo al prossimo controllo.")
             return
         if u["stato"] not in ("attivo", "pausa"):

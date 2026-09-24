@@ -190,7 +190,12 @@ def test_offerta_scaduta(b):
     token = b.offerte[1]["token"]
     b.offerte[1]["ts"] -= botmod.TTL_OFFERTA + 1
     b.on_callback(cq(1, f"p:{token}:0"))
-    assert not b.chiamate and b.store.get(1)["notificati"] == []
+    assert not b.chiamate
+    u = b.store.get(1)
+    u["notificati"] = {MEGLIO.key(): time.time() - botmod.TTL_OFFERTA - 1}
+    b.store.save(u)
+    b.controlla(b.store.get(1))
+    assert 1 in b.offerte  # scaduta: riproposta
 
 
 def test_prenotazione_non_piu_attiva_mette_in_pausa(b, monkeypatch):
@@ -352,11 +357,15 @@ def test_auto_rispetta_la_sede(b):
 def test_auto_un_solo_tentativo_per_data(b, monkeypatch):
     registra(b)
     attiva_auto(b)
-    monkeypatch.setattr(c, "prenota", lambda *a, **k: (_ for _ in ()).throw(c.CupError("Slot non piu' disponibile")))
+    tentativi = []
+
+    def fallisce(*a, **k):
+        tentativi.append(1)
+        raise c.CupError("Slot non piu' disponibile")
+    monkeypatch.setattr(c, "prenota", fallisce)
     b.controlla(b.store.get(1))
-    n = len(inviati(b))
     b.controlla(b.store.get(1))
-    assert len(inviati(b)) == n
+    assert len(tentativi) == 1  # la seconda volta niente automatico: al massimo il pulsante
 
 
 def test_auto_si_disattiva_dopo_esito_incerto(b, monkeypatch):
@@ -410,6 +419,61 @@ def test_menu_con_tutti_i_comandi(b):
     assert "admin" in menu["chat"] and "admin" not in menu["default"]
     comandi_aiuto = {w[1:].strip(",.") for w in botmod.AIUTO.split() if w.startswith("/")}
     assert {c for c, _ in botmod.COMANDI if c != "help"} <= comandi_aiuto
+
+
+def test_auto_prende_anche_una_data_gia_offerta_col_pulsante(b):
+    registra(b)
+    b.controlla(b.store.get(1))  # offerta col pulsante, auto ancora spenta
+    assert 1 in b.offerte and not b.chiamate
+    b.offerte.clear()  # es. riavvio del bot
+    attiva_auto(b)
+    b.controlla(b.store.get(1))
+    assert b.chiamate == [(CF, MEGLIO.key(), "S", False)]
+
+
+def test_offerta_persa_col_riavvio_viene_riproposta(b):
+    registra(b)
+    b.controlla(b.store.get(1))
+    b.offerte.clear()  # riavvio: l'offerta in memoria sparisce
+    u = b.store.get(1)
+    u["notificati"] = {k: time.time() - botmod.TTL_OFFERTA - 1 for k in u["notificati"]}
+    b.store.save(u)
+    b.controlla(b.store.get(1))
+    assert 1 in b.offerte
+
+
+def test_ignora_non_ripropone(b):
+    registra(b)
+    b.controlla(b.store.get(1))
+    b.on_callback(cq(1, f"x:{b.offerte[1]['token']}"))
+    u = b.store.get(1)
+    u["notificati"] = {}
+    b.store.save(u)
+    b.controlla(b.store.get(1))
+    assert 1 not in b.offerte
+
+
+def test_notificati_in_formato_vecchio(b):
+    registra(b)
+    u = b.store.get(1)
+    u["notificati"] = [MEGLIO.key()]  # lista salvata dalla versione precedente
+    b.store.save(u)
+    b.controlla(b.store.get(1))
+    assert 1 in b.offerte
+
+
+def test_timeout_isolato_non_avvisa(b, monkeypatch):
+    registra(b)
+
+    def timeout(*a):
+        raise botmod.requests.ReadTimeout("HTTPSConnectionPool(host='x'): Read timed out.")
+    monkeypatch.setattr(c, "check", timeout)
+    n = len(inviati(b))
+    b.controlla(b.store.get(1))
+    b.controlla(b.store.get(1))
+    assert len(inviati(b)) == n
+    b.controlla(b.store.get(1))
+    assert "non risponde (da 3 controlli di fila)" in inviati(b)[-1] and "HTTPSConnectionPool" not in inviati(b)[-1]
 
 
 def test_pulizia(tmp_path):
