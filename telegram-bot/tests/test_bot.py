@@ -706,7 +706,7 @@ def test_pannello_fissato_e_aggiornato_sul_posto(b):
     assert len([d for m, d in b.out if m == "sendMessage" and d["text"].startswith("📋")]) == 1  # modificato, non rimandato
     t = pannello(b)
     assert "📅" in t and "📍 Ospedale A, Via Roma, 1 - Torino (TO)" in t and "🔎 Cerco: solo in questa sede (Ospedale A)" in t
-    assert "⚡ Prenoto da solo: no" in t and "⏱" in t and "3 date viste" in t
+    assert "⚡ Prenoto da solo: no" in t and "⏱" in t and "3 date trovate" in t
 
 
 def test_pannello_spiega_la_zona_e_il_risultato(b):
@@ -716,7 +716,7 @@ def test_pannello_spiega_la_zona_e_il_risultato(b):
     b.controlla(fam)
     t = pannello(b)
     assert "👤 Familiare" in t and "🔎 Cerco: solo nel comune di Alba" in t and "allargo la ricerca" in t
-    assert "2 date viste in Piemonte, 1 a Alba, ✅ 1 prima della tua" in t
+    assert "2 date trovate in Piemonte, 1 a Alba, ✅ 1 prima della tua" in t
     attiva_auto(b, n=1, giorni=3)
     assert "⚡ Prenoto da solo: sì, date da" in pannello(b)
 

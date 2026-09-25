@@ -307,13 +307,13 @@ def test_date_viste_luoghi_e_storico_dopo_un_controllo(app):
     assert fam["viste"] and fam["luoghi"] and len(fam["storico"]) == 1
     _, _, corpo = get(app, f"/ui/r/{fam['id']}/date")
     t = corpo.decode()
-    assert "Prima della tua, dove cerchi" in t and "Fuori da dove cerchi" in t and 'value="ASTI"' in t
+    assert "Prima della tua prenotazione, dove cerchi" in t and "In altre zone" in t and 'value="ASTI"' in t
     p2 = b.store.get(fam["id"])
     p2["storico"].append({"t": time.time() + 60, "a": p2["storico"][0]["a"], "r": p2["storico"][0]["r"]})
     b.store.save(p2)
     _, _, corpo = get(app, f"/ui/r/{fam['id']}/storico")
     t = corpo.decode()
-    assert "<svg" in t and "tua prenotazione" in t and "<title>" in t and "Tabella dei cambiamenti" in t
+    assert "<svg" in t and "tua prenotazione" in t and "<title>" in t and "Mostra i cambiamenti in tabella" in t
 
 
 def test_sede_solo_tra_quelle_viste(app):
@@ -338,7 +338,7 @@ def test_admin_solo_per_admin_e_metriche(app, monkeypatch):
 def test_scheda_con_prossimo_controllo_e_barra(app):
     _, _, corpo = get(app, "/ui/ricette")
     t = corpo.decode()
-    assert "⏭ Prossimo" in t and "📅 Date viste" in t and "📈 Storico" in t and "🔒" in t
+    assert "⏭ Prossimo controllo" in t and "🔄 Controlla ora" in t and "📈 Andamento" in t and "✏️ Modifica" in t and "🔒" in t
     assert "Aggiungi una ricetta" in t  # 2 ricette su 3: si puo' aggiungere
     app.bot.max_pratiche = 2
     assert "Aggiungi una ricetta" not in get(app, "/ui/ricette")[2].decode()
@@ -351,7 +351,7 @@ def test_date_viste_prenotabili_anche_fuori_area(app):
     b.offerte.clear()
     _, _, corpo = get(app, f"/ui/r/{fam['id']}/date")
     t = corpo.decode()
-    assert t.count('action="/ui/r/') >= 2 and "fuori da dove cerchi" in t and "PRIMA della data attuale" in t
+    assert t.count('action="/ui/r/') >= 2 and "fuori dalla zona in cui cerchi" in t and "PRIMA della data attuale" in t
     from test_bot import ASTI
     att = b.store.get(fam["id"])["attuale"]["quando"]
     post(app, f"/ui/r/{fam['id']}/vista", {"slot": ASTI.key(), "att": att})
@@ -366,7 +366,7 @@ def test_date_viste_vecchie_non_prenotabili(app):
     b.controlla(fam)
     b.sessioni[fam["id"]]["ts"] -= 3600
     _, _, corpo = get(app, f"/ui/r/{fam['id']}/date")
-    assert "Aggiorna le date" in corpo.decode() and 'action="/ui/r/' not in corpo.decode()
+    assert "🔄 Controlla ora" in corpo.decode() and 'action="/ui/r/' not in corpo.decode()
     from test_bot import ASTI
     post(app, f"/ui/r/{fam['id']}/vista", {"slot": ASTI.key()})
     b.esegui_coda()

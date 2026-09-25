@@ -45,21 +45,25 @@ Comandi: `/stato`, `/controlla`, `/aggiungi`, `/dati`, `/modifica`, `/sede`, `/a
 
 Con `WEBAPP_URL` impostato il bot serve anche una **Mini App Telegram**. Si apre dal pulsante "📱 App"
 accanto al campo di scrittura o dal pannello in chat. Ogni ricetta ha la sua scheda con prenotazione
-attuale, area di ricerca, ultimo controllo e ora del prossimo. Dall'app si può fare tutto quello che si
+attuale, dove cerco, prenotazione automatica, ultimo e prossimo controllo, e quattro pulsanti:
+"🔄 Controlla ora", "⏸ Pausa", "📈 Andamento", "✏️ Modifica". Dall'app si può fare tutto quello che si
 fa in chat:
 
 - **Ricette.** Aggiungere una ricetta (codice fiscale, NRE, nome; per il primo utente anche il consenso
-  all'informativa), cambiarla, rinominarla, cancellarla. C'è anche "cancella tutti i miei dati". La
-  ricerca sul portale la fa il bot e l'app aspetta il risultato.
-- **Dove cercare.** Stessa sede, comune, provincia, ovunque, oppure una delle sedi già viste nei
-  controlli. I comuni visti compaiono come suggerimenti.
-- **Date viste.** Tutte le date dell'ultimo controllo, divise in "prima della tua, dove cerchi", "dove
-  cerchi ma dopo la tua" e "fuori da dove cerchi". Finché la sessione del controllo è valida (20
-  minuti) ogni data si prenota con un tocco e la conferma nativa di Telegram, anche fuori area o più
-  tardi dell'attuale: è una scelta esplicita dell'utente, e valgono gli stessi controlli sul Riepilogo
-  e dopo la conferma. Poi c'è "🔄 Aggiorna le date". Un tocco su un comune restringe la ricerca lì.
-- **Storico.** La prima data utile degli ultimi 7 giorni, in grafico e in tabella.
-- **Altro.** Conferma automatica, pausa, "controlla ora", prenotazione di un'offerta aperta.
+  all'informativa). Da "✏️ Modifica": rinominarla, sostituirla con un'altra ricetta, cancellarla. Da 🔒
+  anche "cancella tutti i miei dati". La ricerca sul portale la fa il bot e l'app aspetta il risultato.
+- **Dove cerco** (si tocca la riga sulla scheda). Stessa sede, comune, provincia, ovunque, oppure una
+  delle sedi trovate nei controlli. I comuni trovati compaiono come suggerimenti.
+- **Prenoto da solo** (si tocca la riga sulla scheda). La conferma automatica e l'anticipo minimo.
+- **Date disponibili** (dalla riga "📅 3 date disponibili · la prima: …" sulla scheda). Tutte le date
+  dell'ultimo controllo, divise in "prima della tua prenotazione, dove cerchi", "dove cerchi, ma dopo la
+  tua prenotazione" e "in altre zone". Finché la sessione del controllo è valida (20 minuti) ogni data
+  si prenota con un tocco e la conferma nativa di Telegram, anche fuori zona o più tardi dell'attuale:
+  è una scelta esplicita dell'utente, e valgono gli stessi controlli sul Riepilogo e dopo la conferma.
+  Poi serve un nuovo "🔄 Controlla ora". Un tocco su un comune restringe la ricerca lì.
+- **Andamento.** La prima data utile degli ultimi 7 giorni, in grafico e in tabella.
+- **Controlla ora e Pausa.** Con le stesse regole della chat: se l'ultimo controllo è di meno di 15
+  minuti fa, o c'è un'offerta aperta, l'app lo dice subito. Un'offerta aperta si prenota dalla scheda.
 - **Admin** (solo `ADMIN_CHAT_ID`): contatori e tempi delle sessioni sul portale degli ultimi 7
   giorni. Le metriche stanno nel database (solo orario, durata ed esito, nessun dato personale), quindi
   sopravvivono ai riavvii.

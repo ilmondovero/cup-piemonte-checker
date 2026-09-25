@@ -231,7 +231,7 @@ def descr_zona(zona, att):
 
 
 def area_breve(zona, att):
-    """Per il riepilogo del controllo: "18 date viste in Piemonte, 0 a Torino"."""
+    """Per il riepilogo del controllo: "18 date trovate in Piemonte, 0 a Torino"."""
     z = cup_http.zona_norm(zona)
     if z["tipo"] == "comune":
         return f"a {titolo(z['valore'] or (cup_http.comune(att.luogo) if att else ''))}"
@@ -504,11 +504,11 @@ class Bot:
             return "fallita"
         s = self.sessioni.get(p["id"])
         if not s or time.time() - s["ts"] > TTL_OFFERTA:
-            self.dire(p, "Le date viste sono di un controllo vecchio: tocca 🔄 Ora e riprova.")
+            self.dire(p, "Quelle date sono di un controllo di più di 20 minuti fa: tocca 🔄 Controlla ora e riprova.")
             return "fallita"
         uguali = [x for x in s["slots"] if x.key() == chiave]
         if len(uguali) != 1 or not (uguali[0].proposta or uguali[0].seleziona_id):
-            self.dire(p, "Questa data non è più prenotabile dal controllo di prima: tocca 🔄 Ora e riprova.")
+            self.dire(p, "Questa data non è più prenotabile dal controllo di prima: tocca 🔄 Controlla ora e riprova.")
             return "fallita"
         slot = uguali[0]
         if slot.quando == attuale_di(p).quando:
@@ -580,7 +580,7 @@ class Bot:
     def chiedi_cf(self, p):
         p.pop("nre", None)  # la coppia CF+NRE si riforma solo a ricerca riuscita
         p.pop("attende_comune", None)
-        p.pop("viste", None)  # le date viste erano della ricetta vecchia
+        p.pop("viste", None)  # le date trovate erano della ricetta vecchia
         self.scarta(p["id"])
         p.pop("libera", None)
         p.update(stato="cf", creato=time.time(), auto=None, notificati={}, ignorati=[], tentati_auto=[])
@@ -766,7 +766,7 @@ class Bot:
         if r.get("errore"):
             return f"⏱ {ora} · il portale non ha risposto, riprovo da solo"
         att, zona = attuale_di(p), zona_di(p)
-        pezzi = [f"{r['viste']} date viste" + (" in Piemonte" if r.get("estesa") else "")]
+        pezzi = [("1 data trovata" if r['viste'] == 1 else f"{r['viste']} date trovate") + (" in Piemonte" if r.get("estesa") else "")]
         if area_breve(zona, att):
             pezzi.append(f"{r['area']} {area_breve(zona, att)}")
         if r["migliori"]:
@@ -795,16 +795,18 @@ class Bot:
         pratiche = self.store.della_chat(chat)
         if not pratiche:
             return None, None
-        righe = [[{"text": "🔎 Dove", "callback_data": f"sc:sede:{p['id']}:{versione(p)}"},
-                  {"text": "⚡ Auto", "callback_data": f"sc:auto:{p['id']}:{versione(p)}"},
-                  {"text": "▶️ Riprendi" if p["stato"] == "pausa" else "⏸ Pausa",
-                   "callback_data": f"sc:{'riprendi' if p['stato'] == 'pausa' else 'pausa'}:{p['id']}:{versione(p)}"},
-                  {"text": "🔄 Ora", "callback_data": f"sc:controlla:{p['id']}:{versione(p)}"}]
-                 for p in pratiche if p["stato"] in ("attivo", "pausa")]
-        if len(pratiche) > 1:  # con piu' ricette, una riga col nome sopra i suoi pulsanti
-            attive = [p for p in pratiche if p["stato"] in ("attivo", "pausa")]
-            righe = [r for p, pulsanti in zip(attive, righe)
-                     for r in ([{"text": f"👤 {self.nome(p)}", "callback_data": "pn:nome"}], pulsanti)]
+        # due righe di due pulsanti per ricetta: con nomi interi quattro in fila non ci stanno sul telefono
+        attive = [p for p in pratiche if p["stato"] in ("attivo", "pausa")]
+        righe = []
+        for p in attive:
+            v = versione(p)
+            if len(pratiche) > 1:  # con piu' ricette, una riga col nome sopra i suoi pulsanti
+                righe.append([{"text": f"👤 {self.nome(p)}", "callback_data": "pn:nome"}])
+            righe.append([{"text": "🔎 Dove cerco", "callback_data": f"sc:sede:{p['id']}:{v}"},
+                          {"text": "⚡ Prenoto da solo", "callback_data": f"sc:auto:{p['id']}:{v}"}])
+            righe.append([{"text": "▶️ Riprendi" if p["stato"] == "pausa" else "⏸ Pausa",
+                           "callback_data": f"sc:{'riprendi' if p['stato'] == 'pausa' else 'pausa'}:{p['id']}:{v}"},
+                          {"text": "🔄 Controlla ora", "callback_data": f"sc:controlla:{p['id']}:{v}"}])
         if self.webapp_url:
             righe = [[{"text": "📱 Apri l'app", "web_app": {"url": self.webapp_url}}]] + righe
         testo = (f"📋 Le tue ricette · aggiornato alle {adesso():%H:%M}\n\n" +

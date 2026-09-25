@@ -55,12 +55,22 @@ body {
 .dove small { display: block; font-weight: 400; color: var(--tenue); font-size: 14px; margin-top: 2px; }
 
 .regole { margin: 0; border-top: 1px solid var(--separatore); }
-.regole div { display: grid; grid-template-columns: 9.5em 1fr; gap: 8px; padding: 9px 0; border-bottom: 1px solid var(--separatore); }
-.regole dt { color: var(--tenue); font-size: 14px; }
-.regole dd { margin: 0; font-size: 15px; }
-.regole dd small { display: block; color: var(--tenue); font-size: 13px; }
+.regola {
+  display: grid; grid-template-columns: 9.5em 1fr; gap: 8px; padding: 9px 0; border-bottom: 1px solid var(--separatore);
+  width: 100%; text-align: left;
+}
+.regola .nome { color: var(--tenue); font-size: 14px; }
+.regola .valore { font-size: 15px; }
+.regola .valore small { display: block; color: var(--tenue); font-size: 13px; }
+/* le righe che si possono cambiare: tutta la riga e' il pulsante, con la freccia come nelle impostazioni */
+button.regola {
+  position: relative; background: transparent; color: var(--testo); border-radius: 0; padding: 9px 20px 9px 0;
+  font-size: inherit; line-height: inherit;
+}
+button.regola::after { content: "›"; position: absolute; right: 2px; top: 50%; transform: translateY(-50%); color: var(--tenue); font-size: 20px; }
+button.regola:active { transform: none; background: color-mix(in srgb, var(--tenue) 10%, transparent); }
 
-.azioni { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
+.azioni { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 12px; }
 .azioni form { margin: 0; display: contents; }
 button {
   font: inherit; font-size: 14px; border: 0; border-radius: 12px; padding: 10px 6px; cursor: pointer;
@@ -104,13 +114,11 @@ button.secondario { background: transparent; color: var(--tenue); width: 100%; }
 }
 
 @media (max-width: 360px) {
-  .azioni { grid-template-columns: repeat(2, 1fr); }
   .barra h1 { font-size: 20px; }
   .barra .lungo { display: none; }
   .quando { font-size: 20px; }
   .quando .giorno { font-size: 15px; }
-  .azioni.secondarie button { font-size: 13px; padding: 10px 2px; }
-  .regole div { grid-template-columns: 1fr; gap: 2px; }
+  .regola { grid-template-columns: 1fr; gap: 2px; }
 }
 
 /* --- barra in alto --- */
@@ -121,8 +129,6 @@ button.secondario { background: transparent; color: var(--tenue); width: 100%; }
 .quando .unito { white-space: nowrap; }
 .vuoto button.primario { width: auto; margin-top: 8px; }
 
-.azioni.secondarie { grid-template-columns: repeat(3, 1fr); margin-top: 8px; }
-.azioni.secondarie button { background: transparent; border: 1px solid var(--separatore); }
 button.pericolo { background: color-mix(in srgb, var(--pericolo) 12%, transparent); color: var(--pericolo); width: 100%; padding: 12px; font-weight: 600; }
 button.chip { padding: 6px 12px; border-radius: 999px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }

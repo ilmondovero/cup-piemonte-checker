@@ -475,35 +475,39 @@ class App:
   <div class="dove">{e(botmod.titolo(att.luogo.sede))}<small>{e(att.luogo.ambulatorio)}<br>{e(botmod.indirizzo(att.luogo))}</small></div>
   {self.offerta(p)}
   {self.riga_date(p)}
-  <dl class="regole">
-    <div><dt>🔎 Dove cerco</dt><dd>{e(botmod.descr_zona(zona, att))}{estesa}</dd></div>
-    <div><dt>⚡ Prenoto da solo</dt><dd>{e(botmod.auto_descr(p))}</dd></div>
-    <div><dt>⏱ Ultimo controllo</dt><dd>{e(riassunto.split(' ', 1)[1] if ' ' in riassunto else riassunto)}</dd></div>
-    <div><dt>⏭ Prossimo</dt><dd>{e(self.prossimo(p))}</dd></div>
-  </dl>
+  <div class="regole">
+    <button type="button" class="regola" hx-get="/ui/r/{pid}/dove" hx-target="#foglio" aria-label="Cambia dove cerco">
+      <span class="nome">🔎 Dove cerco</span><span class="valore">{e(botmod.descr_zona(zona, att))}{estesa}</span></button>
+    <button type="button" class="regola" hx-get="/ui/r/{pid}/auto" hx-target="#foglio" aria-label="Cambia prenotazione automatica">
+      <span class="nome">⚡ Prenoto da solo</span><span class="valore">{e(botmod.auto_descr(p))}</span></button>
+    <div class="regola"><span class="nome">⏱ Ultimo controllo</span>
+      <span class="valore">{e(riassunto.split(' ', 1)[1] if ' ' in riassunto else riassunto)}</span></div>
+    <div class="regola"><span class="nome">⏭ Prossimo controllo</span><span class="valore">{e(self.prossimo(p))}</span></div>
+  </div>
   <nav class="azioni">
-    <button type="button" hx-get="/ui/r/{pid}/dove" hx-target="#foglio">🔎 Dove</button>
-    <button type="button" hx-get="/ui/r/{pid}/auto" hx-target="#foglio">⚡ Auto</button>
+    <form hx-post="/ui/r/{pid}/controlla" hx-target="#ricette" hx-swap="innerMorph">
+      <button>🔄 Controlla ora</button></form>
     <form hx-post="/ui/r/{pid}/{'riprendi' if pausa else 'pausa'}" hx-target="#ricette" hx-swap="innerMorph">
       <button>{'▶️ Riprendi' if pausa else '⏸ Pausa'}</button></form>
-    <form hx-post="/ui/r/{pid}/controlla" hx-target="#ricette" hx-swap="innerMorph">
-      <button>🔄 Ora</button></form>
-  </nav>
-  <nav class="azioni secondarie">
-    <button type="button" hx-get="/ui/r/{pid}/date" hx-target="#foglio">📅 Date viste</button>
-    <button type="button" hx-get="/ui/r/{pid}/storico" hx-target="#foglio">📈 Storico</button>
-    <button type="button" hx-get="/ui/r/{pid}/altro" hx-target="#foglio">⋯ Altro</button>
+    <button type="button" hx-get="/ui/r/{pid}/storico" hx-target="#foglio">📈 Andamento</button>
+    <button type="button" hx-get="/ui/r/{pid}/altro" hx-target="#foglio">✏️ Modifica</button>
   </nav>
 </article>"""
 
     def riga_date(self, p):
-        viste = [v for v in (p.get("viste") or []) if v.get("sel")]
-        if not viste:
+        tutte = p.get("viste") or []
+        libere = [v for v in tutte if v.get("sel")]
+        if not tutte:
             return ""
-        prima = min(viste, key=lambda v: v["q"])
-        comune = botmod.titolo(cup_http.comune(cup_http.Luogo("", "", prima["ind"]))) or botmod.titolo(prima["sede"])
+        if libere:
+            prima = min(libere, key=lambda v: v["q"])
+            comune = botmod.titolo(cup_http.comune(cup_http.Luogo("", "", prima["ind"]))) or botmod.titolo(prima["sede"])
+            quante = "1 data disponibile" if len(libere) == 1 else f"{len(libere)} date disponibili"
+            testo = f"📅 {quante} · la prima: {botmod.fmt(data_iso(prima['q']))} a {comune}"
+        else:
+            testo = f"📅 {len(tutte)} date proposte dal CUP, nessuna prenotabile"
         return (f'<button type="button" class="riga-date" hx-get="/ui/r/{p["id"]}/date" hx-target="#foglio">'
-                f'📅 {len(viste)} date disponibili · la prima: {e(botmod.fmt(data_iso(prima["q"])))} a {e(comune)} ›</button>')
+                f'{e(testo)} ›</button>')
 
     def offerta(self, p):
         o = self.bot.offerte.get(p["id"])
@@ -561,9 +565,9 @@ class App:
                 for l in sorted(luoghi, key=lambda l: (l.get("comune", ""), l["sede"])))
             sede_vista = f"""
   <label class="scelta"><input type="radio" name="tipo" value="sede_vista"{" checked" if scelto == "sede_vista" else ""}>
-    <span>Una sede vista nei controlli<select name="sede">{opzioni}</select></span></label>"""
+    <span>Una sede trovata nei controlli<select name="sede">{opzioni}</select></span></label>"""
         return f"""
-<h2>🔎 Dove cerco · {e(self.bot.nome(p))}</h2>
+<h2>🔎 Dove cercare · {e(self.bot.nome(p))}</h2>
 <p class="nota">Prenotazione attuale: {e(botmod.titolo(att.luogo.sede))}, {e(botmod.indirizzo(att.luogo))}</p>
 <form hx-post="/ui/r/{p['id']}/dove" hx-target="#ricette" hx-swap="innerMorph" class="scelte">
   {voci}{sede_vista}
@@ -598,23 +602,25 @@ class App:
     def foglio_date(self, p):
         viste = p.get("viste") or []
         r = p.get("riassunto") or {}
-        titolo = f"<h2>📅 Date viste · {e(self.bot.nome(p))}</h2>"
+        titolo = f"<h2>📅 Date disponibili · {e(self.bot.nome(p))}</h2>"
         if not viste:
             return titolo + '<p class="nota">Nessuna data ancora: arrivano con il prossimo controllo.</p>'
         quando = botmod.orario(r["ts"]).strftime("%H:%M") if r.get("ts") else ""
-        gruppi = [("✅ Prima della tua, dove cerchi", [v for v in viste if v["ok"]]),
-                  ("Dove cerchi, ma dopo la tua", [v for v in viste if v["area"] and not v["ok"]]),
-                  ("Fuori da dove cerchi", [v for v in viste if not v["area"]])]
+        gruppi = [("✅ Prima della tua prenotazione, dove cerchi", [v for v in viste if v["ok"]]),
+                  ("Dove cerchi, ma dopo la tua prenotazione", [v for v in viste if v["area"] and not v["ok"]]),
+                  ("In altre zone", [v for v in viste if not v["area"]])]
         s = self.bot.sessioni.get(p["id"])
         fresche = bool(s) and time.time() - s["ts"] <= botmod.TTL_OFFERTA
         if fresche:
-            nota = (f"Ultimo controllo {e(quando)}: la prima data per ogni sede che il CUP propone. "
-                    f"Puoi prenotarle fino alle {botmod.orario(s['ts'] + botmod.TTL_OFFERTA):%H:%M}.")
+            nota = (f"Trovate dal controllo delle {e(quando)}: per ogni sede, la prima data che il CUP propone. "
+                    f"Si possono prenotare fino alle {botmod.orario(s['ts'] + botmod.TTL_OFFERTA):%H:%M}.")
             aggiorna = ""
         else:
-            nota = f"Ultimo controllo {e(quando)}: per prenotare una di queste date servono date fresche."
+            nota = (f"Trovate dal controllo delle {e(quando)}: sono passati più di "
+                    f"{botmod.TTL_OFFERTA // 60} minuti e il CUP potrebbe averle già date ad altri. "
+                    f"Per prenotarne una serve un controllo nuovo.")
             aggiorna = (f'<form hx-post="/ui/r/{p["id"]}/controlla" hx-target="#ricette" hx-swap="innerMorph">'
-                        f'<button class="primario">🔄 Aggiorna le date</button></form>')
+                        f'<button class="primario">🔄 Controlla ora</button></form>')
         att = botmod.attuale_di(p)
         parti = [titolo, f'<p class="nota">{nota}</p>', aggiorna]
         for nome_gruppo, voci in gruppi:
@@ -641,7 +647,7 @@ class App:
         if quando == att.quando:
             return f'<li>{testo}<small>Alla stessa ora della prenotazione attuale.</small></li>'
         rispetto = "PRIMA" if quando < att.quando else "DOPO"
-        fuori = "" if v["area"] else ", fuori da dove cerchi"
+        fuori = "" if v["area"] else ", fuori dalla zona in cui cerchi"
         conferma = (f"Sposto la prenotazione di {self.bot.nome(p)} a {botmod.fmt(quando)}, "
                     f"{botmod.titolo(v['sede'])} ({botmod.indirizzo(luogo)})? È {rispetto} della data attuale "
                     f"({botmod.fmt(att.quando)}){fuori}. La data attuale si perde.")
@@ -653,7 +659,7 @@ class App:
     def foglio_storico(self, p):
         storico = p.get("storico") or []
         att = botmod.attuale_di(p)
-        titolo = f"<h2>📈 Storico · {e(self.bot.nome(p))}</h2>"
+        titolo = f"<h2>📈 Andamento · {e(self.bot.nome(p))}</h2>"
         punti = [(v["t"], data_iso(v["a"])) for v in storico]
         con_data = [(t, a) for t, a in punti if a]
         if not con_data:
@@ -672,7 +678,7 @@ class App:
                 cambi.append(f'<tr><td>{e(botmod.orario(t).strftime("%d/%m %H:%M"))}</td>'
                              f'<td>{e(botmod.fmt(a)) if a else "nessuna"}</td></tr>')
                 prec = a
-        tabella = (f'<details><summary>Tabella dei cambiamenti</summary><table><thead><tr><th>Controllo</th>'
+        tabella = (f'<details><summary>Mostra i cambiamenti in tabella</summary><table><thead><tr><th>Controllo</th>'
                    f'<th>Prima data dove cerchi</th></tr></thead><tbody>{"".join(reversed(cambi[-30:]))}</tbody></table></details>')
         return titolo + testa + grafico + tabella
 
@@ -774,9 +780,9 @@ class App:
         pid = p["id"]
         conferma = f"Cancello i dati di {self.bot.nome(p)}? I suoi controlli si fermano."
         return f"""
-<h2>⋯ {e(self.bot.nome(p))}</h2>
+<h2>✏️ Modifica · {e(self.bot.nome(p))}</h2>
 <form hx-post="/ui/r/{pid}/nome" hx-target="#ricette" hx-swap="innerMorph" class="scelte">
-  <label class="campo">Nome<input type="text" name="nome" value="{e(p.get('nome') or '')}" maxlength="20"
+  <label class="campo">Nome nei messaggi<input type="text" name="nome" value="{e(p.get('nome') or '')}" maxlength="20"
     placeholder="es. Papà" autocomplete="off" required></label>
   <button class="primario">Rinomina</button>
 </form>
@@ -831,7 +837,7 @@ class App:
             f'Ricetta {e(botmod.maschera(p.get("nre", "")))}</small></li>' for p in pratiche)
         return f"""
 <h2>🔒 Dati e privacy</h2>
-<p class="nota">Conservo cifrati, per ogni ricetta, codice fiscale e NRE, la prenotazione e le date viste.
+<p class="nota">Conservo cifrati, per ogni ricetta, codice fiscale e NRE, la prenotazione e le date trovate nei controlli.
   Si cancellano da soli quando la data della prenotazione è passata.</p>
 <ul class="elenco">{righe or '<li>Nessun dato.</li>'}</ul>
 <details class="informativa"><summary>Informativa completa</summary><p>{e(self.bot.privacy()).replace(chr(10), "<br>")}</p></details>
