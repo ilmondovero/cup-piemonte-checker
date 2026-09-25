@@ -32,7 +32,9 @@ CREATE INDEX IF NOT EXISTS ix_pratiche_chat ON pratiche(chat_id);
 CREATE TABLE IF NOT EXISTS metriche (
     ts       REAL NOT NULL,              -- inizio di una sessione sul portale (niente dati personali)
     durata   REAL NOT NULL,
-    riuscita INTEGER NOT NULL
+    riuscita INTEGER NOT NULL,
+    lenta    REAL,                       -- secondi della risposta piu' lenta (NULL nelle righe piu' vecchie)
+    timeout  INTEGER                     -- 1 se il portale non ha risposto in tempo
 );
 CREATE INDEX IF NOT EXISTS ix_metriche_ts ON metriche(ts);
 CREATE TABLE IF NOT EXISTS pannelli (
@@ -64,7 +66,13 @@ class Store:
         self._migra()
 
     def _migra(self):
-        """Versione precedente: una sola ricetta per chat, nella tabella `utenti`."""
+        """Versioni precedenti: metriche senza la risposta piu' lenta; una sola ricetta per chat, nella
+        tabella `utenti`."""
+        colonne = {r["name"] for r in self.db.execute("PRAGMA table_info(metriche)")}
+        for nome, tipo in (("lenta", "REAL"), ("timeout", "INTEGER")):
+            if nome not in colonne:
+                self.db.execute(f"ALTER TABLE metriche ADD COLUMN {nome} {tipo}")
+        self.db.commit()
         if self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='utenti'").fetchone():
             colonne = {r["name"] for r in self.db.execute("PRAGMA table_info(utenti)")}
             creato = "creato" if "creato" in colonne else "strftime('%s','now')"
@@ -200,14 +208,16 @@ class Store:
             self._vacuum()
         return via
 
-    def metrica(self, ts, durata, riuscita, tieni_giorni=7):
-        self.db.execute("INSERT INTO metriche (ts, durata, riuscita) VALUES (?, ?, ?)", (ts, durata, int(riuscita)))
+    def metrica(self, ts, durata, riuscita, lenta=None, timeout=False, tieni_giorni=7):
+        self.db.execute("INSERT INTO metriche (ts, durata, riuscita, lenta, timeout) VALUES (?, ?, ?, ?, ?)",
+                        (ts, durata, int(riuscita), lenta, int(timeout)))
         self.db.execute("DELETE FROM metriche WHERE ts < ?", (ts - tieni_giorni * 86400,))
         self.db.commit()
 
     def metriche(self, dal):
-        """[(ts, durata, riuscita)] dal momento indicato, e l'ora della metrica piu' vecchia conservata."""
-        righe = [tuple(r) for r in self.db.execute("SELECT ts, durata, riuscita FROM metriche WHERE ts >= ? ORDER BY ts", (dal,))]
+        """[(ts, durata, riuscita, lenta, timeout)] dal momento indicato, e l'ora della metrica piu' vecchia."""
+        righe = [(ts, d, ok, lenta, bool(to)) for ts, d, ok, lenta, to in self.db.execute(
+            "SELECT ts, durata, riuscita, lenta, timeout FROM metriche WHERE ts >= ? ORDER BY ts", (dal,))]
         prima = self.db.execute("SELECT MIN(ts) FROM metriche").fetchone()[0]
         return righe, prima
 

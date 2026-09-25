@@ -60,6 +60,7 @@ class PortaleFinto:
     def __init__(self, pagine, risposte):
         self.pagine, self.risposte, self.inviati = list(pagine), list(risposte), []
         self.headers = {}
+        self.hooks = {"response": []}
 
     def get(self, url, timeout=None):
         return Risposta(self.pagine.pop(0))

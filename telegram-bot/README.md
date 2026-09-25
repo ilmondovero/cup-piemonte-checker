@@ -87,8 +87,8 @@ fa in chat:
 - **Controlla ora e Pausa.** Con le stesse regole della chat: se l'ultimo controllo è di meno di 15
   minuti fa, o c'è un'offerta aperta, l'app lo dice subito. Un'offerta aperta si prenota dalla scheda.
 - **Admin** (solo `ADMIN_CHAT_ID`): contatori e tempi delle sessioni sul portale degli ultimi 7
-  giorni. Le metriche stanno nel database (solo orario, durata ed esito, nessun dato personale), quindi
-  sopravvivono ai riavvii.
+  giorni, e l'attesa imparata per l'ora corrente. Le metriche stanno nel database (solo orario, durata
+  ed esito, nessun dato personale), quindi sopravvivono ai riavvii.
 
 Come è protetta:
 
@@ -136,6 +136,25 @@ Come è protetta:
   - mentre un'offerta è aperta, quell'utente non viene ricontrollato;
   - la prenotazione continua **nella stessa sessione** che ha trovato la data. Una sessione nuova non
     la vedrebbe finché il blocco non scade.
+- **Portale lento nelle ore di punta.** In orario d'ufficio la ricerca delle date può metterci più di un
+  minuto. Il bot non usa una tabella di "ore di punta": impara dai controlli dei 7 giorni precedenti.
+  - Per ogni fascia oraria calcola quanto aspettare una risposta: 1,5 volte le risposte più lente, tra 60
+    e 180 secondi. Un timeout conta come una risposta lunga almeno quanto l'attesa di allora, così i
+    timeout alzano l'attesa invece di sparire dal calcolo. Se a quell'ora i timeout sono frequenti
+    (almeno 3 controlli su 10) usa il massimo. Gli altri errori non contano.
+  - Dopo un timeout, per quella ricetta aspetta il 50% in più, fino al massimo. Dopo un successo la
+    pazienza in più cala piano. Se il portale non risponde proprio (collegamento rifiutato o assente)
+    non aspetta di più: per collegarsi bastano 10 secondi.
+  - Le prenotazioni usano sempre l'attesa massima: sono rare e una data persa costa.
+  - Con errori di fila i controlli si diradano (l'intervallo raddoppia, fino a 60 minuti), per non
+    insistere su un portale in difficoltà. Al primo successo si torna al ritmo normale.
+  - L'utente viene avvisato al 3°, al 12° e al 40° errore di fila, con l'orario del prossimo controllo,
+    e di nuovo quando il portale torna a rispondere.
+
+  L'attesa vale per ogni richiesta, e un controllo ne fa diverse (elenco, "Sposta", una per ogni
+  estensione dell'area). Mentre aspetta il portale il bot non risponde su Telegram né nella Mini App,
+  perché tutto gira in un solo thread: con il portale molto lento, un controllo può tenerlo occupato per
+  diversi minuti.
 - **IP del server.** Alcuni portali filtrano gli IP dei datacenter. Al momento cup.isan.csi.it non ha
   protezioni anti-bot attive, ma potrebbe cambiare.
 - Il sito può cambiare in qualsiasi momento. In quel caso il bot segnala l'errore e non conferma nulla.

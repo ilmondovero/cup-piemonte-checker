@@ -567,7 +567,228 @@ def test_timeout_isolato_non_avvisa(b, monkeypatch):
     b.controlla(pratica(b))
     assert len(inviati(b)) == n
     b.controlla(pratica(b))
-    assert "non risponde (da 3 controlli di fila)" in inviati(b)[-1] and "HTTPSConnectionPool" not in inviati(b)[-1]
+    assert "lento e non risponde in tempo (da 3 controlli di fila)" in inviati(b)[-1]
+    assert "HTTPSConnectionPool" not in inviati(b)[-1] and "il prossimo controllo verso le" in inviati(b)[-1]
+
+
+def alle(ora, giorni_fa=1, minuti=0):
+    return datetime(2026, 9, 24, ora, minuti, tzinfo=botmod.TZ).timestamp() - (giorni_fa - 1) * 86400
+
+
+def test_attesa_imparata_per_fascia_oraria():
+    # (inizio, durata del controllo, riuscito, risposta singola piu' lenta, timeout): conta la piu' lenta
+    notte = [(alle(3, g), 100, True, 12, False) for g in range(1, 8)]
+    giorno = [(alle(11, g, m), 150, True, d, False)
+              for g, (m, d) in enumerate(zip(range(0, 50, 5), range(40, 90, 5)), 1)]
+    vecchie = ([(alle(3, g), 100, True, None, False) for g in range(1, 8)] +
+               [(alle(3, g), 100, False, None, False) for g in range(1, 8)])
+    assert botmod.attesa_appresa(vecchie + notte, alle(3)) == botmod.ATTESA_MIN  # righe senza misura: ignorate
+    assert botmod.attesa_appresa([], alle(11)) == botmod.ATTESA_BASE  # pochi dati: il valore di sempre
+    assert botmod.attesa_appresa(notte + giorno, alle(3)) == botmod.ATTESA_MIN  # di notte risponde subito
+    assert botmod.attesa_appresa(notte + giorno, alle(11)) == 120  # 1,5 volte le risposte piu' lente (80 s)
+    assert botmod.attesa_appresa(notte + giorno, alle(12)) == 120  # anche le ore vicine insegnano
+    assert botmod.attesa_appresa(notte + giorno, alle(15)) == botmod.ATTESA_BASE  # l'ora di punta non vale a caso
+    fatica = giorno + [(alle(11, g), 90, False, 90, True) for g in range(1, 6)]
+    assert botmod.attesa_appresa(fatica, alle(11)) == botmod.ATTESA_MAX  # timeout frequenti: tutta la pazienza
+    lentissimo = [(alle(11, g), 300, True, 300, False) for g in range(1, 8)]
+    assert botmod.attesa_appresa(lentissimo, alle(11)) == botmod.ATTESA_MAX  # mai oltre il massimo
+
+
+def test_timeout_non_abbassano_l_attesa():
+    # 2 timeout su 10 (sotto la soglia del massimo): valgono come risposte lunghe almeno l'attesa di allora.
+    # Contando solo le risposte arrivate (20 s) l'attesa scenderebbe a 60, sotto i 90 di prima
+    righe = [(alle(11, g), 30, True, 20, False) for g in range(1, 9)] + [(alle(11, g), 60, False, 60, True) for g in (1, 2)]
+    assert botmod.attesa_appresa(righe, alle(11)) == 90
+    # errori che non sono timeout (pagina cambiata, ricetta rifiutata...) non dicono nulla sui tempi
+    altri = [(alle(11, g), 30, True, 20, False) for g in range(1, 7)] + [(alle(11, g), 5, False, 2, False) for g in range(1, 5)]
+    assert botmod.attesa_appresa(altri, alle(11)) == botmod.ATTESA_MIN
+
+
+def test_timeout_a_pagina_iniziata_e_lentezza():
+    assert botmod.lento(botmod.requests.ReadTimeout("x"))
+    assert botmod.lento(botmod.requests.ConnectionError("HTTPSConnectionPool(host='x'): Read timed out."))
+    assert not botmod.lento(botmod.requests.ConnectionError("Connection refused"))
+
+
+def test_dopo_un_timeout_piu_pazienza_fino_al_successo(b, monkeypatch):
+    registra(b)
+    viste, esiti = [], []
+    ok = c.check
+
+    def check(*a):
+        viste.append(c.LENTO)
+        esito = esiti.pop(0)
+        if esito:
+            raise esito
+        return ok(*a)
+    monkeypatch.setattr(c, "check", check)
+    esiti[:] = ([botmod.requests.ReadTimeout("x")] * 3 + [None, botmod.requests.ConnectionError("x")] +
+                [None] * 4)
+    for _ in range(9):
+        b.controlla(pratica(b))
+    # piano: 90 -> 135 -> 180 (massimo); dopo un successo la pazienza cala piano (144, 115, 92), poi il
+    # valore imparato. Giu' del tutto (connessione): aspettare di piu' non serve, resta com'era
+    assert viste == [90, 135, 180, 180, 144, 144, 115, 92, 90]
+    assert not b.pazienza
+
+
+def test_ricerca_sempre_lenta_non_torna_a_scadere(b, monkeypatch):
+    registra(b)
+    pid = pratica(b)["id"]
+    b.pazienza[pid] = 180
+    ok = c.check
+
+    def check(*a):
+        c.PIU_LENTA = 150  # questa ricerca ci mette sempre 150 s
+        return ok(*a)
+    monkeypatch.setattr(c, "check", check)
+    b.controlla(pratica(b))
+    assert b.pazienza[pid] == 180  # 144 la farebbe scadere al prossimo giro
+
+
+def test_timeout_in_prenotazione_non_allunga_i_controlli(b, monkeypatch):
+    registra(b)
+    pid = pratica(b)["id"]
+
+    def lenta(*a, **k):
+        raise botmod.requests.ReadTimeout("x")
+    with pytest.raises(botmod.requests.ReadTimeout):
+        b.portale(lenta, pid=pid, paziente=True)
+    assert pid not in b.pazienza
+
+
+def test_pazienza_di_una_ricetta_non_vale_per_le_altre(b, monkeypatch):
+    registra(b)
+    registra(b, chat=2, cf=CF2)
+    ok = c.check
+    viste = []
+
+    def check(cf, *a):
+        viste.append((cf, c.LENTO))
+        if cf == CF:
+            raise botmod.requests.ReadTimeout("x")
+        return ok(cf, *a)
+    monkeypatch.setattr(c, "check", check)
+    b.controlla(pratica(b))
+    b.controlla(pratica(b, 2))
+    assert viste == [(CF, 90), (CF2, 90)] and list(b.pazienza) == [pratica(b)["id"]]
+    b.scarta(pratica(b)["id"])  # ricetta cancellata o cambiata: via anche la sua pazienza
+    assert not b.pazienza
+
+
+def test_prenotazione_con_tutta_l_attesa(b, monkeypatch):
+    registra(b)
+    b.controlla(pratica(b))
+    attese = []
+    vera = c.prenota
+
+    def prenota(*a, **k):
+        attese.append(c.LENTO)
+        return vera(*a, **k)
+    monkeypatch.setattr(c, "prenota", prenota)
+    [cb] = [x for x in pulsanti(b) if x.startswith("p:")][:1]
+    b.on_callback(cq(1, cb))
+    assert attese == [botmod.ATTESA_MAX]
+
+
+def test_ripresa_dopo_un_errore_salva_le_date_per_l_app(b, monkeypatch):
+    registra(b)
+    ok = c.check
+    guasto = [True]
+
+    def check(*a):
+        if guasto[0]:
+            raise botmod.requests.ReadTimeout("x")
+        return ok(*a)
+    monkeypatch.setattr(c, "check", check)
+    b.controlla(pratica(b))
+    guasto[0] = False
+    b.controlla(pratica(b))
+    p = pratica(b)
+    assert p["errori"] == 0 and p.get("viste") and p.get("storico") and p.get("luoghi")
+
+
+def test_misura_la_risposta_piu_lenta_non_il_controllo(b, monkeypatch):
+    registra(b)
+    ok = c.check
+
+    def check(*a):
+        c.PIU_LENTA = 7.5  # come misurato dall'hook di requests sulle risposte del portale
+        return ok(*a)
+    monkeypatch.setattr(c, "check", check)
+    b.controlla(pratica(b))
+    assert b.store.metriche(0)[0][-1][3] == 7.5
+
+    def timeout(*a):
+        raise botmod.requests.ReadTimeout("x")
+    monkeypatch.setattr(c, "check", timeout)
+    b.controlla(pratica(b))
+    ultima = b.store.metriche(0)[0][-1]
+    assert not ultima[2] and ultima[3] == 90 and ultima[4]  # in timeout: ci avrebbe messo almeno quanto l'attesa
+
+
+def test_hook_misura_il_tempo_di_risposta():
+    class R:
+        elapsed = timedelta(seconds=42.5)
+    c.PIU_LENTA = 3.0
+    c._misura(R())
+    assert c.PIU_LENTA == 42.5
+    assert c._misura in c.CupSession("X", "Y").s.hooks["response"]
+
+
+def test_metriche_vecchie_senza_misura_migrate(tmp_path):
+    path = tmp_path / "vecchio.sqlite"
+    db = sqlite3.connect(path)
+    db.execute("CREATE TABLE metriche (ts REAL NOT NULL, durata REAL NOT NULL, riuscita INTEGER NOT NULL)")
+    db.execute("INSERT INTO metriche VALUES (?, 100, 1)", (time.time() - 60,))
+    db.commit()
+    db.close()
+    s = Store(path, Fernet.generate_key().decode())
+    s.metrica(time.time(), 20, True, 8.0)
+    righe = s.metriche(0)[0]
+    assert righe[0][3] is None and righe[-1][3] == 8.0 and righe[0][4] is False
+
+
+def test_errori_di_fila_rallentano_i_controlli(b, monkeypatch):
+    registra(b, chat=999)
+    b.admin_intervallo = 5  # chi gestisce il bot: intervallo di 5 minuti
+
+    def timeout(*a):
+        raise botmod.requests.ReadTimeout("x")
+    monkeypatch.setattr(c, "check", timeout)
+    tra = []
+    for _ in range(7):
+        p = pratica(b, 999)
+        p["prossimo"] = time.time() + 5 * 60  # come fa il pianificatore prima di ogni controllo
+        b.salva(p, "prossimo")
+        b.controlla(p)
+        tra.append((pratica(b, 999)["prossimo"] - time.time()) / 60)
+    for minuti, atteso in zip(tra, [5, 10, 20, 40, 60, 60, 60]):
+        assert 0.85 * atteso <= minuti <= 1.1 * atteso, tra
+
+
+def test_avvisa_quando_il_portale_si_riprende(b, monkeypatch):
+    registra(b)
+    ok = c.check
+    guasto = [True]
+
+    def check(*a):
+        if guasto[0]:
+            raise botmod.requests.ReadTimeout("x")
+        return ok(*a)
+    monkeypatch.setattr(c, "check", check)
+    b.controlla(pratica(b))
+    guasto[0] = False
+    b.controlla(pratica(b))
+    assert not any("risponde di nuovo" in x for x in inviati(b))  # un timeout isolato: niente avviso, niente ripresa
+    guasto[0] = True
+    for _ in range(3):
+        b.controlla(pratica(b))
+    guasto[0] = False
+    b.controlla(pratica(b))
+    assert sum("risponde di nuovo" in x for x in inviati(b)) == 1
+    assert pratica(b)["errori"] == 0
+    assert (pratica(b)["prossimo"] - time.time()) / 60 <= 45 * 1.1  # ritmo normale
 
 
 def test_controlla_non_a_raffica(b):

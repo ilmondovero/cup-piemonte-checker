@@ -331,8 +331,11 @@ def test_admin_solo_per_admin_e_metriche(app, monkeypatch):
     b.admin = "1"
     b.portale(lambda: None)
     assert b.metriche and b.metriche[-1][2] is True
+    prima = b._attesa
     stato, _, corpo = get(app, "/ui/admin", chat=1)
     assert stato == 200 and "ricette attive" in corpo.decode() and "sessioni" in corpo.decode()
+    assert "Attesa di una risposta lenta" in corpo.decode()
+    assert b._attesa == prima  # la pagina calcola con il suo database: lo stato del bot non si tocca
     assert get(app, "/ui/admin", chat=2)[0] == 404
 
 

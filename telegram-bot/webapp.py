@@ -943,11 +943,12 @@ class App:
         per_stato = dict(s.db.execute("SELECT stato, COUNT(*) FROM pratiche GROUP BY stato").fetchall())
         ora = time.time()
         metriche, prima = s.metriche(ora - 86400)  # dal database: i riavvii del bot non le azzerano
+        attesa = botmod.attesa_appresa(s.metriche(ora - botmod.ATTESA_GIORNI * 86400)[0], ora)
 
         def finestra(sec):
             m = [x for x in metriche if x[0] > ora - sec]
-            durate = sorted(d for _, d, _ in m)
-            errori = sum(1 for *_, ok in m if not ok)
+            durate = sorted(x[1] for x in m)
+            errori = sum(1 for x in m if not x[2])
             media = sum(durate) / len(durate) if durate else 0
             p95 = durate[int(len(durate) * 0.95) - 1] if len(durate) >= 20 else (durate[-1] if durate else 0)
             return len(m), errori, media, p95
@@ -966,7 +967,8 @@ class App:
   {tile(offerte, "offerte aperte")}
   {tile(self.bot.coda.qsize(), "azioni in coda")}
 </div>
-<p class="nota">{e("Dati dal " + botmod.orario(prima).strftime("%d/%m %H:%M") if prima else "Ancora nessuna sessione sul portale registrata.")}</p>
+<p class="nota">{e("Dati dal " + botmod.orario(prima).strftime("%d/%m %H:%M") if prima else "Ancora nessuna sessione sul portale registrata.")}
+  {e(f"Attesa di una risposta lenta, imparata per quest'ora: {attesa} s.")}</p>
 <h3>Portale, ultima ora</h3>
 <div class="tiles">
   {tile(n1, "sessioni")}

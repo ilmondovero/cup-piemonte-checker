@@ -59,6 +59,9 @@ MAX_VISTE = 40  # date dell'ultimo controllo conservate per l'app
 MAX_LUOGHI = 80  # sedi viste nei controlli, per scegliere dove cercare dall'app
 ATTESA_COMUNE = 10 * 60  # secondi: dopo "Un altro comune…" il prossimo testo vale come comune solo per poco
 TZ = ZoneInfo("Europe/Rome")  # gli orari del portale sono italiani, anche se il server gira in UTC
+ATTESA_MIN, ATTESA_BASE, ATTESA_MAX = 60, 90, 180  # secondi di attesa di una risposta lenta del portale
+ATTESA_GIORNI = 7  # quanti giorni di controlli guardare per imparare l'attesa
+MAX_RALLENTA = 60  # minuti: con il portale in difficolta' l'intervallo cresce fino a qui (o all'intervallo, se piu' lungo)
 
 
 def adesso():
@@ -67,6 +70,30 @@ def adesso():
 
 def orario(ts):
     return datetime.fromtimestamp(ts, TZ)
+
+
+def attesa_appresa(metriche, ora):
+    """Secondi da aspettare una risposta lenta del portale in quest'ora, imparati dai controlli dei giorni
+    scorsi alla stessa ora (e a quelle vicine): 1,5 volte le risposte piu' lente, e il massimo se in quella
+    fascia il portale va spesso in timeout. Nessuna tabella di "ore di punta": se il portale cambia
+    abitudini, l'attesa cambia con lui. metriche: [(ts, durata, riuscita, lenta, timeout)], dove lenta e' la
+    risposta singola piu' lenta del controllo (le righe senza, di versioni precedenti, non contano).
+    Un timeout vale come una risposta lunga almeno quanto l'attesa di allora: contare solo le risposte
+    arrivate abbasserebbe l'attesa proprio quando serve di piu'. Gli altri errori non dicono nulla sui tempi."""
+    h = orario(ora).hour
+    fascia = [(lenta, ok, scaduta) for ts, _, ok, lenta, scaduta in metriche
+              if lenta is not None and (orario(ts).hour - h) % 24 in (0, 1, 23)]
+    tempi = sorted(d for d, ok, scaduta in fascia if ok or scaduta)
+    attesa = 1.5 * tempi[int(0.9 * (len(tempi) - 1))] if len(tempi) >= 5 else ATTESA_BASE
+    if len(fascia) >= 5 and sum(1 for *_, scaduta in fascia if scaduta) >= 0.3 * len(fascia):
+        attesa = ATTESA_MAX  # a quest'ora il portale non risponde in tempo spesso: tutta la pazienza possibile
+    return round(min(ATTESA_MAX, max(ATTESA_MIN, attesa)))
+
+
+def lento(e):
+    """Il portale c'e' ma non risponde in tempo: anche a pagina iniziata, che requests chiama ConnectionError."""
+    return isinstance(e, requests.ReadTimeout) or (
+        isinstance(e, requests.ConnectionError) and "read timed out" in str(e).lower())
 
 PRIVACY = (
     "🔒 Informativa, prima di iniziare\n\n"
@@ -298,7 +325,9 @@ class Bot:
         self.coda = queue.Queue(maxsize=200)  # azioni chieste dalla Mini App: le esegue questo thread
         self.risultati = {}  # esiti delle ricerche chieste dalla Mini App: token -> {"chat", "ts", "pid" | "errore"}
         self.sessioni = {}   # id pratica -> {"ts", "sessione", "slots"}: l'ultimo controllo, per prenotare una data vista
-        self.metriche = collections.deque(maxlen=5000)  # (ora, secondi, riuscita) di ogni sessione sul portale
+        self.metriche = collections.deque(maxlen=5000)  # (ora, secondi, riuscita, lenta, timeout) di ogni sessione
+        self.pazienza = {}  # id pratica -> secondi: dopo un timeout la sua ricerca aspetta di piu', fino al successo
+        self._attesa = (0.0, ATTESA_BASE)  # (quando e' stata calcolata, secondi): ricalcolata ogni 10 minuti
 
     # --- Telegram -----------------------------------------------------------------------
     def redact(self, e):
@@ -356,23 +385,61 @@ class Bot:
         return p if p and p["chat_id"] == chat else None
 
     # --- portale: una sessione alla volta, distanziate ---------------------------------
-    def portale(self, fn, *args, **kwargs):
+    def attesa(self, pid=None):
+        """Secondi di pazienza con il portale ora: imparati dagli ultimi ATTESA_GIORNI giorni, di piu' per
+        una ricetta la cui ricerca e' andata in timeout di recente. Solo dal thread del bot."""
+        ora = time.time()
+        if ora - self._attesa[0] > 600:
+            try:
+                metriche = self.store.metriche(ora - ATTESA_GIORNI * 86400)[0]
+            except Exception as e:
+                log.warning("metriche non lette: %s", type(e).__name__)
+                metriche = list(self.metriche)
+            self._attesa = (ora, attesa_appresa(metriche, ora))
+        return max(self._attesa[1], self.pazienza.get(pid, 0))
+
+    def meno_paziente(self, pid):
+        """Dopo un successo la pazienza extra di una ricetta cala piano, e mai sotto 1,5 volte la risposta piu'
+        lenta appena misurata (una ricerca sempre lenta non torna a scadere), fino al valore imparato."""
+        if pid in self.pazienza:
+            meno = min(self.pazienza[pid], max(round(self.pazienza[pid] / 1.25), round(1.5 * cup_http.PIU_LENTA)))
+            if meno <= self._attesa[1]:
+                self.pazienza.pop(pid)
+            else:
+                self.pazienza[pid] = meno
+
+    def portale(self, fn, *args, pid=None, paziente=False, **kwargs):
+        """Una sessione sul portale. paziente: per le prenotazioni, rare e preziose, tutta l'attesa possibile."""
         attesa = self.distanza - (time.time() - self.ultimo_portale)
         if attesa > 0:
             time.sleep(attesa)
-        inizio, riuscita = time.time(), False
+        # un solo thread parla col portale: l'attesa vale per questa sessione
+        cup_http.LENTO = pazienza = ATTESA_MAX if paziente else self.attesa(pid)
+        cup_http.PIU_LENTA = 0.0
+        inizio, riuscita, lenta, scaduta = time.time(), False, 0.0, False
         try:
             risultato = fn(*args, **kwargs)
             riuscita = True
+            self.meno_paziente(pid)
             return risultato
         except (cup_http.NonTrovata, cup_http.NonAttiva):
             riuscita = True  # il portale ha risposto: e' la ricetta che non va
+            self.meno_paziente(pid)
+            raise
+        except requests.RequestException as e:
+            # il portale c'e' ma e' lento: la prossima volta un po' piu' di pazienza. Se invece non risponde
+            # proprio (connessione rifiutata o assente), aspettare di piu' non servirebbe
+            if lento(e):
+                scaduta, lenta = True, pazienza  # quella risposta ci avrebbe messo almeno tanto
+                if pid is not None and not paziente:  # una prenotazione aspetta gia' il massimo
+                    self.pazienza[pid] = min(ATTESA_MAX, round(pazienza * 1.5))
             raise
         finally:
             self.ultimo_portale = time.time()
-            self.metriche.append((inizio, self.ultimo_portale - inizio, riuscita))
-            try:
-                self.store.metrica(inizio, self.ultimo_portale - inizio, riuscita)  # sopravvive ai riavvii
+            lenta = round(max(lenta, cup_http.PIU_LENTA), 1)
+            self.metriche.append((inizio, self.ultimo_portale - inizio, riuscita, lenta, scaduta))
+            try:  # sopravvive ai riavvii
+                self.store.metrica(inizio, self.ultimo_portale - inizio, riuscita, lenta, scaduta)
             except Exception as e:
                 log.warning("metrica non salvata: %s", type(e).__name__)
 
@@ -385,6 +452,7 @@ class Bot:
         della ricetta e tengono una sessione sul portale)."""
         self.offerte.pop(pid, None)
         self.sessioni.pop(pid, None)
+        self.pazienza.pop(pid, None)
 
     def salva(self, p, *campi):
         """Scrive solo i campi indicati sopra la versione attuale nel database: un controllo lungo non
@@ -412,14 +480,14 @@ class Bot:
         try:
             if nuova:
                 try:
-                    res = self.portale(cup_http.check_nuova, p["cf"], p["nre"], zona_di(p))
+                    res = self.portale(cup_http.check_nuova, p["cf"], p["nre"], zona_di(p), pid=p["id"])
                 except cup_http.GiaPrenotata:
                     # prenotata fuori dal bot (a mano, al telefono...): da qui si anticipa quella. Se non si
                     # riesce a leggerla, l'errore segue la strada degli errori normali (contati, avvisi radi)
                     self.diventa_prenotata(p)
                     return None
             else:
-                res = self.portale(cup_http.check, p["cf"], p["nre"], zona_di(p))
+                res = self.portale(cup_http.check, p["cf"], p["nre"], zona_di(p), pid=p["id"])
         except (cup_http.NonTrovata, cup_http.NonAttiva) as e:
             if nuova:
                 p.update(stato="pausa", pausa_da=time.time(), libera=True)
@@ -445,13 +513,31 @@ class Bot:
             p["errori"] = p.get("errori", 0) + 1
             p["ultimo"] = {"ts": time.time(), "testo": f"errore: {e}"}
             p["riassunto"] = {**(p.get("riassunto") or {}), "ts": time.time(), "errore": True}
-            self.salva(p, "errori", "ultimo", "riassunto")
+            # errori di fila: controlli sempre piu' radi (fino a MAX_RALLENTA), per non insistere su un portale
+            # in difficolta' e riprovare quando e' piu' probabile che risponda. Al primo successo, ritmo normale
+            iv = self.intervallo_di(chat)
+            rallenta = min(max(MAX_RALLENTA, iv), iv * 2 ** min(p["errori"] - 1, 10))
+            dopo = time.time() + rallenta * 60 * random.uniform(0.9, 1.1)
+            def rallenta_(f):
+                if f.get("errori", 0) == 0 and (f.get("prossimo") or 0) <= time.time():
+                    return  # ripresa dalla Mini App durante il controllo: vale la sua scelta
+                f["prossimo"] = max(f.get("prossimo") or 0, dopo)
+            self.store.modifica(p["id"], rallenta_)
+            self.salva(p, "errori", "ultimo", "riassunto")  # rilegge anche prossimo
             self.aggiorna_pannello(chat)
-            log.info("controllo %s/%s: errore %d: %s", uid(chat), p["id"], p["errori"], type(e).__name__)
+            log.info("controllo %s/%s: errore %d: %s (prossimo tra %d min)", uid(chat), p["id"],
+                     p["errori"], type(e).__name__, (p.get("prossimo", dopo) - time.time()) / 60)
             if manuale or p["errori"] in AVVISA_ERRORI:
-                motivo = "il portale CUP non risponde" if isinstance(e, requests.RequestException) else str(e)
+                if lento(e):
+                    motivo = "il portale CUP e' lento e non risponde in tempo"
+                elif isinstance(e, requests.RequestException):
+                    motivo = "il portale CUP non risponde"
+                else:
+                    motivo = str(e)
                 self.dire(p, f"⚠️ {motivo[0].upper()}{motivo[1:]}" + (
-                    "" if manuale else f" (da {p['errori']} controlli di fila). Continuo a riprovare da solo."))
+                    "" if manuale else f" (da {p['errori']} controlli di fila). Riprovo da solo, piu' di rado "
+                                       f"finche' non si riprende: il prossimo controllo verso le "
+                                       f"{orario(p.get('prossimo', dopo)):%H:%M}."))
             return None
 
         if nuova:  # nessuna prenotazione: il riferimento resta la data lontanissima, con la prestazione letta
@@ -471,6 +557,12 @@ class Bot:
         zona = zona_di(p)
         nell_area = [x for x in res["slots"] if cup_http.ammesso(x, att, zona)]
         self.registra_viste(p, res, nell_area)
+        if p.get("errori", 0) >= AVVISA_ERRORI[0]:  # aveva avvisato dei problemi: ora che passano, lo dice
+            self.dire(p, f"✅ Il portale CUP risponde di nuovo: torno a controllare ogni "
+                         f"{self.intervallo_di(chat)} minuti.")
+        ripresa = bool(p.get("errori"))
+        if ripresa:  # dopo errori di fila i controlli si erano diradati: di nuovo al ritmo normale
+            p["prossimo"] = min(p.get("prossimo") or float("inf"), time.time() + self.intervallo_di(chat) * 60)
         p.update(errori=0, attuale=pren_to_dict(att), ultimo={"ts": time.time(), "testo": descrivi(res)},
                  riassunto={"ts": time.time(), "viste": len(res["slots"]), "area": len(nell_area),
                             "migliori": len(res["migliori"]), "estesa": bool(cup_http.estensioni(zona)),
@@ -480,7 +572,8 @@ class Bot:
         if isinstance(notificati, list):
             notificati = dict.fromkeys(notificati, 0)
         ignorati = set(p.get("ignorati", []))
-        self.salva(p, "errori", "attuale", "ultimo", "riassunto", "viste", "luoghi", "storico")
+        self.salva(p, "errori", "attuale", "ultimo", "riassunto", "viste", "luoghi", "storico",
+                   *(("prossimo",) if ripresa else ()))
         auto = p.get("auto")  # appena riletta: se nel frattempo l'hanno spenta dall'app, niente prenotazione da solo
         if auto:
             # un solo tentativo automatico per data; le date gia' offerte col pulsante valgono comunque
@@ -590,7 +683,8 @@ class Bot:
             return "fallita"
         try:
             esito = self.portale(cup_http.prenota, p["cf"], p["nre"], slot, sessione=sessione,
-                                 zona=zona_di(p), dry_run=self.prova, libera=libera, nuova=nuova)
+                                 zona=zona_di(p), dry_run=self.prova, libera=libera, nuova=nuova,
+                                 pid=p["id"], paziente=True)
         except cup_http.GiaPrenotata as e:
             self.dire(p, f"❌ Non prenotata: {e}.")
             try:

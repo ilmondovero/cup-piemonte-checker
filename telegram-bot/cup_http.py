@@ -31,6 +31,7 @@ LISTA_URL = CUP + "/web/guest/lista-prenotazioni"
 RICETTA_URL = CUP + "/ricetta-dematerializzata"
 CALL_CENTER = "800 000 500"
 LENTO = 90  # secondi: la ricerca delle disponibilita' (soprattutto estendendo l'area) puo' richiedere un minuto
+PIU_LENTA = 0.0  # secondi: la risposta piu' lenta dall'ultimo azzeramento (il bot la misura per imparare LENTO)
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36"
 
 L = "_listaprenotazioni_WAR_cupprenotazione_:prescrizioniForm"
@@ -230,7 +231,7 @@ class _Form:
         data = {form: form, "javax.faces.encodedURL": self.enc, "ice.window": self.win, "ice.view": self.view}
         data.update(fields)
         data["javax.faces.ViewState"] = self.vs
-        r = self.s.post(self.enc, data=data, timeout=LENTO, headers={
+        r = self.s.post(self.enc, data=data, timeout=_attesa(), headers={
             "Faces-Request": "partial/ajax", "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"})
         r.raise_for_status()
         return r.text
@@ -249,6 +250,18 @@ def _event(source, event=None, param=True):
     return fields
 
 
+def _attesa():
+    """Timeout delle richieste: 20 s per collegarsi, TLS compreso (se il portale e' giu' non serve aspettare
+    di piu'), LENTO per la risposta."""
+    return (20, LENTO)
+
+
+def _misura(r, *args, **kwargs):
+    """Hook di requests: il tempo fino all'inizio della risposta, quello che fa scattare il timeout."""
+    global PIU_LENTA
+    PIU_LENTA = max(PIU_LENTA, r.elapsed.total_seconds())
+
+
 # --- sessione sul portale ---------------------------------------------------------------
 class CupSession:
     def __init__(self, cf, nre):
@@ -259,12 +272,13 @@ class CupSession:
         self.n_prestazioni = 0  # il massimo visto nel carrello, in qualsiasi passo
         self.s = requests.Session()
         self.s.headers["User-Agent"] = UA
+        self.s.hooks["response"].append(_misura)
         self.search = {L + ":CFInput": cf, L + ":IDSearchTypeInput_input": "nre-label", L + ":IDSearchValueInput": nre}
         self.slots = []
 
     def attuale(self):
         """La prenotazione in stato PRENOTATO per questa ricetta."""
-        self.lista = _Form(self.s, self.s.get(LISTA_URL, timeout=30).text, L)
+        self.lista = _Form(self.s, self.s.get(LISTA_URL, timeout=_attesa()).text, L)
         src = L + ":filterPrescriptionNavigate"
         self.lista_xml = self.lista.post({**self.search, "javax.faces.source": src, "javax.faces.partial.event": "click",
                                           "javax.faces.partial.execute": f"{src} {L}", "javax.faces.partial.render": "@all",
@@ -298,7 +312,7 @@ class CupSession:
         if not sposta:
             raise CupError("Pulsante 'Sposta appuntamento' non presente")
         self.lista.post({**self.search, **_event(sposta.group(1), "activate")})
-        page = self.s.get(RICETTA_URL, timeout=LENTO).text  # qui il portale calcola le disponibilita': puo' essere lento
+        page = self.s.get(RICETTA_URL, timeout=_attesa()).text  # qui il portale calcola le disponibilita': puo' essere lento
         if "Appuntamenti Proposti" not in page:
             raise CupError("Il portale non ha aperto la pagina degli appuntamenti dopo 'Sposta'")
         self.modo = "sposta"
@@ -311,13 +325,13 @@ class CupSession:
         url = html.unescape(redirect.group(1)) if redirect else RICETTA_URL
         if not url.startswith(CUP + "/"):
             raise CupError("Il portale ha indicato un indirizzo esterno: non proseguo")
-        return self.s.get(url, timeout=LENTO).text  # verso gli appuntamenti il portale puo' essere lento
+        return self.s.get(url, timeout=_attesa()).text  # verso gli appuntamenti il portale puo' essere lento
 
     def ricetta(self):
         """Passo "Ricerca": codice fiscale + NRE e "Prosegui", come il browser (il pulsante visibile fa
         partire il comando nascosto epPrestazioniForwardNavigate). Non apre gli appuntamenti: non blocca
         date. GiaPrenotata se la ricetta ha gia' un appuntamento, NonTrovata se il portale la rifiuta."""
-        self.ric = _Form(self.s, self.s.get(RICETTA_URL, timeout=30).text, R)
+        self.ric = _Form(self.s, self.s.get(RICETTA_URL, timeout=_attesa()).text, R)
         src = R + ":epPrestazioniForwardNavigate"
         xml = self.ric.post({R + ":CFInput": self.cf, R + ":nreInput0": self.nre, "g-recaptcha-token": "",
                              "javax.faces.source": src, "javax.faces.partial.event": "click",
@@ -444,7 +458,7 @@ class CupSession:
         url = html.unescape(redirect.group(1)) if redirect else None
         if url and not url.startswith(CUP + "/"):
             raise CupError("Il portale ha indicato un indirizzo esterno: non proseguo")
-        page = self.s.get(url, timeout=30).text if url else xml
+        page = self.s.get(url, timeout=_attesa()).text if url else xml
         if "Riepilogo" not in page or RIEPILOGO + ":riepilogo-nextButton-bottom" not in page:
             raise CupError("Non sono arrivato al Riepilogo")
         t = _text(page)
