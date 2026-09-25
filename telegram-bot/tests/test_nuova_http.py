@@ -204,6 +204,7 @@ SLOT = c.Slot(datetime(2026, 11, 3, 9, 0), c.Luogo("POLIAMBULATORIO NORD", "ECO 
 RIEP = ("Prestazioni selezionate: 1 ECOGRAFIA ADDOME COMPLETO Quando Martedì 3 Novembre 2026 alle ore 09:00 "
         "POLIAMBULATORIO NORD - ECO 1 - Via Po, 5 - TORINO (TO)")
 FATTA = c.Prenotazione(SLOT.quando, SLOT.luogo, "ECOGRAFIA ADDOME COMPLETO")
+PROPOSTA = c.Slot(SLOT.quando, SLOT.luogo, None, proposta=True)  # con piu' prestazioni si prenota solo la proposta
 
 
 def sessioni_finte(monkeypatch, attuali, riep=RIEP, n=1, cosa="ECOGRAFIA ADDOME COMPLETO", nomi=None):
@@ -226,7 +227,7 @@ def sessioni_finte(monkeypatch, attuali, riep=RIEP, n=1, cosa="ECOGRAFIA ADDOME 
         return "passo prestazioni"
 
     def appuntamenti(self, page, estendi=0):
-        self.cosa, self.n_prestazioni, self.slots = cosa, n, [SLOT]
+        self.cosa, self.n_prestazioni, self.slots = cosa, n, [PROPOSTA if n > 1 else SLOT]
         self.nomi = list(nomi) if nomi is not None else ([cosa] if n else [])
         return self.slots
 
@@ -440,3 +441,80 @@ def test_id_nel_diario_mai_dati():
     assert c._id("x:" + CF) == "?" and c._id("x:" + NRE) == "?" and c._id("x:a b") == "?"
     assert c._id("x:prestazioniForm") == "prestazioniForm"  # 15 lettere: non e' una ricetta
     assert c._caselle('<input type="checkbox" data-checked="false" />') == (0, 1)
+
+
+def test_piu_prestazioni_date_per_prestazione_e_riepilogo_mancato_nel_diario(monkeypatch):
+    # come pratica 6 dal vivo: due prestazioni, ognuna con le sue date negli "Appuntamenti Disponibili"
+    due = carrello("ECOGRAFIA ADDOME", "VISITA")
+    pagina = ("Appuntamenti Proposti " + due + form(c.A, f"<div>'{c.A}:x:0:app_selector'</div>" +
+              blocco("Martedì 14 Settembre 2027", "POLIAMBULATORIO NORD", "ECO 1", cosa="ECOGRAFIA ADDOME") +
+              f'<div class="btn btn-default" id="{c.A}:altre">Altre disponibilità</div>'))
+    disp = ("<partial-response>Appuntamenti Disponibili" +
+            blocco("Lunedì 6 Settembre 2027", "POLIAMBULATORIO SUD", "ECO 2", seleziona_id=c.A + ":s1", cosa="ECOGRAFIA ADDOME") +
+            blocco("Lunedì 6 Settembre 2027", "POLIAMBULATORIO SUD", "ECO 2", seleziona_id=c.A + ":s2", cosa="VISITA") +
+            blocco("Martedì 7 Settembre 2027", "POLIAMBULATORIO SUD", "AMB 3", seleziona_id=c.A + ":s3", cosa="VISITA") +
+            "</partial-response>")
+    # Seleziona accettata, ma "Avanti" non porta al Riepilogo (manca la data dell'altra prestazione)
+    finto = con_portale(monkeypatch, [RICERCA, pagina], [xml(), xml(), disp, xml(), xml("Selezionare un appuntamento")])
+    c.DIARIO.clear()
+    res = c.check_nuova(CF, NRE)
+    d = diario_senza_dati()
+    assert "date 4, con Seleziona 3, date uguali 1, altre disponibilita' pulsante/app" in d
+    assert "date per prestazione [1, 2] nessuna 0" in d
+    cup = res["sessione"]
+    s3 = [x for x in res["slots"] if x.seleziona_id == c.A + ":s3"][0]
+    with pytest.raises(c.CupError, match="Non sono arrivato al Riepilogo: Selezionare un appuntamento"):
+        cup.riepilogo(s3)
+    d = diario_senza_dati()
+    assert "seleziona: messaggi d'errore 0, rifiutata no" in d and "avanti: redirect no, messaggi d'errore 1" in d
+    assert finto.inviati[-2]["javax.faces.source"] == c.A + ":s3"
+
+
+def test_slot_doppio_si_dice_col_suo_motivo(monkeypatch):
+    doppio = c.Slot(datetime(2027, 9, 6, 9, 0), c.Luogo("SUD", "ECO 2", "Via Roma, 1 - TORINO (TO)"), "b1")
+
+    class Finta:
+        modo, search = "nuova", {c.L + ":IDSearchValueInput": NRE}
+        slots = [doppio, c.Slot(doppio.quando, doppio.luogo, "b2")]
+
+    monkeypatch.setattr(c.CupSession, "attuale", lambda self: (_ for _ in ()).throw(c.NonTrovata("nessuna")))
+    monkeypatch.setattr(c.CupSession, "__init__", lambda self, cf, nre: None)
+    monkeypatch.setattr(c.CupSession, "ricetta", lambda self: "")
+    monkeypatch.setattr(c.CupSession, "fino_agli_appuntamenti", lambda self, page: page)
+    monkeypatch.setattr(c.CupSession, "appuntamenti", lambda self, page, estendi=0: setattr(self, "slots", Finta.slots))
+    with pytest.raises(c.CupError, match="presente 2 volte"):
+        c.prenota(CF, NRE, doppio, sessione=Finta(), zona={"tipo": "tutte", "valore": ""}, dry_run=True, nuova=True)
+
+
+def test_piu_prestazioni_solo_la_proposta_e_tra_le_migliori(monkeypatch):
+    due = carrello("ECOGRAFIA ADDOME", "VISITA")
+    pagina = ("Appuntamenti Proposti " + due + form(c.A, f"<div>'{c.A}:x:0:app_selector'</div>" +
+              blocco("Martedì 14 Settembre 2027", "POLIAMBULATORIO NORD", "ECO 1", cosa="ECOGRAFIA ADDOME") +
+              f'<div class="btn btn-default" id="{c.A}:altre">Altre disponibilità</div>'))
+    disp = ("<partial-response>Appuntamenti Disponibili" +
+            blocco("Lunedì 6 Settembre 2027", "POLIAMBULATORIO SUD", "ECO 2", seleziona_id=c.A + ":s1") + "</partial-response>")
+    con_portale(monkeypatch, [RICERCA, pagina], [xml(), xml(), disp])
+    res = c.check_nuova(CF, NRE)
+    assert len(res["slots"]) == 2 and res["solo_proposta"]
+    assert [x.proposta for x in res["migliori"]] == [True]
+
+
+def test_piu_prestazioni_una_data_non_proposta_non_si_seleziona(monkeypatch):
+    log = sessioni_finte(monkeypatch, [c.NonTrovata("Non esistono prenotazioni")], n=2, nomi=["ECO", "VISITA"])
+    vera = c.CupSession.appuntamenti
+
+    def appuntamenti(self, page, estendi=0):
+        vera(self, page, estendi)
+        self.slots = [SLOT]  # la data c'e', ma e' di "Altre disponibilita'"
+        return self.slots
+    monkeypatch.setattr(c.CupSession, "appuntamenti", appuntamenti)
+    selezionate = []
+    monkeypatch.setattr(c.CupSession, "riepilogo", lambda self, slot: selezionate.append(slot))
+    with pytest.raises(c.CupError, match="solo la data proposta"):
+        prenota_nuova()  # senza sessione del controllo: se ne apre una, ma "Seleziona" non parte
+    sessione = c.CupSession(CF, NRE)
+    sessione.modo, sessione.slots, sessione.n_prestazioni = "nuova", [SLOT], 2
+    sessione.search = {c.L + ":IDSearchValueInput": NRE}
+    with pytest.raises(c.CupError, match="solo la data proposta"):
+        prenota_nuova(sessione)  # con la sessione del controllo: nessun'altra sessione aperta
+    assert not selezionate and log["conferma"] == 0 and log["ricetta"] == 1

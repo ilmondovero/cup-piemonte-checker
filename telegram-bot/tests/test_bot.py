@@ -1,6 +1,7 @@
 """Test senza rete: parser su HTML sintetico (stessa struttura del portale, dati inventati),
 archivio cifrato e flusso del bot con Telegram e portale finti."""
 import json
+import logging
 import sqlite3
 import sys
 import time
@@ -1353,3 +1354,46 @@ def test_ricetta_con_prenotazione_erogata_non_diventa_da_prenotare(b, monkeypatc
     b.on_message(msg(1, CF3, mid=30))
     b.on_message(msg(1, NRE3, mid=31))
     assert any("non e' attiva" in x for x in inviati(b)) and pratica(b)["stato"] == "cf"
+
+
+def test_piu_prestazioni_fallita_in_automatico_spegne_la_conferma(b, monkeypatch, caplog):
+    due = COSA3 + " + VISITA CARDIOLOGICA"
+    monkeypatch.setattr(c, "nuova", lambda cf, nre: due)
+    vera = c.check_nuova
+    monkeypatch.setattr(c, "check_nuova", lambda *a: {**vera(*a), "cosa": due})
+    monkeypatch.setattr(c, "prenota", lambda cf, nre, *a, **k: (_ for _ in ()).throw(
+        c.CupError(f"Non sono arrivato al Riepilogo ({cf} {nre})")))
+    registra_nuova(b)
+    p = pratica(b)
+    p["auto"] = {"giorni": 1}
+    b.store.save(p)
+    caplog.set_level(logging.INFO, logger="cupbot")
+    b.controlla(pratica(b))
+    assert not pratica(b).get("auto") and pratica(b)["id"] in b.offerte  # niente altri tentativi da solo, il pulsante si'
+    assert any("piu' prestazioni" in t and "/auto" in t for t in inviati(b))
+    # il motivo arriva nel log, mai codice fiscale e numero ricetta
+    [riga] = [r.getMessage() for r in caplog.records if "fallita" in r.getMessage()]
+    assert "Non sono arrivato al Riepilogo" in riga and CF3 not in riga and NRE3 not in riga
+
+
+def test_una_prestazione_fallita_in_automatico_resta_automatica(b, monkeypatch):
+    monkeypatch.setattr(c, "prenota", lambda *a, **k: (_ for _ in ()).throw(c.CupError("Slot non piu' disponibile")))
+    registra_nuova(b)
+    p = pratica(b)
+    p["auto"] = {"giorni": 1}
+    b.store.save(p)
+    b.controlla(pratica(b))
+    assert pratica(b).get("auto")
+
+
+def test_piu_prestazioni_le_date_non_proposte_non_si_prenotano_dalla_app(b, monkeypatch):
+    vera = c.check_nuova
+
+    def check_nuova(*a):
+        res = vera(*a)
+        return {**res, "cosa": COSA3 + " + VISITA", "solo_proposta": True, "migliori": []}
+    monkeypatch.setattr(c, "check_nuova", check_nuova)
+    registra_nuova(b)
+    b.controlla(pratica(b))
+    viste = pratica(b)["viste"]
+    assert viste and not any(v["sel"] for v in viste)  # visibili, ma senza "prenota"

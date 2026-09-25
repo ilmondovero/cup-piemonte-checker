@@ -73,13 +73,20 @@ comparire intero nel Riepilogo, contando anche i doppioni. Dopo la Conferma la p
 se l'elenco del portale le mostra tutte al posto scelto; altrimenti è un "esito incerto", con l'avviso
 all'utente e al gestore.
 
+Per una ricetta mai prenotata con più prestazioni il bot prenota **solo la data proposta dal portale**
+(il suo "Avanti", come farebbe una persona): dal vivo, scegliendo una data di "Altre disponibilità" il bot
+non è arrivato al Riepilogo, mentre accettando la proposta la ricetta è stata prenotata tutta. Le altre date si vedono ma non si prenotano dal bot. Se la conferma automatica fallisce
+su una ricetta così, il bot la spegne per quella ricetta: ogni tentativo terrebbe occupate date per niente.
+
 Quando sposta un appuntamento con più prestazioni prenotate insieme, conferma solo se le sposta tutte. Se il
 portale ne sposterebbe una sola, il bot non conferma, mette in pausa i controlli (che terrebbero bloccate
 date per niente) e indica portale e call center.
 
 Per capire come il portale presenta questi casi, per ogni passo il bot scrive nel log com'è fatta la
 pagina: sezioni, id di form e pulsanti, e numeri (prestazioni nel carrello, caselle spuntate, date,
-righe dell'elenco). Mai nomi di prestazioni, date, luoghi o dati della ricetta. Lo fa solo per le
+righe dell'elenco, date per prestazione, cosa risponde il portale a "Seleziona" e "Avanti"). Mai nomi di
+prestazioni, date, luoghi o dati della ricetta. Se una prenotazione fallisce, il log ne riporta il motivo
+con codice fiscale e numero ricetta mascherati. Lo fa solo per le
 prenotazioni nuove e per le ricette con più prestazioni.
 
 Dove cercare: un comune, oppure dove propone il CUP; dopo il primo controllo anche una provincia o una

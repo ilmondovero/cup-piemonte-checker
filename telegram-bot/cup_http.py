@@ -462,11 +462,17 @@ class CupSession:
                                "ice.submit.serialization": "form"})
 
         slots = [proposta] if proposta else []
+        # con piu' prestazioni: quante date disponibili riportano ciascuna (solo conteggi, per il diario)
+        per_prestazione = collections.Counter()
         # ogni slot disponibile: data, luogo e (se non e' la proposta) il suo pulsante "Seleziona"
         for b in re.split(r'(?=<div class="captionAppointment-what")', disp_html)[1:]:
             quando = _date(_text(b))
             if not quando:
                 continue
+            if len(set(self.nomi)) > 1:
+                conta = _conta_nomi(_text(b), self.nomi)
+                per_prestazione.update(i for i, n in enumerate(dict.fromkeys(self.nomi)) if conta[n])
+                per_prestazione["nessuna"] += not any(conta.values())
             btn = re.search(r'id="(%s:[^"]+)"[^>]*>(?:(?!</div>).){0,600}?>\s*Seleziona\s*<' % re.escape(A), b, re.S)
             if proposta and quando == proposta.quando and not btn:
                 continue  # e' la stessa proposta ripetuta in cima all'elenco
@@ -477,17 +483,26 @@ class CupSession:
                           f"pannelli proposta {page.count('Appuntamenti Proposti')}, "
                           f"selettori proposta {len(set(re.findall(r':(\d+):app_selector', page)))}, "
                           f"descrizioni {page.count('captionAppointment-desc')}, proposta {'si' if proposta else 'no'}, "
-                          f"date {len(self.slots)}, con Seleziona {sum(1 for x in self.slots if x.seleziona_id)}")
+                          f"date {len(self.slots)}, con Seleziona {sum(1 for x in self.slots if x.seleziona_id)}, "
+                          f"date uguali {len(self.slots) - len({x.key() for x in self.slots})}, "
+                          f"altre disponibilita' {'pulsante' if altre else 'no pulsante'}/"
+                          f"{sel.group(1).rsplit('_', 1)[0].rsplit(':', 1)[1] if sel else 'nessun selettore'}"
+                          + (f", date per prestazione {[per_prestazione[i] for i in range(len(set(self.nomi)))]}"
+                             f" nessuna {per_prestazione['nessuna']}" if len(set(self.nomi)) > 1 else ""))
         return self.slots
 
     def riepilogo(self, slot):
         """Seleziona lo slot e va al Riepilogo. Ritorna (testo, data letta, testo dopo la data, pagina html)."""
         if not slot.seleziona_id and not slot.proposta:
             raise CupError("Questa data non ha un pulsante 'Seleziona': non posso sceglierla")
+        osserva = self.modo == "nuova" or self.n_prestazioni > 1
         if slot.seleziona_id:
             xml = self.app.post({**GEO, **_event(slot.seleziona_id)})
+            errori = _errori(xml)
+            if osserva:
+                DIARIO.append(f"seleziona: messaggi d'errore {len(errori)}, rifiutata {'si' if 'alert-danger' in xml else 'no'}")
             if "alert-danger" in xml:
-                raise CupError("Il portale ha rifiutato la selezione della data")
+                raise CupError("Il portale ha rifiutato la selezione della data" + (": " + errori[0] if errori else ""))
         xml = self.app.post(_event(AVANTI + ":appuntamenti-nextButton-main"), form=AVANTI)
         redirect = re.search(r'<redirect url="([^"]+)"', xml)
         url = html.unescape(redirect.group(1)) if redirect else None
@@ -495,7 +510,10 @@ class CupSession:
             raise CupError("Il portale ha indicato un indirizzo esterno: non proseguo")
         page = self.s.get(url, timeout=_attesa()).text if url else xml
         if "Riepilogo" not in page or RIEPILOGO + ":riepilogo-nextButton-bottom" not in page:
-            raise CupError("Non sono arrivato al Riepilogo")
+            errori = _errori(xml) or (_errori(page) if url else [])  # dopo un redirect, sulla pagina raggiunta
+            if osserva:
+                DIARIO.append(f"avanti: redirect {'si' if url else 'no'}, messaggi d'errore {len(errori)}, {_struttura(page)}")
+            raise CupError("Non sono arrivato al Riepilogo" + (": " + errori[0] if errori else ""))
         t = _text(page)
         t = t[t.find("Prestazioni selezionate"):]
         if self.modo == "nuova" or len(self.nomi) > 1:
@@ -521,6 +539,10 @@ class CupSession:
 
 # --- API usata dal bot ------------------------------------------------------------------
 ZONE = ("sede", "comune", "provincia", "tutte")  # dove l'utente accetta una data nuova
+# Ricetta mai prenotata con piu' prestazioni: dal vivo (2026-09-25) con una data di "Altre disponibilita'"
+# il bot non e' arrivato al Riepilogo, mentre accettare la proposta del portale ("Avanti") ha prenotato tutto.
+SOLO_PROPOSTA = ("Con piu' prestazioni prenoto solo la data proposta dal portale per tutte insieme: "
+                 "questa e' un'altra data, sceglila dal portale o al call center")
 ESTENDI_MAX = 4  # "Estendi area di ricerca" premuto al massimo tante volte (le aree lontane compaiono solo se hanno posti)
 
 
@@ -596,12 +618,14 @@ def nuova(cf, nre):
 
 def check_nuova(cf, nre, zona="tutte"):
     """Come check, per una ricetta mai prenotata: "attuale" e' None e ogni data e' buona se e' nella zona.
-    Con piu' prestazioni le date sono quelle che il portale propone per tutte insieme."""
+    Con piu' prestazioni vale solo la proposta del portale (vedi SOLO_PROPOSTA)."""
     cup = CupSession(cf, nre)
     page = cup.fino_agli_appuntamenti(cup.ricetta())
     slots = cup.appuntamenti(page, estendi=estensioni(zona))
-    return {"attuale": None, "cosa": cup.cosa, "slots": slots, "sessione": cup,
-            "migliori": [x for x in slots if (x.proposta or x.seleziona_id) and ammesso(x, None, zona)]}
+    solo_proposta = cup.n_prestazioni > 1
+    return {"attuale": None, "cosa": cup.cosa, "slots": slots, "sessione": cup, "solo_proposta": solo_proposta,
+            "migliori": [x for x in slots if (x.proposta or (x.seleziona_id and not solo_proposta))
+                         and ammesso(x, None, zona)]}
 
 
 def _conta_nomi(testo, nomi):
@@ -692,11 +716,18 @@ def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=Fals
                                  or getattr(sessione, "modo", "") != ("nuova" if nuova else "sposta")):
         sessione = None  # sessione di un'altra ricetta o dell'altro flusso: mai usarla
 
+    if nuova and not slot.proposta and getattr(sessione, "n_prestazioni", 0) > 1:
+        raise CupError(SOLO_PROPOSTA)  # prima di aprire altre sessioni: non bloccare date per niente
+
     def arriva_al_riepilogo(cup):
         uguali = [x for x in cup.slots if x.key() == slot.key()]
-        if len(uguali) != 1:  # due date con la stessa chiave: meglio non scegliere a caso
+        if len(uguali) > 1:  # due date con la stessa chiave: meglio non scegliere a caso
+            raise CupError(f"Slot {slot.quando:%d/%m/%Y %H:%M} presente {len(uguali)} volte: non scelgo a caso")
+        if not uguali:
             raise CupError(f"Slot {slot.quando:%d/%m/%Y %H:%M} non piu' disponibile")
         s = uguali[0]
+        if nuova and cup.n_prestazioni > 1 and not s.proposta:
+            raise CupError(SOLO_PROPOSTA)  # prima di "Seleziona", che bloccherebbe la data
         return (s,) + cup.riepilogo(s)
 
     try:

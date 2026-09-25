@@ -606,6 +606,14 @@ class Bot:
                 if self.prenota(p, slot, res["sessione"], automatica=True) != "fallita":
                     return res
                 p = self.store.get(p["id"])
+                if p and p.get("auto") and nuova and " + " in (res.get("cosa") or ""):
+                    # piu' prestazioni: ogni tentativo tiene occupate date per niente, meglio non ripeterlo da solo
+                    p["auto"] = None
+                    self.salva(p, "auto")
+                    self.dire(p, "Questa ricetta ha piu' prestazioni e il tentativo automatico non e' riuscito: "
+                                 "ho disattivato la conferma automatica, per non tenere occupate altre date a "
+                                 "ogni tentativo. Le date trovate te le propongo col pulsante; /auto per riattivarla.")
+                    log.info("conferma automatica %s/%s disattivata: piu' prestazioni", uid(chat), p["id"])
                 if not p or p["stato"] != "attivo" or da_prenotare(p) != nuova:
                     # nel frattempo e' risultata prenotata: le date (e la sessione) di questo controllo erano
                     # della prenotazione nuova e non valgono per spostare quella attuale
@@ -631,7 +639,7 @@ class Bot:
         area = {x.key() for x in nell_area}
         p["viste"] = [{"q": x.quando.isoformat(), "sede": x.luogo.sede, "amb": x.luogo.ambulatorio,
                        "ind": x.luogo.indirizzo, "area": x.key() in area, "ok": x.key() in migliori,
-                       "k": x.key(), "sel": bool(x.proposta or x.seleziona_id)}
+                       "k": x.key(), "sel": bool(x.proposta or (x.seleziona_id and not res.get("solo_proposta")))}
                       for x in res["slots"][:MAX_VISTE]]
         luoghi = {l["sede"]: l for l in p.get("luoghi", [])}
         for x in res["slots"]:
@@ -732,8 +740,15 @@ class Bot:
             if urgente:
                 self.alert_admin(f"Esito incerto dopo la conferma per {uid(chat)}")
                 self.sospendi_auto(p)
-            log.info("prenotazione %s/%s fallita: %s%s", uid(chat), p["id"], type(e).__name__,
-                     " (esito incerto)" if urgente else "")
+            # il motivo (date, sedi, passi del portale) serve a capire i flussi nuovi: mai CF e NRE nel log
+            motivo = str(e)
+            for dato in (p.get("cf"), p.get("nre")):
+                motivo = motivo.replace(dato, "***") if dato else motivo
+            # anche se il portale li riscrive a modo suo: qualunque cosa abbia la forma di un CF o di un NRE
+            motivo = re.sub(r"\b(?:[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]|(?=[A-Z]*\d)[0-9A-Z]{15})\b", "***",
+                            motivo, flags=re.I)
+            log.info("prenotazione %s/%s fallita: %s%s: %s", uid(chat), p["id"], type(e).__name__,
+                     " (esito incerto)" if urgente else "", motivo)
             return "incerta" if urgente else "fallita"
         except Exception as e:
             log.error("prenotazione %s: errore imprevisto %s\n%s", uid(chat), type(e).__name__,
