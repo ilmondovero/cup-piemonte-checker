@@ -177,7 +177,8 @@ def _id(s):
     """Ultimo pezzo di un id del portale, solo se ha l'aspetto del nome di un componente (mai un codice
     fiscale o una ricetta, se un giorno finissero in un id)."""
     s = s.rsplit(":", 1)[-1]
-    if not re.fullmatch(r"[A-Za-z_][\w-]{0,60}", s) or CF_RE.match(s.upper()) or NRE_RE.match(s.upper()):
+    u = s.upper()
+    if not re.fullmatch(r"[A-Za-z_][\w-]{0,60}", s) or CF_RE.match(u) or (NRE_RE.match(u) and re.search(r"\d", u)):
         return "?"
     return s
 
@@ -617,9 +618,15 @@ def _conta_nomi(testo, nomi):
 
 def _stesso_appuntamento(testo, slot):
     """Ogni appuntamento del Riepilogo e' quello scelto: stessa data e ora e, subito dopo, lo stesso luogo.
-    Tanti "alle ore" quante date riconosciute: una data scritta in un altro formato non passa inosservata."""
+    Nessuna data in un altro formato: tanti "alle ore", "Quando" e mesi con l'anno quante date riconosciute,
+    e nessuna data in cifre."""
     date = list(DATE_RE.finditer(testo))
-    return bool(date) and len(date) == len(re.findall(r"alle\s+ore", testo, re.I)) and all(
+    mesi_anno = re.findall(r"\b(?:%s)\s+\d{4}\b" % "|".join(MESI), testo, re.I)
+    quando = re.findall(r"\bQuando\b", testo)
+    if (not date or len(re.findall(r"alle\s+ore", testo, re.I)) != len(date) or len(mesi_anno) != len(date)
+            or (quando and len(quando) != len(date)) or re.search(r"\b\d{1,2}[/.-]\d{1,2}[/.-]\d{4}\b", testo)):
+        return False
+    return all(
         _date(m.group(0)) == slot.quando and _norm(testo[m.end():m.end() + 250]).startswith(slot.luogo.key())
         for m in date)
 
@@ -722,7 +729,7 @@ def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=Fals
     else:
         nomi = insieme if len(insieme) > 1 else []
         if nomi and not all(nomi):
-            raise CupError("Prestazioni prenotate insieme non leggibili dall'elenco: non sposto")
+            raise Separerebbe("Prestazioni prenotate insieme non leggibili dall'elenco: non sposto")
     if len(nomi) > 1:
         separa = Separerebbe if not nuova else CupError
         dich = re.search(r"Prestazioni selezionate:?\s*(\d+)", testo)
@@ -733,10 +740,15 @@ def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=Fals
                          "Spostare questo appuntamento lo separerebbe dalle altre prestazioni prenotate insieme: "
                          "non confermo")
         if not _stesso_appuntamento(testo, s):
-            raise CupError("Il portale mette le prestazioni in appuntamenti diversi (o il Riepilogo non si legge "
-                           "con certezza): non confermo, prenota dal portale o al call center")
-    elif nuova and {_date(x.group(0)) for x in DATE_RE.finditer(testo)} != {s.quando}:
-        raise CupError("Il Riepilogo contiene piu' appuntamenti: non confermo")
+            raise separa("Il portale mette le prestazioni in appuntamenti diversi (o il Riepilogo non si legge "
+                         "con certezza): non confermo, prenota dal portale o al call center")
+    elif nuova:
+        # C: una sola prestazione nel carrello, ma il Riepilogo ne dichiara altre: il portale ne ha nascoste
+        dich = re.search(r"Prestazioni selezionate:?\s*(\d+)", testo)
+        if dich and int(dich.group(1)) != 1:
+            raise CupError("Il Riepilogo riporta piu' prestazioni del carrello: non confermo")
+        if {_date(x.group(0)) for x in DATE_RE.finditer(testo)} != {s.quando}:
+            raise CupError("Il Riepilogo contiene piu' appuntamenti: non confermo")
     if dry_run:
         return f"PROVA: arrivato al Riepilogo di {s!r}, non confermo."
 
@@ -748,8 +760,9 @@ def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=Fals
             try:
                 verifica = CupSession(cf, nre)
                 nuova_att = verifica.attuale()
-                if _tutte_al_posto(verifica.prenotate or [nuova_att], s, nomi,
-                                   att.quando if len(insieme) > 1 else None):
+                # una riga prenotata senza data leggibile potrebbe essere rimasta alla data vecchia
+                if verifica.n_prenotate <= len(verifica.prenotate) and _tutte_al_posto(
+                        verifica.prenotate or [nuova_att], s, nomi, att.quando if len(insieme) > 1 else None):
                     return "Prenotazione fatta." if nuova else "Prenotazione spostata."
             except (CupError, requests.RequestException):
                 pass

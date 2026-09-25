@@ -434,7 +434,7 @@ class App:
 
     def barra(self, chat, pratiche):
         pulsanti = []
-        if len(pratiche) < self.bot.max_pratiche:
+        if not self.bot.piena(len(pratiche)):
             pulsanti.append('<button type="button" hx-get="/ui/nuova" hx-target="#foglio" aria-label="Aggiungi una ricetta">＋<span class="lungo"> Aggiungi</span></button>')
         pulsanti.append('<button type="button" hx-get="/ui/dati" hx-target="#foglio" aria-label="Dati e privacy">🔒</button>')
         if self.bot.admin and str(chat) == self.bot.admin:
@@ -904,7 +904,7 @@ class App:
 </form>"""
 
     def foglio_nuova(self, chat):
-        if len(self.store.della_chat(chat)) >= self.bot.max_pratiche:
+        if self.bot.piena(len(self.store.della_chat(chat))):
             return f'<p class="errore">Puoi seguire al massimo {self.bot.max_pratiche} ricette.</p>'
         return self._form_ricetta(chat, "nuova")
 
@@ -955,6 +955,10 @@ class App:
         n1, e1, m1, p1 = finestra(3600)
         n24, e24, m24, p24 = finestra(86400)
         offerte = sum(1 for o in list(self.bot.offerte.values()) if ora - o["ts"] <= botmod.TTL_OFFERTA)
+        # senza limite di ricette: se sono troppe per il ritmo del portale, i controlli restano indietro
+        primo = s.db.execute("SELECT MIN(prossimo) FROM pratiche WHERE stato = 'attivo'").fetchone()[0]
+        ritardo = max(0, ora - primo) if primo else 0
+        in_ritardo = len(s.due(ora - 300))
 
         def tile(valore, nome, nota=""):
             return f'<div class="tile"><strong>{e(str(valore))}</strong><span>{e(nome)}</span><small>{e(nota)}</small></div>'
@@ -966,6 +970,7 @@ class App:
         f"{sum(v for k, v in per_stato.items() if k not in ATTIVE)} in registrazione")}
   {tile(offerte, "offerte aperte")}
   {tile(self.bot.coda.qsize(), "azioni in coda")}
+  {tile(f"{ritardo // 60:.0f} min", "controlli in ritardo", f"{in_ritardo} oltre 5 minuti")}
 </div>
 <p class="nota">{e("Dati dal " + botmod.orario(prima).strftime("%d/%m %H:%M") if prima else "Ancora nessuna sessione sul portale registrata.")}
   {e(f"Attesa di una risposta lenta, imparata per quest'ora: {attesa} s.")}</p>

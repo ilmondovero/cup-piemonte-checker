@@ -860,6 +860,32 @@ def test_intervallo_utenti_mai_sotto_il_minimo(tmp_path):
     assert botmod.Bot(s, "x", admin="1", admin_intervallo=1).admin_intervallo == botmod.MIN_INTERVALLO_ADMIN
 
 
+def test_nessun_limite_di_ricette_per_chat(b):
+    registra(b)
+    for i in range(5):  # ricette fittizie, diverse tra loro
+        b.ultimo_msg.clear()
+        b.on_message(msg(1, "/aggiungi"))
+        b.on_message(msg(1, CF2, mid=20))
+        b.on_message(msg(1, f"010A0000000010{i}", mid=21))
+        b.on_message(msg(1, f"Ricetta {i}", mid=22))
+        scegli_sede(b, 1, "tutte")
+    assert len(b.store.della_chat(1)) == 6 and not b.piena(100)
+    assert all(p["stato"] == "attivo" for p in b.store.della_chat(1))
+    for i in range(5, 12):  # oltre il pannello completo: una riga e un pulsante per ricetta
+        b.ultimo_msg.clear()
+        b.on_message(msg(1, "/aggiungi"))
+        b.on_message(msg(1, CF2, mid=20))
+        b.on_message(msg(1, f"010A00000002{i:03d}", mid=21))
+        b.on_message(msg(1, f"Ricetta {i}", mid=22))
+        scegli_sede(b, 1, "tutte")
+    testo, righe = b.testo_pannello(1)
+    n = len(b.store.della_chat(1))
+    assert n > botmod.PANNELLO_COMPLETO and len(testo) < 4000
+    assert sum(len(r) for r in righe) == n and all(r[0]["callback_data"].startswith("sc:menu:") for r in righe)
+    b.on_callback(cq(1, righe[0][0]["callback_data"]))
+    assert any(cb.startswith("sc:controlla:") for cb in pulsanti(b))  # la scheda con i suoi pulsanti
+
+
 def test_menu_con_tutti_i_comandi(b):
     b.imposta_menu()
     menu = {d["scope"]["type"]: [x["command"] for x in d["commands"]] for m, d in b.out if m == "setMyCommands"}
@@ -1155,6 +1181,167 @@ def test_spostamento_che_separerebbe_le_prestazioni_mette_in_pausa(b, monkeypatc
     b.on_callback(cq(1, cb))
     assert pratica(b)["stato"] == "pausa"  # ogni controllo terrebbe una data bloccata per niente
     assert "non posso anticiparla" in inviati(b)[-1] and "/riprendi" in inviati(b)[-1]
+
+
+def test_separerebbe_in_automatico_niente_offerta_dopo_la_pausa(b, monkeypatch):
+    registra(b)
+    p = pratica(b)
+    p["auto"] = {"giorni": 1}
+    b.salva(p, "auto")
+
+    def separa(*a, **k):
+        raise c.Separerebbe("Spostare questo appuntamento lo separerebbe dalle altre prestazioni prenotate insieme")
+    monkeypatch.setattr(c, "prenota", separa)
+    prima = len(inviati(b))
+    b.controlla(pratica(b))
+    dopo = inviati(b)[prima:]
+    assert pratica(b)["stato"] == "pausa" and pratica(b)["id"] not in b.offerte
+    assert not any("C'e' una data PRIMA" in x for x in dopo)
+
+
+# --- date trovate in chat, senza Mini App --------------------------------------------------------
+def bottoni(b):
+    """(testo, callback_data) dei pulsanti dell'ultimo messaggio (non pannello) che ne aveva."""
+    ultimo = [d for m, d in b.out if m == "sendMessage" and d.get("reply_markup") and not d["text"].startswith("📋")][-1]
+    return [(x["text"], x["callback_data"]) for r in ultimo["reply_markup"]["inline_keyboard"] for x in r]
+
+
+def test_date_trovate_in_chat_con_conferma(b):
+    registra(b)
+    b.controlla(pratica(b))
+    b.ultimo_msg.clear()
+    b.on_message(msg(1, "/date"))
+    t = inviati(b)[-1]
+    assert "Date trovate" in t and "In altre zone" in t and "Cuneo" in t
+    [(_, altrove)] = [(x, cb) for x, cb in bottoni(b) if cb.startswith("vd:") and botmod.fmt(ALTROVE.quando) in x]
+    b.on_callback(cq(1, altrove))
+    t = inviati(b)[-1]  # prima di prenotare: data, ora, luogo e avvertenze
+    assert botmod.fmt(ALTROVE.quando) in t and "Cuneo" in t and "fuori dalla zona" in t and "PRIMA" in t
+    assert not b.chiamate
+    [si] = [cb for _, cb in bottoni(b) if cb.startswith("vs:")]
+    b.on_callback(cq(1, si))
+    assert b.chiamate[-1][1] == ALTROVE.key() and b.libere[-1] is True  # scelta esplicita: anche fuori zona
+
+
+def test_date_trovate_no_non_prenota(b):
+    registra(b)
+    b.controlla(pratica(b))
+    b.ultimo_msg.clear()
+    b.on_message(msg(1, "/date"))
+    b.on_callback(cq(1, [cb for _, cb in bottoni(b) if cb.startswith("vd:")][0]))
+    [no] = [cb for _, cb in bottoni(b) if cb.startswith("vn:")]
+    b.on_callback(cq(1, no))
+    assert not b.chiamate and "non prenoto" in inviati(b)[-1]
+
+
+def test_date_vecchie_senza_prenota_ma_con_controlla(b):
+    registra(b)
+    b.controlla(pratica(b))
+    b.sessioni[pratica(b)["id"]]["ts"] -= botmod.TTL_OFFERTA + 1
+    b.ultimo_msg.clear()
+    b.on_message(msg(1, "/date"))
+    cbs = [cb for _, cb in bottoni(b)]
+    assert not any(cb.startswith("vd:") for cb in cbs) and any(cb.startswith("sc:controlla:") for cb in cbs)
+    assert "serve un controllo nuovo" in inviati(b)[-1]
+
+
+def test_elenco_vecchio_non_prenota(b):
+    registra(b)
+    b.controlla(pratica(b))
+    b.ultimo_msg.clear()
+    b.on_message(msg(1, "/date"))
+    vecchio = [cb for _, cb in bottoni(b) if cb.startswith("vd:")][0]
+    b.ultimo_msg.clear()
+    b.on_message(msg(1, "/date"))  # un elenco nuovo sostituisce il vecchio
+    b.on_callback(cq(1, vecchio))
+    assert "non e' piu' valido" in inviati(b)[-1] and not b.chiamate
+
+
+def conferma_una_data(b):
+    b.ultimo_msg.clear()
+    b.on_message(msg(1, "/date"))
+    b.on_callback(cq(1, [cb for _, cb in bottoni(b) if cb.startswith("vd:")][0]))
+    return [cb for _, cb in bottoni(b) if cb.startswith("vs:")][0]
+
+
+def test_date_due_conferme_una_sola_prenotazione(b):
+    registra(b)
+    b.controlla(pratica(b))
+    b.ultimo_msg.clear()
+    b.on_message(msg(1, "/date"))
+    vd = [cb for _, cb in bottoni(b) if cb.startswith("vd:")]
+    b.on_callback(cq(1, vd[0]))
+    primo = [cb for _, cb in bottoni(b) if cb.startswith("vs:")][0]
+    b.on_callback(cq(1, vd[1]))
+    secondo = [cb for _, cb in bottoni(b) if cb.startswith("vs:")][0]
+    b.on_callback(cq(1, primo))
+    b.on_callback(cq(1, secondo))
+    assert len(b.chiamate) == 1
+
+
+def test_date_dopo_un_controllo_nuovo_non_valgono(b):
+    registra(b)
+    b.controlla(pratica(b))
+    si = conferma_una_data(b)
+    b.sessioni[pratica(b)["id"]]["ts"] += 1  # un controllo nuovo nel frattempo
+    b.on_callback(cq(1, si))
+    assert not b.chiamate and "controllo nuovo" in inviati(b)[-1]
+
+
+def test_date_dopo_che_la_prenotazione_e_cambiata_non_valgono(b):
+    registra(b)
+    b.controlla(pratica(b))
+    si = conferma_una_data(b)
+    p = pratica(b)
+    p["attuale"] = {**p["attuale"], "quando": (ATT.quando - timedelta(days=1)).isoformat()}
+    b.salva(p, "attuale")
+    b.on_callback(cq(1, si))
+    assert not b.chiamate and "cambiata" in inviati(b)[-1]
+
+
+def test_date_dopo_modifica_non_valgono(b):
+    registra(b)
+    b.controlla(pratica(b))
+    si = conferma_una_data(b)
+    b.scarta(pratica(b)["id"])  # /modifica o cambio ricetta dalla Mini App
+    b.on_callback(cq(1, si))
+    assert not b.chiamate
+
+
+def test_elenco_lungo_sta_in_un_messaggio_con_tutti_i_pulsanti(b):
+    registra(b)
+    b.controlla(pratica(b))
+    p = pratica(b)
+    lunga = "AZIENDA OSPEDALIERA UNIVERSITARIA CITTA' DELLA SALUTE E DELLA SCIENZA DI TORINO - PRESIDIO"
+    p["viste"] = [{**p["viste"][0], "sede": f"{lunga} {i}", "k": f"k{i}"} for i in range(botmod.MAX_VISTE)]
+    b.salva(p, "viste")
+    b.ultimo_msg.clear()
+    b.on_message(msg(1, "/date"))
+    ultimo = [d for m, d in b.out if m == "sendMessage" and d.get("reply_markup")][-1]
+    assert len(ultimo["text"]) <= 4000 and "…e altre" in ultimo["text"] and "fino alle" in ultimo["text"]
+    assert len([x for x in bottoni(b) if x[1].startswith("vd:")]) == botmod.MAX_VISTE
+
+
+def test_pannello_con_date_trovate_e_pulsanti_che_restano(b):
+    registra(b)
+    b.controlla(pratica(b))
+    b.aggiorna_pannello(1)
+    mid = b.store.pannello(1)
+    markup = [d for m, d in b.out if m in ("sendMessage", "editMessageText") and d["text"].startswith("📋")][-1]
+    [date] = [x["callback_data"] for r in markup["reply_markup"]["inline_keyboard"] for x in r
+              if x["callback_data"].startswith("sc:date:")]
+    tocco = {"id": "q", "from": {"id": 1}, "message": {"message_id": mid, "chat": {"id": 1}}, "data": date}
+    b.on_callback(tocco)
+    assert "Date trovate" in inviati(b)[-1]
+    assert not any(m == "editMessageReplyMarkup" and d["message_id"] == mid for m, d in b.out)  # il pannello resta
+
+
+def test_controlla_ora_ripropone_le_date_con_i_pulsanti(b):
+    registra(b)
+    b.controlla(pratica(b))
+    b.offerte.clear()  # offerta usata o scaduta; la data e' stata offerta pochi minuti fa
+    b.controlla(pratica(b), manuale=True)
+    assert sum("C'e' una data PRIMA" in x for x in inviati(b)) == 2 and pratica(b)["id"] in b.offerte
 
 
 def test_ricetta_con_prenotazione_erogata_non_diventa_da_prenotare(b, monkeypatch):

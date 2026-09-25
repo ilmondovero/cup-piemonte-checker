@@ -338,12 +338,28 @@ def test_piu_prestazioni_una_riga_che_le_nomina_tutte(monkeypatch):
     ("date diverse", RIEP2 + " Quando Mercoledì 4 Novembre 2026 alle ore 10:00 ALTRO", NOMI, 2),
     ("data in un altro formato", RIEP2 + " e il 04/11/2026 alle ore 10:00", NOMI, 2),
     ("stessa ora, altro luogo", RIEP2 + " Quando Martedì 3 Novembre 2026 alle ore 09:00 ALTRO AMBULATORIO", NOMI, 2),
+    ("data in cifre senza 'alle ore'", RIEP2 + " VISITA CARDIOLOGICA Quando 04/11/2026 10:00 ALTRA SEDE", NOMI, 2),
+    ("giorno senza ora", RIEP2 + " poi Mercoledì 4 Novembre 2026 ALTRA SEDE", NOMI, 2),
 ])
 def test_piu_prestazioni_non_conferma_se_qualcosa_non_torna(monkeypatch, caso, riep, nomi, n):
     log = nuova_multi(monkeypatch, riep=riep, nomi=nomi, n=n)
     with pytest.raises(c.CupError, match="non confermo"):
         prenota_nuova()
     assert log["conferma"] == 0, caso
+
+
+def test_una_prestazione_ma_il_riepilogo_ne_dichiara_di_piu(monkeypatch):
+    log = sessioni_finte(monkeypatch, [c.NonTrovata("Non esistono prenotazioni")], riep=RIEP2)
+    with pytest.raises(c.CupError, match="piu' prestazioni del carrello"):
+        prenota_nuova()
+    assert log["conferma"] == 0
+
+
+def test_riga_prenotata_senza_data_dopo_la_conferma_e_esito_incerto(monkeypatch):
+    log = nuova_multi(monkeypatch, dopo=(FATTA, [FATTA, FATTA_VISITA], 3))
+    with pytest.raises(c.CupError, match="esito incerto"):
+        prenota_nuova()
+    assert log["conferma"] == 1
 
 
 def test_piu_prestazioni_prenotata_solo_una_e_esito_incerto(monkeypatch):
@@ -390,6 +406,15 @@ def test_sposta_che_ne_lascia_una_alla_data_vecchia_e_esito_incerto(monkeypatch)
     assert log["conferma"] == 1
 
 
+def test_sposta_in_orari_diversi_mette_in_pausa(monkeypatch):
+    # il portale le sposterebbe insieme ma a orari diversi (09:00 e 09:20): non si conferma e si fa pausa
+    riep = RIEP2 + " Quando Martedì 3 Novembre 2026 alle ore 09:20 POLIAMBULATORIO NORD - ECO 1"
+    log = sessioni_finte(monkeypatch, [(ECO, [ECO, VISITA])], riep=riep)
+    with pytest.raises(c.Separerebbe):
+        sposta()
+    assert log["conferma"] == 0
+
+
 def test_sposta_con_una_riga_prenotata_senza_data_non_sposta(monkeypatch):
     log = sessioni_finte(monkeypatch, [(ECO, [ECO], 2)], riep=RIEP)
     with pytest.raises(c.CupError, match="non leggibile"):
@@ -403,7 +428,15 @@ def test_sposta_di_una_sola_prestazione_come_prima(monkeypatch):
     assert sposta() == "Prenotazione spostata." and log["conferma"] == 1
 
 
+def test_stesso_appuntamento_date_in_altri_formati():
+    assert c._stesso_appuntamento(RIEP2, SLOT)
+    assert c._stesso_appuntamento(RIEP2 + " codice 89.01.12", SLOT)  # un codice di prestazione non e' una data
+    assert not c._stesso_appuntamento(RIEP2 + " anche il 04/11/2026", SLOT)
+    assert not c._stesso_appuntamento(RIEP2 + " e Mercoledì 4 Novembre 2026", SLOT)
+
+
 def test_id_nel_diario_mai_dati():
     assert c._id("x:y:spostaButton") == "spostaButton"
     assert c._id("x:" + CF) == "?" and c._id("x:" + NRE) == "?" and c._id("x:a b") == "?"
+    assert c._id("x:prestazioniForm") == "prestazioniForm"  # 15 lettere: non e' una ricetta
     assert c._caselle('<input type="checkbox" data-checked="false" />') == (0, 1)

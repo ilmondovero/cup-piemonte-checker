@@ -19,13 +19,20 @@ piccolo, senza Chromium.
    - Per comune e provincia il bot preme "Estendi area di ricerca" del portale, fino a 4 volte: le
      aziende sanitarie lontane compaiono solo così, e solo se hanno posti. Il controllo è più lento
      (anche un minuto e mezzo), ma vede tutta la regione.
-   - **Più ricette per chat.** Con `/aggiungi` si segue anche la ricetta di un familiare. Ogni ricetta
-     ha nome, area, conferma automatica e offerte proprie, e i messaggi portano il suo nome davanti,
-     per esempio "[Mamma]".
+   - **Più ricette per chat, senza limite** (`MAX_PRATICHE` lo reintroduce). Con `/aggiungi` si segue
+     anche la ricetta di un familiare. Ogni ricetta ha nome, area, conferma automatica e offerte proprie,
+     e i messaggi portano il suo nome davanti, per esempio "[Mamma]". Oltre 6 ricette il pannello fissato
+     diventa compatto: una riga e un pulsante per ricetta, che apre la sua scheda con tutti i pulsanti.
 2. **Controlli periodici** (default ogni 45 minuti per utente). Per ogni utente il bot apre
    *Recupera Prenotazioni → Sposta appuntamento → Altre disponibilità* e legge le date offerte.
 3. **Offerta.** Se c'è una data prima di quella attuale, invia data, ora e luogo con il pulsante
-   **"✅ Prenota"**, valido 20 minuti.
+   **"✅ Prenota"**, valido 20 minuti. "🔄 Controlla ora" la ripropone con il pulsante anche se era già
+   stata offerta.
+   - **Tutte le date trovate, anche senza Mini App.** Il pannello ha "📅 N date trovate: vedi e
+     prenota" e c'è `/date`: l'elenco dell'ultimo controllo, diviso tra quelle prima della tua
+     prenotazione dove cerchi, quelle dopo e quelle in altre zone, ognuna con "Prenota". Prima di
+     prenotare il bot chiede conferma con data, ora e luogo, e dice se la data è fuori zona o dopo la
+     prenotazione attuale. Valgono 20 minuti dal controllo, poi serve un controllo nuovo.
 4. **Prenotazione.** Seleziona lo slot e va al Riepilogo. Conferma solo se il Riepilogo riporta la
    stessa prestazione, la data scelta e lo stesso luogo. Poi verifica con una sessione nuova che la
    prenotazione risulti davvero spostata. Se l'esito è incerto, avvisa subito con il numero del call
@@ -39,7 +46,7 @@ piccolo, senza Chromium.
    - Prima di attivarla il bot ricorda due cose: la data vecchia si perde, e se poi non si può andare
      bisogna disdire almeno 2 giorni lavorativi prima, altrimenti si paga la prestazione.
 
-Comandi: `/stato`, `/controlla`, `/aggiungi`, `/dati`, `/modifica`, `/sede`, `/auto`, `/pausa`, `/riprendi`, `/cancella`,
+Comandi: `/stato`, `/date`, `/controlla`, `/aggiungi`, `/dati`, `/modifica`, `/sede`, `/auto`, `/pausa`, `/riprendi`, `/cancella`,
 `/privacy`. Chi gestisce il bot ha anche `/admin`.
 
 ## Ricetta mai prenotata (sperimentale)
@@ -283,7 +290,7 @@ database sta nel volume `cup-data`. Per aggiornare: `git pull && docker compose 
 | `CONTATTO_GESTORE` | — | Contatto del gestore mostrato nell'informativa |
 | `ADMIN_CHAT_ID` | — | Chat privata del gestore: riceve gli errori e ha `/admin` |
 | `MAX_UTENTI` | 30 | Chat registrabili al massimo |
-| `MAX_PRATICHE` | 3 | Ricette seguite al massimo da una stessa chat |
+| `MAX_PRATICHE` | 0 | Ricette seguite al massimo da una stessa chat (0 = nessun limite) |
 | `INTERVALLO_MIN` | 45 | Minuti tra due controlli dello stesso utente (minimo 30) |
 | `ADMIN_INTERVALLO_MIN` | come sopra | Intervallo solo per `ADMIN_CHAT_ID` (minimo 5) |
 | `DISTANZA_PORTALE_S` | 20 | Secondi minimi tra due sessioni sul portale, fra tutti gli utenti |
