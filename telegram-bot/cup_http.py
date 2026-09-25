@@ -18,6 +18,7 @@ sessione per ~40 minuti, e cosi' portare uno slot fino al Riepilogo. Non c'e' mo
 (ne' "Annulla" ne' il logout lo liberano): scade da solo. Per questo la prenotazione di uno slot
 trovato da un controllo continua nella stessa sessione, e i controlli non vanno fatti troppo spesso.
 """
+import collections
 import html
 import re
 import time
@@ -32,6 +33,9 @@ RICETTA_URL = CUP + "/ricetta-dematerializzata"
 CALL_CENTER = "800 000 500"
 LENTO = 90  # secondi: la ricerca delle disponibilita' (soprattutto estendendo l'area) puo' richiedere un minuto
 PIU_LENTA = 0.0  # secondi: la risposta piu' lenta dall'ultimo azzeramento (il bot la misura per imparare LENTO)
+# passi della sessione in corso nei flussi ancora da osservare (prenotazione nuova, piu' prestazioni): solo
+# conteggi, nomi di sezioni e id di form e pulsanti, mai dati personali. Il bot li scrive nel log e li azzera
+DIARIO = collections.deque(maxlen=50)
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36"
 
 L = "_listaprenotazioni_WAR_cupprenotazione_:prescrizioniForm"
@@ -72,11 +76,8 @@ class NonAttiva(CupError):
         return bool(self.stati) and all(s.startswith(("DISDETT", "ANNULLAT", "CANCELLAT")) for s in self.stati)
 
 
-class PiuPrestazioni(NonTrovata):
-    """Ricetta con piu' prestazioni: andrebbero prenotate insieme, con piu' appuntamenti. Per ora no."""
-
-    def __init__(self, msg="La ricetta ha piu' prestazioni: per ora il bot prenota solo ricette con una prestazione"):
-        super().__init__(msg)
+class Separerebbe(CupError):
+    """Spostare l'appuntamento separerebbe prestazioni prenotate insieme: il bot non puo' anticiparlo."""
 
 
 class GiaPrenotata(CupError):
@@ -172,13 +173,28 @@ def _errori(xml):
             for m in re.findall(r'class="messagifyMsg alert-danger">(.*?)</div>', xml, re.S)]
 
 
+def _id(s):
+    """Ultimo pezzo di un id del portale, solo se ha l'aspetto del nome di un componente (mai un codice
+    fiscale o una ricetta, se un giorno finissero in un id)."""
+    s = s.rsplit(":", 1)[-1]
+    if not re.fullmatch(r"[A-Za-z_][\w-]{0,60}", s) or CF_RE.match(s.upper()) or NRE_RE.match(s.upper()):
+        return "?"
+    return s
+
+
 def _struttura(page):
     """Com'e' fatta una pagina che non conosco, senza dati personali: sezioni, form e pulsanti (solo id)."""
     sezioni = [s for s in ("Ricerca ricetta", "Prestazioni", "Appuntamenti Proposti", "Appuntamenti Disponibili",
                            "Riepilogo") if s in page]
-    forms = [f.rsplit(":", 1)[-1] for f in re.findall(r'<form[^>]*id="([^"]+)"', page)]
-    pulsanti = sorted({b.rsplit(":", 1)[-1] for b in re.findall(r'id="([^"]*(?:Button|Navigate)[^"]*)"', page)})
+    forms = [_id(f) for f in re.findall(r'<form[^>]*id="([^"]+)"', page)]
+    pulsanti = sorted({_id(b) for b in re.findall(r'id="([^"]*(?:Button|Navigate)[^"]*)"', page)})
     return f"sezioni {sezioni}, form {forms}, pulsanti {pulsanti[:20]}"
+
+
+def _caselle(page):
+    """Caselle di spunta di una pagina: (spuntate, totali). Nel passo Prestazioni sono le prestazioni scelte."""
+    caselle = re.findall(r'<input[^>]*type="checkbox"[^>]*>', page)
+    return sum(1 for x in caselle if re.search(r'\schecked(?![\w-])', x)), len(caselle)
 
 
 def _form_html(page, form_id):
@@ -270,6 +286,9 @@ class CupSession:
         # di una prenotazione nuova una ricetta gia' prenotata potrebbe creare un secondo appuntamento)
         self.modo = ""
         self.n_prestazioni = 0  # il massimo visto nel carrello, in qualsiasi passo
+        self.nomi = []  # prestazioni dell'ultimo carrello letto
+        self.prenotate = []  # tutte le righe in stato PRENOTATO dell'elenco (una per prestazione, se piu' d'una)
+        self.n_prenotate = 0  # righe PRENOTATO, anche quelle di cui non si legge la data
         self.s = requests.Session()
         self.s.headers["User-Agent"] = UA
         self.s.hooks["response"].append(_misura)
@@ -297,6 +316,12 @@ class CupSession:
         pren = [i for i, s in enumerate(stati) if s.upper() == "PRENOTATO"]
         if not pren:
             raise NonAttiva("La prenotazione risulta in stato " + ", ".join(stati), stati)
+        self.prenotate = [Prenotazione(q, _luogo(r), _cosa(r)) for r in (righe[i] for i in pren) if (q := _date(_text(r)))]
+        self.n_prenotate = len(pren)
+        if len(pren) > 1:
+            DIARIO.append(f"elenco: righe {len(righe)}, prenotate {len(pren)}, con data {len(self.prenotate)}, "
+                          f"date prenotate diverse {len({x.quando for x in self.prenotate})}, "
+                          f"descrizioni vuote {sum(1 for x in self.prenotate if not x.cosa)}")
         self.riga = pren[0]
         riga = righe[self.riga]
         quando = _date(_text(riga))
@@ -338,6 +363,7 @@ class CupSession:
                              "javax.faces.partial.execute": f"{src} {R}", "javax.faces.partial.render": "@all",
                              "javax.faces.behavior.event": "action", "javax.faces.partial.ajax": "true"})
         errori = _errori(xml)
+        DIARIO.append(f"ricerca: messaggi d'errore {len(errori)}")
         if any(re.search(r"\bgi(?:à|a'?)\s+presente", e, re.I) for e in errori):
             raise GiaPrenotata(errori[0])
         if any(re.search(r"ricett|\bnre\b|codice fiscale|scadut|inesistent", e, re.I)
@@ -350,18 +376,17 @@ class CupSession:
         if R + ":CFInput" in page:  # i passi sono pagine distinte: se c'e' ancora la ricerca, non e' andato avanti
             raise CupError("Il portale e' rimasto alla ricerca della ricetta: " + _struttura(page))
         self._carrello(page)
+        DIARIO.append(f"dopo la ricerca: {_struttura(page)}, carrello {len(self.nomi)}")
         return page
 
     def _carrello(self, page):
-        """Prestazioni nel carrello di una pagina: ne ricorda il nome e il numero massimo visto.
-        Piu' di una in una prenotazione nuova: PiuPrestazioni prima di andare avanti (niente date bloccate
-        per niente). Spostare una prenotazione con piu' prestazioni resta possibile, come prima."""
+        """Prestazioni nel carrello di una pagina: ne ricorda i nomi e il numero massimo visto. Con piu'
+        prestazioni si prenotano tutte insieme, come le propone il portale (vedi prenota)."""
         nomi = _prestazioni(page)
         self.n_prestazioni = max(self.n_prestazioni, len(nomi))
         if nomi:
+            self.nomi = nomi
             self.cosa = " + ".join(nomi)
-        if self.modo == "nuova" and self.n_prestazioni > 1:
-            raise PiuPrestazioni()
 
     def fino_agli_appuntamenti(self, page):
         """Dal passo "Prestazioni" agli Appuntamenti: "Avanti" col form com'e', come fa una persona.
@@ -384,6 +409,9 @@ class CupSession:
             # a parita', il pulsante "principale" in fondo alla pagina, come negli altri passi
             b = sorted(avanti, key=lambda x: ("main" not in x, x))[0]
             form = b.rsplit(":", 1)[0]
+            spuntate, caselle = _caselle(_form_html(page, form) or "")
+            DIARIO.append(f"passo: {_struttura(page)}, carrello {len(_prestazioni(page))}, "
+                          f"caselle spuntate {spuntate}/{caselle}, avanti {_id(b)}")
             campi = {k: v for k, v in _form_fields(page, form).items()
                      if k not in (form, "javax.faces.encodedURL", "ice.window", "ice.view", "javax.faces.ViewState")}
             xml = _Form(self.s, page, form).post({**campi, **_event(b)})
@@ -443,6 +471,12 @@ class CupSession:
                 continue  # e' la stessa proposta ripetuta in cima all'elenco
             slots.append(Slot(quando, _luogo(b), btn.group(1) if btn else None))
         self.slots = sorted(slots, key=lambda s: s.quando)
+        if self.modo == "nuova" or self.n_prestazioni > 1:
+            DIARIO.append(f"appuntamenti ({self.modo}): carrello {len(self.nomi)}, "
+                          f"pannelli proposta {page.count('Appuntamenti Proposti')}, "
+                          f"selettori proposta {len(set(re.findall(r':(\d+):app_selector', page)))}, "
+                          f"descrizioni {page.count('captionAppointment-desc')}, proposta {'si' if proposta else 'no'}, "
+                          f"date {len(self.slots)}, con Seleziona {sum(1 for x in self.slots if x.seleziona_id)}")
         return self.slots
 
     def riepilogo(self, slot):
@@ -463,6 +497,15 @@ class CupSession:
             raise CupError("Non sono arrivato al Riepilogo")
         t = _text(page)
         t = t[t.find("Prestazioni selezionate"):]
+        if self.modo == "nuova" or len(self.nomi) > 1:
+            date = [_date(x.group(0)) for x in DATE_RE.finditer(t)]
+            dich = re.search(r"Prestazioni selezionate:?\s*(\d+)", t)
+            conta = _conta_nomi(t, self.nomi)
+            ore = len(re.findall(r"alle\s+ore", t, re.I))
+            DIARIO.append(f"riepilogo ({self.modo}): date {len(date)}, date diverse {len(set(date))}, "
+                          f"'alle ore' {ore}, "
+                          f"prestazioni dichiarate {dich.group(1) if dich else '?'}, "
+                          f"nomi trovati {sum(min(conta[n], 1) for n in set(self.nomi))}/{len(set(self.nomi))}")
         m = DATE_RE.search(t)
         if not m:
             return t, None, "", page
@@ -552,12 +595,45 @@ def nuova(cf, nre):
 
 def check_nuova(cf, nre, zona="tutte"):
     """Come check, per una ricetta mai prenotata: "attuale" e' None e ogni data e' buona se e' nella zona.
-    Ricette con piu' prestazioni: per ora no (andrebbero prenotate insieme, con piu' appuntamenti)."""
+    Con piu' prestazioni le date sono quelle che il portale propone per tutte insieme."""
     cup = CupSession(cf, nre)
     page = cup.fino_agli_appuntamenti(cup.ricetta())
     slots = cup.appuntamenti(page, estendi=estensioni(zona))
     return {"attuale": None, "cosa": cup.cosa, "slots": slots, "sessione": cup,
             "migliori": [x for x in slots if (x.proposta or x.seleziona_id) and ammesso(x, None, zona)]}
+
+
+def _conta_nomi(testo, nomi):
+    """Quante volte il testo riporta ciascuna prestazione, come parole intere: i nomi piu' lunghi per primi e
+    tolti dal testo, cosi' "ECOGRAFIA ADDOME" non si ritrova dentro "ECOGRAFIA ADDOME COMPLETO"."""
+    t = " " + re.sub(r"\s+", " ", testo.upper()) + " "
+    conta = collections.Counter()
+    for n in sorted(set(nomi), key=len, reverse=True):
+        pat = r"(?<![A-Z0-9])" + re.escape(re.sub(r"\s+", " ", n.upper().strip())) + r"(?![A-Z0-9])"
+        conta[n] = len(re.findall(pat, t))
+        t = re.sub(pat, " ", t)
+    return conta
+
+
+def _stesso_appuntamento(testo, slot):
+    """Ogni appuntamento del Riepilogo e' quello scelto: stessa data e ora e, subito dopo, lo stesso luogo.
+    Tanti "alle ore" quante date riconosciute: una data scritta in un altro formato non passa inosservata."""
+    date = list(DATE_RE.finditer(testo))
+    return bool(date) and len(date) == len(re.findall(r"alle\s+ore", testo, re.I)) and all(
+        _date(m.group(0)) == slot.quando and _norm(testo[m.end():m.end() + 250]).startswith(slot.luogo.key())
+        for m in date)
+
+
+def _tutte_al_posto(righe, slot, nomi, vecchia=None):
+    """Dopo la Conferma: le righe PRENOTATO al posto scelto coprono tutte le prestazioni (una riga per
+    prestazione, o righe che le nominano tutte) e, spostando, nessuna e' rimasta alla data vecchia."""
+    al_posto = [x for x in righe if x.quando == slot.quando and x.luogo.key() == slot.luogo.key()]
+    if vecchia and any(x.quando == vecchia for x in righe):
+        return False
+    if len(nomi) <= 1:
+        return bool(al_posto)
+    conta = _conta_nomi(" | ".join(x.cosa for x in al_posto), nomi)
+    return len(al_posto) >= len(nomi) or all(conta[n] >= k for n, k in collections.Counter(nomi).items())
 
 
 def _verifica_riepilogo(testo, data_riep, dopo_data, slot, cosa):
@@ -579,6 +655,7 @@ def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=Fals
     libera: scelta esplicita dell'utente di una data vista (anche fuori area o piu' tardi): niente filtro
     su zona e anticipo, ma restano tutte le verifiche sul Riepilogo e dopo la conferma.
     nuova: ricetta mai prenotata (prima prenotazione). Se nel frattempo risulta prenotata: GiaPrenotata."""
+    insieme = []  # prestazioni prenotate nello stesso appuntamento di quello da spostare
     if nuova:
         try:
             att = CupSession(cf, nre).attuale()
@@ -591,7 +668,12 @@ def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=Fals
         else:
             raise GiaPrenotata(f"Nel frattempo la ricetta risulta prenotata al {att.quando:%d/%m/%Y %H:%M}")
     else:
-        att = CupSession(cf, nre).attuale()  # sessione a parte: non tocca lo stato di quella del controllo
+        lista = CupSession(cf, nre)  # sessione a parte: non tocca lo stato di quella del controllo
+        att = lista.attuale()
+        if lista.n_prenotate > len(lista.prenotate):  # una riga prenotata senza data leggibile
+            raise CupError("Elenco delle prenotazioni non leggibile del tutto: non sposto")
+        # piu' prestazioni prenotate nello stesso appuntamento: si spostano insieme o niente
+        insieme = [x.cosa for x in lista.prenotate if x.quando == att.quando]
     if not dry_run and not libera and att and slot.quando >= att.quando:
         raise CupError(f"Lo slot {slot.quando:%d/%m/%Y %H:%M} non e' prima dell'appuntamento attuale "
                        f"({att.quando:%d/%m/%Y %H:%M})")
@@ -629,12 +711,32 @@ def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=Fals
             raise CupError(f"{e2} (tentativo nella sessione originale: {primo_errore})")
     # la prestazione del Riepilogo deve essere quella della prenotazione (o, per una nuova, quella
     # che il portale ha messo nel carrello): se non si legge, _verifica_riepilogo non conferma
-    _verifica_riepilogo(testo, data_riep, dopo, s, att.cosa if att else cup.cosa)
-    if nuova:  # prima prenotazione: una sola prestazione, riconoscibile, e un solo appuntamento nel Riepilogo
-        if cup.n_prestazioni != 1 or not re.search(r"[A-Za-z]{4}", cup.cosa):
-            raise CupError("Prestazione della ricetta non riconosciuta con certezza: non confermo")
-        if len(DATE_RE.findall(testo)) != 1:
-            raise CupError("Il Riepilogo contiene piu' appuntamenti: non confermo")
+    _verifica_riepilogo(testo, data_riep, dopo, s, att.cosa if att else (cup.nomi[:1] or [cup.cosa])[0])
+    # le prestazioni che devono finire tutte nell'appuntamento scelto: quelle del carrello per una prima
+    # prenotazione, quelle prenotate insieme per uno spostamento
+    if nuova:
+        nomi = list(cup.nomi)
+        # il carrello di un passo precedente ne aveva di piu': il portale ne prenoterebbe solo una parte
+        if not nomi or len(nomi) != cup.n_prestazioni or not all(re.search(r"[A-Za-z]{4}", n) for n in nomi):
+            raise CupError("Prestazioni della ricetta non riconosciute con certezza: non confermo")
+    else:
+        nomi = insieme if len(insieme) > 1 else []
+        if nomi and not all(nomi):
+            raise CupError("Prestazioni prenotate insieme non leggibili dall'elenco: non sposto")
+    if len(nomi) > 1:
+        separa = Separerebbe if not nuova else CupError
+        dich = re.search(r"Prestazioni selezionate:?\s*(\d+)", testo)
+        conta = _conta_nomi(testo, nomi)
+        if not dich or int(dich.group(1)) != len(nomi) or any(
+                conta[n] < k for n, k in collections.Counter(nomi).items()):
+            raise separa("Il Riepilogo non riporta tutte le prestazioni della ricetta: non confermo" if nuova else
+                         "Spostare questo appuntamento lo separerebbe dalle altre prestazioni prenotate insieme: "
+                         "non confermo")
+        if not _stesso_appuntamento(testo, s):
+            raise CupError("Il portale mette le prestazioni in appuntamenti diversi (o il Riepilogo non si legge "
+                           "con certezza): non confermo, prenota dal portale o al call center")
+    elif nuova and {_date(x.group(0)) for x in DATE_RE.finditer(testo)} != {s.quando}:
+        raise CupError("Il Riepilogo contiene piu' appuntamenti: non confermo")
     if dry_run:
         return f"PROVA: arrivato al Riepilogo di {s!r}, non confermo."
 
@@ -644,8 +746,10 @@ def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=Fals
         cup.conferma(page)
         for _ in range(3):
             try:
-                nuova_att = CupSession(cf, nre).attuale()
-                if nuova_att.quando == s.quando and nuova_att.luogo.key() == s.luogo.key():
+                verifica = CupSession(cf, nre)
+                nuova_att = verifica.attuale()
+                if _tutte_al_posto(verifica.prenotate or [nuova_att], s, nomi,
+                                   att.quando if len(insieme) > 1 else None):
                     return "Prenotazione fatta." if nuova else "Prenotazione spostata."
             except (CupError, requests.RequestException):
                 pass

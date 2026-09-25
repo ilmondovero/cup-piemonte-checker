@@ -1129,15 +1129,32 @@ def test_prenotata_a_mano_durante_la_conferma_automatica(b):
     assert any("Ho spento la conferma automatica" in t for t in dopo)
 
 
-def test_piu_prestazioni_alla_registrazione(b, monkeypatch):
-    def piu(cf, nre):
-        raise c.PiuPrestazioni()
-    monkeypatch.setattr(c, "nuova", piu)
-    b.on_message(msg(1, "/start"))
-    b.on_callback(cq(1, "consenso:1"))
-    b.on_message(msg(1, CF3, mid=30))
-    b.on_message(msg(1, NRE3, mid=31))
-    assert any("piu' prestazioni" in x for x in inviati(b)) and pratica(b)["stato"] == "cf"
+def test_piu_prestazioni_si_registrano_e_si_offrono_insieme(b, monkeypatch):
+    due = COSA3 + " + VISITA CARDIOLOGICA"
+    monkeypatch.setattr(c, "nuova", lambda cf, nre: due)
+    vera = c.check_nuova
+
+    def check_nuova(*a):
+        return {**vera(*a), "cosa": due}
+    monkeypatch.setattr(c, "check_nuova", check_nuova)
+    registra_nuova(b)
+    assert pratica(b)["stato"] == "attivo" and botmod.da_prenotare(pratica(b))
+    b.controlla(pratica(b))
+    offerta = [x for x in inviati(b) if "C'e' una data libera" in x][-1]
+    assert "tutte nello stesso appuntamento" in offerta and due in offerta
+
+
+def test_spostamento_che_separerebbe_le_prestazioni_mette_in_pausa(b, monkeypatch):
+    registra(b)
+    b.controlla(pratica(b))
+
+    def separa(*a, **k):
+        raise c.Separerebbe("Spostare questo appuntamento lo separerebbe dalle altre prestazioni prenotate insieme")
+    monkeypatch.setattr(c, "prenota", separa)
+    [cb] = [x for x in pulsanti(b) if x.startswith("p:")][:1]
+    b.on_callback(cq(1, cb))
+    assert pratica(b)["stato"] == "pausa"  # ogni controllo terrebbe una data bloccata per niente
+    assert "non posso anticiparla" in inviati(b)[-1] and "/riprendi" in inviati(b)[-1]
 
 
 def test_ricetta_con_prenotazione_erogata_non_diventa_da_prenotare(b, monkeypatch):

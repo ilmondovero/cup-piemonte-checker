@@ -36,8 +36,8 @@ Comandi: `/stato` `/controlla` `/aggiungi` `/dati` `/modifica` `/sede` `/auto` `
 Funziona per appuntamenti **già prenotati** sul CUP, che anticipa, e per ricette **mai prenotate**: trova
 il primo appuntamento libero, lo prenota al tuo tocco e poi continua a cercare date prima. La seconda parte è
 sperimentale: un passo del portale (la scelta delle prestazioni) non è ancora stato visto con una ricetta
-vera. Se il portale mostra qualcosa di inatteso il bot si ferma, non prenota e lo segnala. Per ora solo
-ricette con una prestazione.
+vera. Se il portale mostra qualcosa di inatteso il bot si ferma, non prenota e lo segnala. Le ricette con
+più prestazioni si prenotano tutte insieme, solo se il portale le mette nello stesso appuntamento.
 
 ### Installazione su qualsiasi VPS
 

@@ -416,6 +416,7 @@ class Bot:
         # un solo thread parla col portale: l'attesa vale per questa sessione
         cup_http.LENTO = pazienza = ATTESA_MAX if paziente else self.attesa(pid)
         cup_http.PIU_LENTA = 0.0
+        cup_http.DIARIO.clear()
         inizio, riuscita, lenta, scaduta = time.time(), False, 0.0, False
         try:
             risultato = fn(*args, **kwargs)
@@ -437,6 +438,9 @@ class Bot:
         finally:
             self.ultimo_portale = time.time()
             lenta = round(max(lenta, cup_http.PIU_LENTA), 1)
+            if cup_http.DIARIO:  # solo conteggi e id di form e pulsanti: per capire i flussi ancora da osservare
+                log.info("portale %s %s: %s", f"pratica {pid}" if pid is not None else "ricerca", fn.__name__,
+                         " | ".join(cup_http.DIARIO))
             self.metriche.append((inizio, self.ultimo_portale - inizio, riuscita, lenta, scaduta))
             try:  # sopravvive ai riavvii
                 self.store.metrica(inizio, self.ultimo_portale - inizio, riuscita, lenta, scaduta)
@@ -493,8 +497,7 @@ class Bot:
                 p.update(stato="pausa", pausa_da=time.time(), libera=True)
                 self.salva(p, "stato", "pausa_da", "libera")
                 self.aggiorna_pannello(chat)
-                motivo = (f"{e}." if isinstance(e, cup_http.PiuPrestazioni) else
-                          f"Il portale non accetta piu' questa ricetta ({e}): forse e' scaduta o e' gia' stata usata.")
+                motivo = f"Il portale non accetta piu' questa ricetta ({e}): forse e' scaduta o e' gia' stata usata."
                 self.dire(p, f"{motivo} Ho sospeso i controlli.\n/modifica per un'altra ricetta, /riprendi per "
                              "riprovare, /cancella per eliminarla.")
                 return None
@@ -640,8 +643,10 @@ class Bot:
         buttons.append([{"text": "Ignora", "callback_data": f"x:{pid}:{token}"}])
         prova = "\n(MODALITA' PROVA: il pulsante si ferma al riepilogo, non conferma)" if self.prova else ""
         nuova = da_prenotare(p)
+        insieme = ("\n\nLa ricetta ha piu' prestazioni: le prenoto tutte nello stesso appuntamento. Se il portale le "
+                   "mette in date diverse non confermo e te lo dico." if nuova and " + " in (res.get("cosa") or "") else "")
         ok = self.dire(p, ("🎉 C'e' una data libera!" if nuova else "🎉 C'e' una data PRIMA!") + "\n\n" + descrivi(res) +
-                       "\n\n" + self.regola(p) + f"\n\nTocca per {'prenotare' if nuova else 'spostare la prenotazione'} "
+                       "\n\n" + self.regola(p) + insieme + f"\n\nTocca per {'prenotare' if nuova else 'spostare la prenotazione'} "
                        f"(valido {TTL_OFFERTA // 60} minuti).{prova}", buttons)
         if ok:
             self.offerte[pid] = {"token": token, "ts": time.time(), "sessione": res["sessione"], "slots": slots}
@@ -691,6 +696,18 @@ class Bot:
                 self.diventa_prenotata(p)
             except (cup_http.CupError, requests.RequestException):
                 pass  # ci riprova il prossimo controllo
+            return "fallita"
+        except cup_http.Separerebbe as e:
+            # il portale sposterebbe una sola delle prestazioni prenotate insieme: ogni controllo terrebbe
+            # bloccata una data per niente, quindi pausa finche' l'utente non decide
+            p.update(stato="pausa", pausa_da=time.time(), libera=True)
+            self.salva(p, "stato", "pausa_da", "libera")
+            self.dire(p, f"❌ Non spostata: {e}.\n\nQuesta prenotazione ha piu' prestazioni nello stesso "
+                         "appuntamento e il portale ne sposterebbe una sola: da qui non posso anticiparla senza "
+                         "separarle. Ho messo in pausa i controlli per non tenere occupate date.\n"
+                         f"Per spostarla: {cup_http.LISTA_URL} o il {cup_http.CALL_CENTER}. /riprendi per riprovare.")
+            self.aggiorna_pannello(chat)
+            log.info("prenotazione %s/%s fallita: Separerebbe", uid(chat), p["id"])
             return "fallita"
         except (cup_http.CupError, requests.RequestException) as e:
             urgente = "Conferma inviata" in str(e)
@@ -801,8 +818,7 @@ class Bot:
             return
         except cup_http.NonTrovata as e:
             recenti.append(time.time())
-            self.send(chat, f"{e}." if isinstance(e, cup_http.PiuPrestazioni) else
-                      f"Il portale non accetta questa ricetta con questo codice fiscale ({e}).")
+            self.send(chat, f"Il portale non accetta questa ricetta con questo codice fiscale ({e}).")
             self.chiedi_cf(p)
             return
         except (cup_http.CupError, requests.RequestException) as e:
@@ -1335,8 +1351,7 @@ class Bot:
             return esito(errore=f"La prenotazione di questa ricetta non è attiva ({e}).")
         except cup_http.NonTrovata as e:
             recenti.append(ora)
-            return esito(errore=f"{e}." if isinstance(e, cup_http.PiuPrestazioni) else
-                         f"Il portale non accetta questa ricetta con questo codice fiscale ({e}).")
+            return esito(errore=f"Il portale non accetta questa ricetta con questo codice fiscale ({e}).")
         except (cup_http.CupError, requests.RequestException):
             return esito(errore="Il portale CUP non risponde: riprova tra qualche minuto.")
         nuovi = {"cf": cf, "nre": nre, "attuale": pren_to_dict(att) if att else senza_prenotazione(cosa),

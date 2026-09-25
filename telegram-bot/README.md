@@ -54,8 +54,26 @@ Riepilogo e conferma). "Sposta appuntamento" entra direttamente al terzo; qui si
 - **Prestazioni**: il bot preme "Avanti" lasciando le prestazioni come le propone il portale, come farebbe
   una persona. È l'unico passo mai visto dal vivo.
 - **Appuntamenti, Riepilogo e Conferma**: gli stessi moduli di "Sposta", con le stesse verifiche. Il bot
-  conferma solo se il Riepilogo riporta la prestazione del carrello, la data e il luogo scelti. Poi
+  conferma solo se il Riepilogo riporta le prestazioni del carrello, la data e il luogo scelti. Poi
   ricontrolla con una sessione nuova che la prenotazione risulti davvero fatta.
+
+**Ricette con più prestazioni** (sperimentale anche questo): il bot le cerca e le prenota tutte insieme,
+come le propone il portale, senza mai toglierne una. Conferma solo se nel Riepilogo ci sono tutte le
+prestazioni e tutte nello stesso appuntamento, quello scelto. Se il portale le mette in date diverse, il
+bot non conferma e lo dice: in quel caso si prenota dal portale o al call center. Il numero di prestazioni
+deve tornare in ogni passo (se il carrello cambia tra un passo e l'altro, niente Conferma), e ogni nome deve
+comparire intero nel Riepilogo, contando anche i doppioni. Dopo la Conferma la prenotazione è riuscita solo
+se l'elenco del portale le mostra tutte al posto scelto; altrimenti è un "esito incerto", con l'avviso
+all'utente e al gestore.
+
+Quando sposta un appuntamento con più prestazioni prenotate insieme, conferma solo se le sposta tutte. Se il
+portale ne sposterebbe una sola, il bot non conferma, mette in pausa i controlli (che terrebbero bloccate
+date per niente) e indica portale e call center.
+
+Per capire come il portale presenta questi casi, per ogni passo il bot scrive nel log com'è fatta la
+pagina: sezioni, id di form e pulsanti, e numeri (prestazioni nel carrello, caselle spuntate, date,
+righe dell'elenco). Mai nomi di prestazioni, date, luoghi o dati della ricetta. Lo fa solo per le
+prenotazioni nuove e per le ricette con più prestazioni.
 
 Dove cercare: un comune, oppure dove propone il CUP; dopo il primo controllo anche una provincia o una
 sede tra quelle trovate. Ogni data nella zona scelta arriva con il pulsante "✅ Prenota". La conferma
@@ -123,8 +141,9 @@ Come è protetta:
   l'utente con il numero del call center. Per provare senza rischi c'è `MODALITA_PROVA=1`.
 - **Ricetta mai prenotata: sperimentale.** Il passo "Prestazioni" del portale non è ancora stato visto con
   una ricetta vera (vedi sopra). Se il portale mostra qualcosa di inatteso, il bot si ferma senza prenotare
-  e l'errore descrive la pagina (solo nomi di form e pulsanti, nessun dato personale). Ricette con più
-  prestazioni: per ora no.
+  e l'errore descrive la pagina (solo nomi di form e pulsanti, nessun dato personale). Anche le ricette
+  con più prestazioni sono sperimentali: il bot prenota solo se il portale le mette tutte nello stesso
+  appuntamento.
 - **Ogni controllo tiene bloccata una data per ~40 minuti.** Quando si apre "Sposta appuntamento", il
   portale riserva la data proposta a quella sessione, e né "Annulla" né il logout la liberano. Succede
   anche a chi lo fa a mano. Per questo:
@@ -175,7 +194,8 @@ Chi lo mette online ne è responsabile. Il codice fa questo:
   registrazione è rimasta incompleta per più di 24 ore; il bot è in pausa da più di 30 giorni;
   l'utente ha bloccato il bot.
 - **Log senza dati personali.** I log non contengono codice fiscale, NRE, testo del portale né id
-  Telegram (solo un HMAC con chiave). Anche il token del bot viene oscurato. Gli avvisi all'admin
+  Telegram (solo un HMAC con chiave). Il diario dei passi del portale contiene solo numeri e id di form
+  e pulsanti. Anche il token del bot viene oscurato. Gli avvisi all'admin
   riportano solo il tipo di errore.
 - **Limiti anti-abuso.**
   - Ogni ricetta può essere seguita da un solo utente (HMAC univoco di codice fiscale + NRE).
