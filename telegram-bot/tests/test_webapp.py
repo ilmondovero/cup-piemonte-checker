@@ -20,6 +20,7 @@ import bot as botmod  # noqa: E402
 import webapp  # noqa: E402
 from store import Store  # noqa: E402
 from test_bot import CF, NRE, aggiungi_familiare, b, pratica, registra  # noqa: E402,F401
+from test_bot import CF3 as CF_NUOVA, NRE3 as NRE_NUOVA, COSA3  # noqa: E402
 
 TOKEN = "123456:TEST-token-per-i-test"
 
@@ -520,3 +521,40 @@ def test_grafico_asse_mai_vuoto_e_legenda_onesta(app):
     assert 'class="punto ultimo"' not in svg and "non ha trovato date" in svg
     svg = app.grafico_storico(punti[:2], rif)
     assert 'class="punto ultimo"' in svg and "ultimo controllo" in svg
+
+
+# --- ricetta mai prenotata ------------------------------------------------------------------
+def test_ricetta_mai_prenotata_dall_app(app):
+    (stato, _, corpo), _ = cerca_e_attendi(app, 3, {"cf": CF_NUOVA, "nre": NRE_NUOVA, "consenso": "1"})
+    t = corpo.decode()
+    assert stato == 200 and "non è ancora prenotata" in t and COSA3 in t.upper()
+    assert 'value="tutte"' in t and 'value="altro"' in t and "Solo in questa sede" not in t and "2100" not in t
+    [p] = app.store.della_chat(3)
+    assert botmod.da_prenotare(p)
+    assert post(app, f"/ui/r/{p['id']}/dove", {"tipo": "sede"}, chat=3)[0] == 400  # nessuna sede di riferimento
+    post(app, f"/ui/r/{p['id']}/dove", {"tipo": "tutte"}, chat=3)
+    t = get(app, "/ui/ricette", chat=3)[2].decode()
+    assert "Da prenotare" in t and "Non ancora prenotata" in t and "2100" not in t and "nessuna (da prenotare)" not in t
+
+
+def test_ricetta_mai_prenotata_date_dove_e_andamento(app):
+    b = app.bot
+    (stato, _, _), _ = cerca_e_attendi(app, 3, {"cf": CF_NUOVA, "nre": NRE_NUOVA, "consenso": "1"})
+    [p] = app.store.della_chat(3)
+    post(app, f"/ui/r/{p['id']}/dove", {"tipo": "tutte"}, chat=3)
+    b.controlla(b.store.get(p["id"]))
+    b.offerte.clear()
+    t = get(app, f"/ui/r/{p['id']}/date", chat=3)[2].decode()
+    visibile = __import__("re").sub(r'value="[^"]*"', "", t)  # la data di riferimento nascosta non conta
+    assert "✅ Dove cerchi" in t and "Prima della tua prenotazione" not in t and "Prenoto " in t and "2100" not in visibile
+    t = get(app, f"/ui/r/{p['id']}/dove", chat=3)[2].decode()
+    assert 'value="provincia_vista"' in t and 'value="sede_vista"' in t
+    assert post(app, f"/ui/r/{p['id']}/dove", {"tipo": "provincia_vista", "prov": "MI"}, chat=3)[0] == 400
+    post(app, f"/ui/r/{p['id']}/dove", {"tipo": "provincia_vista", "prov": "TO"}, chat=3)
+    assert app.store.get(p["id"])["zona"] == {"tipo": "provincia", "valore": "TO"}
+    q = b.store.get(p["id"])
+    q["storico"].append({**q["storico"][0], "t": time.time() + 60})
+    b.store.save(q)
+    t = get(app, f"/ui/r/{p['id']}/storico", chat=3)[2].decode()
+    assert "Non ancora prenotata" in t and "la tua prenotazione" not in t and "2100" not in t and "<svg" in t
+    assert 'class="riferimento"' not in t

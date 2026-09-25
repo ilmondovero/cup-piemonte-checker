@@ -12,7 +12,8 @@ piccolo, senza Chromium.
 ## Cosa fa
 
 1. **Registrazione in chat.** Informativa e consenso, poi codice fiscale e numero ricetta (NRE). Il bot
-   verifica subito la prenotazione sul portale e mostra prestazione, data, ora e luogo. Poi chiede
+   verifica subito la prenotazione sul portale e mostra prestazione, data, ora e luogo. Se la ricetta non
+   è ancora prenotata la segue lo stesso (vedi "Ricetta mai prenotata" qui sotto). Poi chiede
    **dove cercare**: stessa sede, un comune (quello della prenotazione o un altro, per esempio Novara),
    la provincia, oppure qualsiasi sede proposta dal CUP.
    - Per comune e provincia il bot preme "Estendi area di ricerca" del portale, fino a 4 volte: le
@@ -40,6 +41,27 @@ piccolo, senza Chromium.
 
 Comandi: `/stato`, `/controlla`, `/aggiungi`, `/dati`, `/modifica`, `/sede`, `/auto`, `/pausa`, `/riprendi`, `/cancella`,
 `/privacy`. Chi gestisce il bot ha anche `/admin`.
+
+## Ricetta mai prenotata (sperimentale)
+
+Se il portale non trova una prenotazione per codice fiscale + NRE, il bot prova la ricetta come
+prenotazione nuova. La procedura del portale ha quattro passi (Ricerca, Prestazioni, Appuntamenti,
+Riepilogo e conferma). "Sposta appuntamento" entra direttamente al terzo; qui si parte dal primo:
+
+- **Ricerca** (codice fiscale + NRE, "Prosegui"): alla registrazione il bot fa solo questo passo, che non
+  apre gli appuntamenti e non blocca date. Se il portale risponde "già presente", la ricetta ha già un
+  appuntamento e si usa il flusso normale.
+- **Prestazioni**: il bot preme "Avanti" lasciando le prestazioni come le propone il portale, come farebbe
+  una persona. È l'unico passo mai visto dal vivo.
+- **Appuntamenti, Riepilogo e Conferma**: gli stessi moduli di "Sposta", con le stesse verifiche. Il bot
+  conferma solo se il Riepilogo riporta la prestazione del carrello, la data e il luogo scelti. Poi
+  ricontrolla con una sessione nuova che la prenotazione risulti davvero fatta.
+
+Dove cercare: un comune, oppure dove propone il CUP; dopo il primo controllo anche una provincia o una
+sede tra quelle trovate. Ogni data nella zona scelta arriva con il pulsante "✅ Prenota". La conferma
+automatica si può attivare anche qui. Dopo la prima prenotazione la ricetta diventa una prenotazione come le
+altre e il bot cerca date ancora prima. Se nel frattempo la ricetta viene prenotata a mano, il bot se ne
+accorge e passa da solo ad anticipare quella prenotazione.
 
 ## Mini App (facoltativa)
 
@@ -99,8 +121,10 @@ Come è protetta:
 - **Conferma.** Il clic su "Conferma" replica il form del Riepilogo come lo invia il browser. Dopo la
   conferma il bot ricontrolla sempre con una sessione nuova e, se l'esito non torna, avvisa subito
   l'utente con il numero del call center. Per provare senza rischi c'è `MODALITA_PROVA=1`.
-- **Solo appuntamenti già prenotati.** Il bot anticipa una prenotazione esistente. Non cerca il primo
-  appuntamento di una ricetta mai prenotata: quel flusso del portale non è ancora mappato.
+- **Ricetta mai prenotata: sperimentale.** Il passo "Prestazioni" del portale non è ancora stato visto con
+  una ricetta vera (vedi sopra). Se il portale mostra qualcosa di inatteso, il bot si ferma senza prenotare
+  e l'errore descrive la pagina (solo nomi di form e pulsanti, nessun dato personale). Ricette con più
+  prestazioni: per ora no.
 - **Ogni controllo tiene bloccata una data per ~40 minuti.** Quando si apre "Sposta appuntamento", il
   portale riserva la data proposta a quella sessione, e né "Annulla" né il logout la liberano. Succede
   anche a chi lo fa a mano. Per questo:

@@ -6,6 +6,13 @@ Flusso del portale cup.isan.csi.it, replicato campo per campo dai POST del brows
   3. "Altre disponibilita'" -> Appuntamenti Disponibili
   4. (solo per prenotare) "Seleziona" sullo slot -> "Avanti" -> Riepilogo -> "Conferma"
 
+Ricetta mai prenotata: la procedura del portale ha quattro passi (Ricerca, Prestazioni, Appuntamenti,
+Riepilogo e conferma). "Sposta" entra direttamente al terzo; qui si parte dal primo:
+  a. Ricerca: codice fiscale + NRE e "Prosegui" (se la ricetta ha gia' un appuntamento: "gia' presente")
+  b. Prestazioni: "Avanti" lasciando le prestazioni come le propone il portale. E' l'unico passo mai
+     visto dal vivo: se la pagina non e' quella attesa ci si ferma e si descrive com'e' fatta
+  c-d. Appuntamenti, Riepilogo e Conferma: gli stessi moduli di "Sposta"
+
 Comportamento del portale da tenere presente: aprire "Sposta" fa tenere lo slot proposto a quella
 sessione per ~40 minuti, e cosi' portare uno slot fino al Riepilogo. Non c'e' modo di rilasciarlo
 (ne' "Annulla" ne' il logout lo liberano): scade da solo. Per questo la prenotazione di uno slot
@@ -30,6 +37,7 @@ L = "_listaprenotazioni_WAR_cupprenotazione_:prescrizioniForm"
 A = "_ricettaelettronica_WAR_cupprenotazione_:appuntamentiForm"
 AVANTI = "_ricettaelettronica_WAR_cupprenotazione_:appuntamenti-form-main"
 RIEPILOGO = "_ricettaelettronica_WAR_cupprenotazione_:riepilogoForm"
+R = "_ricettaelettronica_WAR_cupprenotazione_:ePrescriptionSearchForm"  # passo "Ricerca" di una prenotazione nuova
 # filtri Macrozona/Zona/Sede degli "Appuntamenti Disponibili": il browser li manda sempre, "-" = nessun filtro
 GEO = {A + f":localGeoSelectorsavailable:{n}SelectMenuavailable_input": "NO_VALUE" for n in ("macrozona", "zona", "sede")}
 
@@ -53,6 +61,25 @@ class NonTrovata(CupError):
 
 class NonAttiva(CupError):
     """La ricetta c'e' ma nessuna prenotazione e' in stato PRENOTATO (disdetta, gia' erogata...)."""
+
+    def __init__(self, msg, stati=()):
+        super().__init__(msg)
+        self.stati = [s.upper() for s in stati]
+
+    def solo_disdette(self):
+        """Tutte le prenotazioni della ricetta sono state disdette: la ricetta si puo' prenotare di nuovo."""
+        return bool(self.stati) and all(s.startswith(("DISDETT", "ANNULLAT", "CANCELLAT")) for s in self.stati)
+
+
+class PiuPrestazioni(NonTrovata):
+    """Ricetta con piu' prestazioni: andrebbero prenotate insieme, con piu' appuntamenti. Per ora no."""
+
+    def __init__(self, msg="La ricetta ha piu' prestazioni: per ora il bot prenota solo ricette con una prestazione"):
+        super().__init__(msg)
+
+
+class GiaPrenotata(CupError):
+    """Prenotazione nuova: il portale dice che la ricetta ha gia' un appuntamento (si usa "Sposta")."""
 
 
 # --- dati -------------------------------------------------------------------------------
@@ -128,6 +155,31 @@ def _cosa(fragment):
     return re.sub(r"\s*\(PRENOTABILE\)\s*", "", _text(m.group(1))).strip() if m else ""
 
 
+def _prestazioni(page):
+    """Nomi delle prestazioni nel carrello del portale ("Prestazioni Selezionate")."""
+    i = page.find('id="prestazioni_selezionate"')
+    if i < 0:
+        return []
+    fine = page.find("</form>", i)
+    nomi = re.findall(r'<span class="media-title"[^>]*>\s*<span[^>]*>([^<]+)</span>', page[i:fine if fine > 0 else None])
+    return [n for n in (_text(x) for x in nomi) if n]
+
+
+def _errori(xml):
+    """Messaggi di errore del portale (riquadri rossi), senza il prefisso del campo ("***nre***: ...")."""
+    return [re.sub(r"^\*+[^*]*\*+:\s*", "", _text(m))
+            for m in re.findall(r'class="messagifyMsg alert-danger">(.*?)</div>', xml, re.S)]
+
+
+def _struttura(page):
+    """Com'e' fatta una pagina che non conosco, senza dati personali: sezioni, form e pulsanti (solo id)."""
+    sezioni = [s for s in ("Ricerca ricetta", "Prestazioni", "Appuntamenti Proposti", "Appuntamenti Disponibili",
+                           "Riepilogo") if s in page]
+    forms = [f.rsplit(":", 1)[-1] for f in re.findall(r'<form[^>]*id="([^"]+)"', page)]
+    pulsanti = sorted({b.rsplit(":", 1)[-1] for b in re.findall(r'id="([^"]*(?:Button|Navigate)[^"]*)"', page)})
+    return f"sezioni {sezioni}, form {forms}, pulsanti {pulsanti[:20]}"
+
+
 def _form_html(page, form_id):
     m = re.search(r'<form[^>]*id="%s".*?</form>' % re.escape(form_id), page, re.S)
     return m.group(0) if m else None
@@ -200,6 +252,11 @@ def _event(source, event=None, param=True):
 # --- sessione sul portale ---------------------------------------------------------------
 class CupSession:
     def __init__(self, cf, nre):
+        self.cf, self.nre, self.cosa = cf, nre, ""
+        # "sposta" o "nuova": una sessione vale solo per il flusso che l'ha aperta (prenotare con la sessione
+        # di una prenotazione nuova una ricetta gia' prenotata potrebbe creare un secondo appuntamento)
+        self.modo = ""
+        self.n_prestazioni = 0  # il massimo visto nel carrello, in qualsiasi passo
         self.s = requests.Session()
         self.s.headers["User-Agent"] = UA
         self.search = {L + ":CFInput": cf, L + ":IDSearchTypeInput_input": "nre-label", L + ":IDSearchValueInput": nre}
@@ -215,13 +272,17 @@ class CupSession:
         x = self.lista_xml
         inizi = [m.start() for m in re.finditer(r"Stato:", x)]
         if not inizi:
+            # "nessuna prenotazione" solo se il portale lo dice: una pagina diversa (manutenzione, errore,
+            # sito cambiato) non deve far credere che la ricetta sia libera da prenotare
             msg = re.search(r"Non esistono[^<]*|Nessun record[^<]*", x)
-            raise NonTrovata(msg.group(0).strip() if msg else "Prenotazione non trovata")
+            if not msg:
+                raise CupError("Elenco delle prenotazioni non leggibile (portale in manutenzione o cambiato?)")
+            raise NonTrovata(msg.group(0).strip())
         righe = [x[a:b] for a, b in zip(inizi, inizi[1:] + [len(x)])]
         stati =[(re.search(r"Stato:\s*(\S+)", _text(r[:400])) or [None, "?"])[1] for r in righe]
         pren = [i for i, s in enumerate(stati) if s.upper() == "PRENOTATO"]
         if not pren:
-            raise NonAttiva("La prenotazione risulta in stato " + ", ".join(stati))
+            raise NonAttiva("La prenotazione risulta in stato " + ", ".join(stati), stati)
         self.riga = pren[0]
         riga = righe[self.riga]
         quando = _date(_text(riga))
@@ -240,6 +301,88 @@ class CupSession:
         page = self.s.get(RICETTA_URL, timeout=LENTO).text  # qui il portale calcola le disponibilita': puo' essere lento
         if "Appuntamenti Proposti" not in page:
             raise CupError("Il portale non ha aperto la pagina degli appuntamenti dopo 'Sposta'")
+        self.modo = "sposta"
+        return self.appuntamenti(page, estendi)
+
+    # --- prenotazione nuova: passi Ricerca e Prestazioni ---------------------------------------
+    def _segui(self, xml):
+        """Dopo un "avanti" del portale: la pagina del passo successivo (redirect, o la stessa pagina)."""
+        redirect = re.search(r'<redirect url="([^"]+)"', xml)
+        url = html.unescape(redirect.group(1)) if redirect else RICETTA_URL
+        if not url.startswith(CUP + "/"):
+            raise CupError("Il portale ha indicato un indirizzo esterno: non proseguo")
+        return self.s.get(url, timeout=LENTO).text  # verso gli appuntamenti il portale puo' essere lento
+
+    def ricetta(self):
+        """Passo "Ricerca": codice fiscale + NRE e "Prosegui", come il browser (il pulsante visibile fa
+        partire il comando nascosto epPrestazioniForwardNavigate). Non apre gli appuntamenti: non blocca
+        date. GiaPrenotata se la ricetta ha gia' un appuntamento, NonTrovata se il portale la rifiuta."""
+        self.ric = _Form(self.s, self.s.get(RICETTA_URL, timeout=30).text, R)
+        src = R + ":epPrestazioniForwardNavigate"
+        xml = self.ric.post({R + ":CFInput": self.cf, R + ":nreInput0": self.nre, "g-recaptcha-token": "",
+                             "javax.faces.source": src, "javax.faces.partial.event": "click",
+                             "javax.faces.partial.execute": f"{src} {R}", "javax.faces.partial.render": "@all",
+                             "javax.faces.behavior.event": "action", "javax.faces.partial.ajax": "true"})
+        errori = _errori(xml)
+        if any(re.search(r"\bgi(?:à|a'?)\s+presente", e, re.I) for e in errori):
+            raise GiaPrenotata(errori[0])
+        if any(re.search(r"ricett|\bnre\b|codice fiscale|scadut|inesistent", e, re.I)
+               and not re.search(r"disponibil|temporane|riprov|servizio|token|captcha", e, re.I) for e in errori):
+            raise NonTrovata(errori[0])  # il portale rifiuta la ricetta (un disservizio invece si riprova)
+        if errori:
+            raise CupError("Il portale ha risposto: " + errori[0])  # altro (anche temporaneo): si riprova
+        self.modo = "nuova"
+        page = self._segui(xml)
+        if R + ":CFInput" in page:  # i passi sono pagine distinte: se c'e' ancora la ricerca, non e' andato avanti
+            raise CupError("Il portale e' rimasto alla ricerca della ricetta: " + _struttura(page))
+        self._carrello(page)
+        return page
+
+    def _carrello(self, page):
+        """Prestazioni nel carrello di una pagina: ne ricorda il nome e il numero massimo visto.
+        Piu' di una in una prenotazione nuova: PiuPrestazioni prima di andare avanti (niente date bloccate
+        per niente). Spostare una prenotazione con piu' prestazioni resta possibile, come prima."""
+        nomi = _prestazioni(page)
+        self.n_prestazioni = max(self.n_prestazioni, len(nomi))
+        if nomi:
+            self.cosa = " + ".join(nomi)
+        if self.modo == "nuova" and self.n_prestazioni > 1:
+            raise PiuPrestazioni()
+
+    def fino_agli_appuntamenti(self, page):
+        """Dal passo "Prestazioni" agli Appuntamenti: "Avanti" col form com'e', come fa una persona.
+        Il passo non l'abbiamo mai visto dal vivo ("Sposta" lo salta): se non si riconosce un pulsante
+        per andare avanti ci si ferma, e l'errore descrive la pagina (senza dati personali)."""
+        for _ in range(3):
+            if "Appuntamenti Proposti" in page or "Appuntamenti Disponibili" in page:
+                return page
+            if RIEPILOGO in page:  # mai premere avanti su un Riepilogo: li' "avanti" e' la Conferma
+                raise CupError("Il portale e' passato al Riepilogo prima degli appuntamenti: non proseguo")
+            avanti = [b for b in re.findall(r'id="(_ricettaelettronica_WAR_cupprenotazione_:[^"]*nextButton[^"]*)"', page)
+                      if "appuntamenti" not in b.lower() and "riepilogo" not in b.lower()]
+            forms = set(re.findall(r'<form[^>]*id="([^"]+)"', page))
+            avanti = [b for b in avanti if b.rsplit(":", 1)[0] in forms]
+            if not avanti:
+                raise CupError("Passo del portale non riconosciuto prima degli appuntamenti: " + _struttura(page))
+            # solo nel passo Prestazioni: il pulsante e' suo o la pagina mostra il carrello
+            if not any("prestazion" in x.lower() for x in avanti) and 'id="prestazioni_selezionate"' not in page:
+                raise CupError("Passo del portale non riconosciuto prima degli appuntamenti: " + _struttura(page))
+            # a parita', il pulsante "principale" in fondo alla pagina, come negli altri passi
+            b = sorted(avanti, key=lambda x: ("main" not in x, x))[0]
+            form = b.rsplit(":", 1)[0]
+            campi = {k: v for k, v in _form_fields(page, form).items()
+                     if k not in (form, "javax.faces.encodedURL", "ice.window", "ice.view", "javax.faces.ViewState")}
+            xml = _Form(self.s, page, form).post({**campi, **_event(b)})
+            if _errori(xml):
+                raise CupError("Il portale non va avanti: " + _errori(xml)[0])
+            page = self._segui(xml)
+            self._carrello(page)
+        raise CupError("Troppi passi prima degli appuntamenti: " + _struttura(page))
+
+    def appuntamenti(self, page, estendi=0):
+        """Pagina Appuntamenti (la stessa per "Sposta" e per una prenotazione nuova): proposta e
+        "Appuntamenti Disponibili", estendendo l'area se richiesto."""
+        self._carrello(page)
         self.app = _Form(self.s, page, A)
         prop_html = page[page.find("Appuntamenti Proposti"):]
         q = _date(_text(prop_html[:6000]))
@@ -350,19 +493,20 @@ def estensioni(zona):
 
 
 def ammesso(slot, attuale, zona="sede"):
-    """Se il dato che serve al confronto non si legge, la data non e' ammessa."""
+    """Se il dato che serve al confronto non si legge, la data non e' ammessa. Senza prenotazione
+    (ricetta mai prenotata) la zona deve avere il suo valore: non c'e' una sede da cui ricavarlo."""
     z = zona_norm(zona)
     tipo, rif = z["tipo"], z["valore"]
     if not slot.luogo.sede:
         return False  # luogo non leggibile: mai proporlo
     if tipo == "sede":
-        rif = rif or attuale.luogo.sede
+        rif = rif or (attuale.luogo.sede if attuale else "")
         return bool(rif) and _norm(slot.luogo.sede) == _norm(rif)
     if tipo == "comune":
-        rif = rif or comune(attuale.luogo)
+        rif = rif or (comune(attuale.luogo) if attuale else "")
         return bool(rif) and _norm(comune(slot.luogo)) == _norm(rif)
     if tipo == "provincia":
-        rif = rif or provincia(attuale.luogo)
+        rif = rif or (provincia(attuale.luogo) if attuale else "")
         return bool(rif) and provincia(slot.luogo) == rif.upper()
     return tipo == "tutte"
 
@@ -383,6 +527,25 @@ def check(cf, nre, zona="sede"):
                          and ammesso(x, att, zona)]}
 
 
+def nuova(cf, nre):
+    """Registrazione di una ricetta mai prenotata: solo il passo "Ricerca" (non apre gli appuntamenti,
+    non blocca date). Ritorna la prestazione se la pagina la mostra, altrimenti "".
+    GiaPrenotata / NonTrovata come CupSession.ricetta."""
+    cup = CupSession(cf, nre)
+    cup.ricetta()
+    return cup.cosa
+
+
+def check_nuova(cf, nre, zona="tutte"):
+    """Come check, per una ricetta mai prenotata: "attuale" e' None e ogni data e' buona se e' nella zona.
+    Ricette con piu' prestazioni: per ora no (andrebbero prenotate insieme, con piu' appuntamenti)."""
+    cup = CupSession(cf, nre)
+    page = cup.fino_agli_appuntamenti(cup.ricetta())
+    slots = cup.appuntamenti(page, estendi=estensioni(zona))
+    return {"attuale": None, "cosa": cup.cosa, "slots": slots, "sessione": cup,
+            "migliori": [x for x in slots if (x.proposta or x.seleziona_id) and ammesso(x, None, zona)]}
+
+
 def _verifica_riepilogo(testo, data_riep, dopo_data, slot, cosa):
     if not slot.luogo.sede or not cosa:
         raise CupError("Luogo o prestazione non leggibili: non confermo")
@@ -395,22 +558,36 @@ def _verifica_riepilogo(testo, data_riep, dopo_data, slot, cosa):
         raise CupError("Il riepilogo riporta un luogo diverso da quello scelto")
 
 
-def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=False):
+def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=False, nuova=False):
     """Sposta la prenotazione sullo slot. sessione: quella del controllo che ha trovato lo slot
     (lo tiene bloccato per noi); se manca o fallisce si riparte da una sessione nuova.
     Con dry_run si ferma al Riepilogo. Ritorna un messaggio; CupError se un controllo fallisce.
     libera: scelta esplicita dell'utente di una data vista (anche fuori area o piu' tardi): niente filtro
-    su zona e anticipo, ma restano tutte le verifiche sul Riepilogo e dopo la conferma."""
-    att = CupSession(cf, nre).attuale()  # sessione a parte: non tocca lo stato di quella del controllo
-    if not dry_run and not libera and slot.quando >= att.quando:
+    su zona e anticipo, ma restano tutte le verifiche sul Riepilogo e dopo la conferma.
+    nuova: ricetta mai prenotata (prima prenotazione). Se nel frattempo risulta prenotata: GiaPrenotata."""
+    if nuova:
+        try:
+            att = CupSession(cf, nre).attuale()
+        except NonTrovata:
+            att = None  # il portale dice che non ci sono prenotazioni: si puo' prenotare
+        except NonAttiva as e:
+            if not e.solo_disdette():  # erogata, in corso...: meglio non aggiungere un appuntamento
+                raise CupError(f"{e}: non prenoto, verifica sul portale")
+            att = None
+        else:
+            raise GiaPrenotata(f"Nel frattempo la ricetta risulta prenotata al {att.quando:%d/%m/%Y %H:%M}")
+    else:
+        att = CupSession(cf, nre).attuale()  # sessione a parte: non tocca lo stato di quella del controllo
+    if not dry_run and not libera and att and slot.quando >= att.quando:
         raise CupError(f"Lo slot {slot.quando:%d/%m/%Y %H:%M} non e' prima dell'appuntamento attuale "
                        f"({att.quando:%d/%m/%Y %H:%M})")
     if not libera and not ammesso(slot, att, zona):
         raise CupError(f"Sede non ammessa dalle tue preferenze: {slot.luogo}")
     if not (slot.proposta or slot.seleziona_id):
         raise CupError("Questa data non ha un pulsante 'Seleziona': non posso sceglierla")
-    if sessione is not None and sessione.search.get(L + ":IDSearchValueInput") != nre:
-        sessione = None  # sessione di un'altra ricetta: mai usarla
+    if sessione is not None and (sessione.search.get(L + ":IDSearchValueInput") != nre
+                                 or getattr(sessione, "modo", "") != ("nuova" if nuova else "sposta")):
+        sessione = None  # sessione di un'altra ricetta o dell'altro flusso: mai usarla
 
     def arriva_al_riepilogo(cup):
         uguali = [x for x in cup.slots if x.key() == slot.key()]
@@ -427,30 +604,40 @@ def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=Fals
     except (CupError, requests.RequestException) as e:
         primo_errore = str(e)
         cup = CupSession(cf, nre)
-        cup.attuale()
-        cup.alternative(estendi=estensioni(zona))
+        if nuova:
+            cup.appuntamenti(cup.fino_agli_appuntamenti(cup.ricetta()), estendi=estensioni(zona))
+        else:
+            cup.attuale()
+            cup.alternative(estendi=estensioni(zona))
         try:
             s, testo, data_riep, dopo, page = arriva_al_riepilogo(cup)
         except CupError as e2:
             raise CupError(f"{e2} (tentativo nella sessione originale: {primo_errore})")
-    _verifica_riepilogo(testo, data_riep, dopo, s, att.cosa)
+    # la prestazione del Riepilogo deve essere quella della prenotazione (o, per una nuova, quella
+    # che il portale ha messo nel carrello): se non si legge, _verifica_riepilogo non conferma
+    _verifica_riepilogo(testo, data_riep, dopo, s, att.cosa if att else cup.cosa)
+    if nuova:  # prima prenotazione: una sola prestazione, riconoscibile, e un solo appuntamento nel Riepilogo
+        if cup.n_prestazioni != 1 or not re.search(r"[A-Za-z]{4}", cup.cosa):
+            raise CupError("Prestazione della ricetta non riconosciuta con certezza: non confermo")
+        if len(DATE_RE.findall(testo)) != 1:
+            raise CupError("Il Riepilogo contiene piu' appuntamenti: non confermo")
     if dry_run:
         return f"PROVA: arrivato al Riepilogo di {s!r}, non confermo."
 
     # da qui la Conferma e' partita: qualunque problema e' "esito incerto", mai "non spostata"
-    nuova = None
+    nuova_att = None
     try:
         cup.conferma(page)
         for _ in range(3):
             try:
-                nuova = CupSession(cf, nre).attuale()
-                if nuova.quando == s.quando and nuova.luogo.key() == s.luogo.key():
-                    return "Prenotazione spostata."
+                nuova_att = CupSession(cf, nre).attuale()
+                if nuova_att.quando == s.quando and nuova_att.luogo.key() == s.luogo.key():
+                    return "Prenotazione fatta." if nuova else "Prenotazione spostata."
             except (CupError, requests.RequestException):
                 pass
             time.sleep(10)
     except Exception:
         pass  # qualunque errore dopo la Conferma: esito incerto, sotto
-    stato = f"al {nuova.quando:%d/%m/%Y %H:%M}" if nuova else "non verificabile"
+    stato = f"al {nuova_att.quando:%d/%m/%Y %H:%M}" if nuova_att else "non verificabile"
     raise CupError(f"Conferma inviata, esito incerto: la prenotazione risulta {stato}. "
                    f"Controlla subito su {LISTA_URL} o al {CALL_CENTER}.")

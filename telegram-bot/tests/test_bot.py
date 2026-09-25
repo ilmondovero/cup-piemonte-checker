@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
+import requests
 from cryptography.fernet import Fernet
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -17,6 +18,7 @@ from store import Store  # noqa: E402
 
 CF, NRE = "RSSMRA80A01L219X", "010A00000000001"
 CF2, NRE2 = "VRDGPP50A01A859Q", "010A00000000009"
+CF3, NRE3 = "GLLMRC75C12D969K", "010A00000000003"  # ricetta mai prenotata
 
 
 # --- parser ------------------------------------------------------------------------------
@@ -135,6 +137,10 @@ ALTROVE = c.Slot(datetime.now() + timedelta(days=20), c.Luogo("OSPEDALE B", "AMB
 ATT2 = c.Prenotazione(datetime.now() + timedelta(days=60), c.Luogo("CLINICA ASTI", "ESAME", "Via X - ASTI (AT)"), "ESAME - 99.99")
 ASTI = c.Slot(datetime.now() + timedelta(days=10), c.Luogo("CLINICA ASTI", "ESAME", "Via X - ASTI (AT)"), "b1")
 ALBA = c.Slot(datetime.now() + timedelta(days=40), c.Luogo("OSP ALBA", "ESAME 2", "Via Roma, 9 - ALBA (CN)"), "t1")
+# ricetta mai prenotata: il CUP propone una sede a Torino e una a Cuneo
+COSA3 = "ECOGRAFIA ADDOME COMPLETO"
+NUOVA_TO = c.Slot(datetime.now() + timedelta(days=15), c.Luogo("POLIAMBULATORIO NORD", "ECO 1", "Via Po, 5 - TORINO (TO)"), "n1")
+NUOVA_CN = c.Slot(datetime.now() + timedelta(days=9), c.Luogo("OSPEDALE B", "ECO", "Via Roma, 2 - CUNEO (CN)"), "n2")
 
 
 @pytest.fixture
@@ -149,20 +155,60 @@ def b(tmp_path, monkeypatch):
     bot.tg = tg
     bot.chiamate = []
     bot.zone_viste = []
-    monkeypatch.setattr(c, "cerca", lambda cf, nre: ATT2 if cf == CF2 else ATT)
+
+    def vietato(*a, **k):
+        raise AssertionError("richiesta di rete in un test")
+    monkeypatch.setattr(requests.Session, "request", vietato)  # mai il portale vero dai test
+    bot.nuove = {}  # ricetta mai prenotata (CF3) -> prenotazione, dopo la prima prenotazione
+    bot.prenotata_a_mano = False
+
+    def cerca(cf, nre):
+        if cf == CF3:
+            if cf in bot.nuove:
+                return bot.nuove[cf]
+            raise c.NonTrovata("Non esistono prenotazioni")
+        return ATT2 if cf == CF2 else ATT
+    monkeypatch.setattr(c, "cerca", cerca)
+
+    def nuova(cf, nre):
+        if cf == CF3 and cf not in bot.nuove:
+            return COSA3
+        if cf == CF3:
+            raise c.GiaPrenotata("Numero ricetta elettronica già presente")
+        raise c.NonTrovata("Numero ricetta elettronica non valido")
+    monkeypatch.setattr(c, "nuova", nuova)
+
+    def check_nuova(cf, nre, zona="tutte"):
+        if cf in bot.nuove:
+            raise c.GiaPrenotata("Numero ricetta elettronica già presente")
+        bot.zone_viste.append(zona)
+        slots = sorted([NUOVA_TO, NUOVA_CN], key=lambda x: x.quando)  # come il client vero
+        return {"attuale": None, "cosa": COSA3, "slots": slots, "sessione": f"S-{cf}",
+                "migliori": [x for x in slots if c.ammesso(x, None, zona)]}
+    monkeypatch.setattr(c, "check_nuova", check_nuova)
 
     def check(cf, nre, zona):
         bot.zone_viste.append(zona)
-        att, slots = (ATT2, [ASTI, ALBA]) if cf == CF2 else (ATT, [ALTROVE, VICINO, MEGLIO])
+        if cf in bot.nuove:  # la ricetta prima mai prenotata, dopo la prima prenotazione
+            att, slots = bot.nuove[cf], sorted([NUOVA_TO, NUOVA_CN], key=lambda x: x.quando)
+        else:
+            att, slots = (ATT2, [ASTI, ALBA]) if cf == CF2 else (ATT, [ALTROVE, VICINO, MEGLIO])
         return {"attuale": att, "slots": slots, "sessione": f"S-{cf}",
                 "migliori": [x for x in slots if x.quando < att.quando and c.ammesso(x, att, zona)]}
     monkeypatch.setattr(c, "check", check)
 
     bot.libere = []
 
-    def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=False):
+    def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=False, nuova=False):
         bot.chiamate.append((cf, slot.key(), sessione, dry_run))
         bot.libere.append(libera)
+        assert nuova == (cf == CF3 and cf not in bot.nuove)  # il bot dice sempre al client se e' la prima
+        if nuova and bot.prenotata_a_mano:  # qualcuno l'ha prenotata sul portale un attimo prima
+            bot.nuove[cf] = c.Prenotazione(NUOVA_TO.quando, NUOVA_TO.luogo, COSA3)
+            raise c.GiaPrenotata(f"Nel frattempo la ricetta risulta prenotata al {NUOVA_TO.quando:%d/%m/%Y %H:%M}")
+        if nuova and not dry_run:
+            bot.nuove[cf] = c.Prenotazione(slot.quando, slot.luogo, COSA3)
+            return "Prenotazione fatta."
         return "Prenotazione spostata."
     monkeypatch.setattr(c, "prenota", prenota)
     return bot
@@ -752,3 +798,133 @@ def test_nomi_leggibili():
     assert botmod.prestazione("TC DEL TORACE E DELL ADDOME SUPERIORE, CON E SENZA MEZZO DI CONTRASTO - 12.34") ==         "TC del torace e dell addome superiore, con e…"
     assert botmod.prestazione("VISITA GENERALE DI CONTROLLO - 11.11") == "Visita generale di controllo"
     assert botmod.indirizzo(c.Luogo("X", "Y", "VIA ESEMPIO 10 - ASTI (AT)")) == "Via Esempio 10 - Asti (AT)"
+
+
+# --- ricetta mai prenotata: primo appuntamento ------------------------------------------------
+def registra_nuova(b, chat=1, zona="tutte", comune=None):
+    b.ultimo_msg.clear()
+    b.on_message(msg(chat, "/start"))
+    b.on_callback(cq(chat, "consenso:1"))
+    b.on_message(msg(chat, CF3, mid=30))
+    b.on_message(msg(chat, NRE3, mid=31))
+    scegli_sede(b, chat, "altro" if comune else zona)
+    if comune:
+        b.on_message(msg(chat, comune, mid=32))
+
+
+def test_ricetta_mai_prenotata_si_registra(b):
+    registra_nuova(b)
+    p = pratica(b)
+    assert p["stato"] == "attivo" and botmod.da_prenotare(p)
+    assert botmod.attuale_di(p).quando == botmod.SENZA_DATA and botmod.attuale_di(p).cosa == COSA3
+    t = "\n".join(inviati(b))
+    assert "non e' ancora prenotata" in t and COSA3 in t and "data libera" in t
+    # nessuna sede di riferimento: solo "un comune" o "dove propone il CUP"
+    scelte = [d for m, d in b.out if m == "sendMessage" and "Dove cerco il primo appuntamento" in d["text"]]
+    assert scelte and {x["callback_data"].rsplit(":", 1)[1] for r in scelte[0]["reply_markup"]["inline_keyboard"]
+                       for x in r} == {"altro", "tutte"}
+    assert "2100" not in t
+
+
+def test_ricetta_non_valida_non_si_registra(b, monkeypatch):
+    def nessuna(cf, nre):
+        raise c.NonTrovata("Non esistono prenotazioni")
+    monkeypatch.setattr(c, "cerca", nessuna)  # ne' prenotata ne' prenotabile: il portale la rifiuta
+    b.on_message(msg(1, "/start"))
+    b.on_callback(cq(1, "consenso:1"))
+    b.on_message(msg(1, "BRNLCU80A01L219Y", mid=30))
+    b.on_message(msg(1, NRE3, mid=31))
+    assert any("non accetta questa ricetta" in x for x in inviati(b)) and pratica(b)["stato"] == "cf"
+
+
+def test_prima_prenotazione_poi_si_anticipa(b):
+    registra_nuova(b)
+    p = pratica(b)
+    b.controlla(p)
+    t = inviati(b)[-1]
+    assert "C'e' una data libera" in t and "Tocca per prenotare" in t and "2100" not in t
+    # ogni data trovata e' buona: la piu' vicina per prima
+    [cb, *_] = [x for x in pulsanti(b) if x.startswith("p:")]
+    b.on_callback(cq(1, cb))
+    assert b.chiamate[-1] == (CF3, NUOVA_CN.key(), "S-" + CF3, False)
+    p = pratica(b)
+    assert not botmod.da_prenotare(p) and botmod.attuale_di(p).quando == NUOVA_CN.quando
+    assert any("Prenotazione fatta" in x for x in inviati(b))
+    # da qui e' una prenotazione come le altre: il controllo usa "Sposta"
+    b.controlla(pratica(b))
+    assert b.zone_viste[-1] == {"tipo": "tutte", "valore": ""} and not botmod.da_prenotare(pratica(b))
+
+
+def test_ricetta_mai_prenotata_con_comune(b):
+    registra_nuova(b, comune="Torino")
+    b.controlla(pratica(b))
+    date = [x for x in pulsanti(b) if x.startswith("p:")]
+    assert len(date) == 1  # solo Torino, non Cuneo
+    b.on_callback(cq(1, date[0]))
+    assert b.chiamate[-1][1] == NUOVA_TO.key()
+
+
+def test_prenotata_fuori_dal_bot(b):
+    registra_nuova(b)
+    b.nuove[CF3] = c.Prenotazione(NUOVA_TO.quando, NUOVA_TO.luogo, COSA3)  # prenotata a mano sul portale
+    b.controlla(pratica(b))
+    p = pratica(b)
+    assert not botmod.da_prenotare(p) and botmod.attuale_di(p).quando == NUOVA_TO.quando
+    assert any("risulta prenotata" in x and "Da ora cerco date prima" in x for x in inviati(b))
+
+
+def test_pannello_ricetta_da_prenotare(b):
+    registra_nuova(b)
+    testo, _ = b.testo_pannello(1)
+    assert "da prenotare: cerco il primo appuntamento" in testo and "2100" not in testo
+    b.controlla(pratica(b))
+    testo, _ = b.testo_pannello(1)
+    assert "2 prenotabili dove cerchi" in testo
+
+
+def test_auto_prenota_il_primo_appuntamento(b):
+    registra_nuova(b)
+    p = pratica(b)
+    p["auto"] = {"giorni": 1}
+    b.store.save(p)
+    b.controlla(pratica(b))
+    assert b.chiamate and b.chiamate[-1][3] is False and not botmod.da_prenotare(pratica(b))
+
+
+def test_prenotata_a_mano_durante_la_conferma_automatica(b):
+    """Il caso trovato in revisione: la conferma automatica scopre che la ricetta e' appena stata prenotata.
+    Le date di quel controllo (e la sua sessione) erano della prenotazione nuova: niente offerte con quelle."""
+    registra_nuova(b)
+    p = pratica(b)
+    p["auto"] = {"giorni": 1}
+    b.store.save(p)
+    b.prenotata_a_mano = True
+    prima = len(b.out)
+    b.controlla(pratica(b))
+    p = pratica(b)
+    assert not botmod.da_prenotare(p) and botmod.attuale_di(p).quando == NUOVA_TO.quando and not p.get("auto")
+    dopo = [d["text"] for m, d in b.out[prima:] if m == "sendMessage"]
+    assert not any("C'e' una data" in t for t in dopo) and p["id"] not in b.offerte
+    assert any("Ho spento la conferma automatica" in t for t in dopo)
+
+
+def test_piu_prestazioni_alla_registrazione(b, monkeypatch):
+    def piu(cf, nre):
+        raise c.PiuPrestazioni()
+    monkeypatch.setattr(c, "nuova", piu)
+    b.on_message(msg(1, "/start"))
+    b.on_callback(cq(1, "consenso:1"))
+    b.on_message(msg(1, CF3, mid=30))
+    b.on_message(msg(1, NRE3, mid=31))
+    assert any("piu' prestazioni" in x for x in inviati(b)) and pratica(b)["stato"] == "cf"
+
+
+def test_ricetta_con_prenotazione_erogata_non_diventa_da_prenotare(b, monkeypatch):
+    def erogata(cf, nre):
+        raise c.NonAttiva("La prenotazione risulta in stato EROGATO", ["EROGATO"])
+    monkeypatch.setattr(c, "cerca", erogata)
+    b.on_message(msg(1, "/start"))
+    b.on_callback(cq(1, "consenso:1"))
+    b.on_message(msg(1, CF3, mid=30))
+    b.on_message(msg(1, NRE3, mid=31))
+    assert any("non e' attiva" in x for x in inviati(b)) and pratica(b)["stato"] == "cf"

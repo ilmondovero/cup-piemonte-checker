@@ -6,7 +6,8 @@ qualsiasi VPS. Lo script originale, con il browser, è più sotto ed è rimasto 
 ## Bot Telegram senza browser (cartella [`telegram-bot/`](telegram-bot/))
 
 Il bot controlla il portale [CUP Piemonte](https://cup.isan.csi.it/) al posto tuo. Ti avvisa quando si
-libera una data **prima** della tua prenotazione e, se vuoi, la sposta per te.
+libera una data **prima** della tua prenotazione e, se vuoi, la sposta per te. Con una ricetta **non
+ancora prenotata** cerca il primo appuntamento libero (funzione sperimentale, vedi sotto).
 
 - **Niente browser.** Parla con il portale via HTTP e replica le richieste che farebbe il browser. Il
   "controllo anti-bot" di cui parla lo script originale, verificato a settembre 2026, risulta
@@ -32,7 +33,11 @@ libera una data **prima** della tua prenotazione e, se vuoi, la sposta per te.
 Comandi: `/stato` `/controlla` `/aggiungi` `/dati` `/modifica` `/sede` `/auto` `/pausa` `/riprendi`
 `/cancella` `/privacy` `/help`.
 
-Funziona per appuntamenti **già prenotati** sul CUP: anticipa una prenotazione esistente.
+Funziona per appuntamenti **già prenotati** sul CUP, che anticipa, e per ricette **mai prenotate**: trova
+il primo appuntamento libero, lo prenota al tuo tocco e poi continua a cercare date prima. La seconda parte è
+sperimentale: un passo del portale (la scelta delle prestazioni) non è ancora stato visto con una ricetta
+vera. Se il portale mostra qualcosa di inatteso il bot si ferma, non prenota e lo segnala. Per ora solo
+ricette con una prestazione.
 
 ### Installazione su qualsiasi VPS
 

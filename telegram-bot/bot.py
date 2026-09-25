@@ -115,6 +115,16 @@ AUTO_TESTO = (
     "• rispetto dove cercare (/sede) e l'anticipo minimo che scegli qui sotto;\n"
     "• ti scrivo subito data, ora e luogo della nuova prenotazione.\n\n"
     "Da quando accetti una data nuova?")
+AUTO_TESTO_NUOVA = (
+    "⚡ Conferma automatica\n\n"
+    "Questa ricetta non e' ancora prenotata. Se la attivi, la prima data libera dove cerchi la prenoto subito, "
+    "senza aspettare il tuo tocco: le date buone spariscono in pochi minuti. Poi continuo a cercare date prima.\n\n"
+    "Da sapere:\n"
+    "• se poi non si puo' andare, bisogna disdire o spostare almeno 2 giorni lavorativi prima, altrimenti si "
+    "paga l'intera prestazione;\n"
+    "• rispetto dove cercare (/sede) e l'anticipo minimo che scegli qui sotto;\n"
+    "• ti scrivo subito data, ora e luogo della prenotazione.\n\n"
+    "Da quando accetti una data?")
 
 
 def env_int(name, default):
@@ -125,6 +135,8 @@ def env_int(name, default):
 
 
 def fmt(d):
+    if d >= SENZA_DATA:
+        return "nessuna (da prenotare)"
     return f"{GIORNI[d.weekday()]} {d:%d/%m/%Y} ore {d:%H:%M}"
 
 
@@ -155,7 +167,23 @@ def attuale_di(p):
     return pren_from_dict(p["attuale"]) if p.get("attuale") else None
 
 
+# Ricetta mai prenotata: al posto della prenotazione c'e' una data lontanissima, cosi' ogni data trovata
+# e' "prima" e tutto il resto (zone, offerte, conferma automatica, date viste) funziona uguale. Dopo la
+# prima prenotazione la data diventa quella vera e il bot cerca date ancora prima, come sempre.
+SENZA_DATA = datetime(2100, 1, 1)
+
+
+def da_prenotare(p):
+    return bool(p.get("da_prenotare"))
+
+
+def senza_prenotazione(cosa):
+    return {"quando": SENZA_DATA.isoformat(), "sede": "", "ambulatorio": "", "indirizzo": "", "cosa": cosa or ""}
+
+
 def descrivi_prenotazione(att, titolo="Prenotazione"):
+    if att.quando >= SENZA_DATA:
+        return f"Ricetta da prenotare:\n🩺 {att.cosa or 'la prestazione della ricetta'}\n📅 non ancora prenotata"
     return f"{titolo}:\n🩺 {att.cosa}\n📅 {fmt(att.quando)}\n📍 {att.luogo}"
 
 
@@ -222,6 +250,8 @@ def descr_zona(zona, att):
     z = cup_http.zona_norm(zona)
     tipo, v = z["tipo"], z["valore"]
     if tipo == "sede":
+        if v and att and att.luogo.sede and v != att.luogo.sede or v and not (att and att.luogo.sede):
+            return f"solo nella sede {titolo(v)}"
         return f"solo in questa sede ({titolo(v or (att.luogo.sede if att else ''))})"
     if tipo == "comune":
         return f"solo nel comune di {titolo(v or (cup_http.comune(att.luogo) if att else ''))}"
@@ -378,9 +408,28 @@ class Bot:
 
     def controlla(self, p, manuale=False):
         chat = p["chat_id"]
+        nuova = da_prenotare(p)
         try:
-            res = self.portale(cup_http.check, p["cf"], p["nre"], zona_di(p))
+            if nuova:
+                try:
+                    res = self.portale(cup_http.check_nuova, p["cf"], p["nre"], zona_di(p))
+                except cup_http.GiaPrenotata:
+                    # prenotata fuori dal bot (a mano, al telefono...): da qui si anticipa quella. Se non si
+                    # riesce a leggerla, l'errore segue la strada degli errori normali (contati, avvisi radi)
+                    self.diventa_prenotata(p)
+                    return None
+            else:
+                res = self.portale(cup_http.check, p["cf"], p["nre"], zona_di(p))
         except (cup_http.NonTrovata, cup_http.NonAttiva) as e:
+            if nuova:
+                p.update(stato="pausa", pausa_da=time.time(), libera=True)
+                self.salva(p, "stato", "pausa_da", "libera")
+                self.aggiorna_pannello(chat)
+                motivo = (f"{e}." if isinstance(e, cup_http.PiuPrestazioni) else
+                          f"Il portale non accetta piu' questa ricetta ({e}): forse e' scaduta o e' gia' stata usata.")
+                self.dire(p, f"{motivo} Ho sospeso i controlli.\n/modifica per un'altra ricetta, /riprendi per "
+                             "riprovare, /cancella per eliminarla.")
+                return None
             p.update(stato="pausa", pausa_da=time.time(), libera=True)
             self.salva(p, "stato", "pausa_da", "libera")
             self.aggiorna_pannello(chat)
@@ -405,6 +454,11 @@ class Bot:
                     "" if manuale else f" (da {p['errori']} controlli di fila). Continuo a riprovare da solo."))
             return None
 
+        if nuova:  # nessuna prenotazione: il riferimento resta la data lontanissima, con la prestazione letta
+            p["attuale"] = {**senza_prenotazione(""), **(p.get("attuale") or {}), "quando": SENZA_DATA.isoformat()}
+            if res.get("cosa"):
+                p["attuale"]["cosa"] = res["cosa"]
+            res["attuale"] = attuale_di(p)
         att = res["attuale"]
         self.sessioni[p["id"]] = {"ts": time.time(), "sessione": res["sessione"], "slots": res["slots"]}
         if att.quando < adesso():
@@ -437,12 +491,14 @@ class Bot:
                 slot = candidati[0]  # la piu' vicina tra quelle ammesse
                 p["tentati_auto"] = sorted(tentati | {slot.key()})
                 self.salva(p, "tentati_auto")
-                self.dire(p, "⚡ Conferma automatica: ho trovato una data prima.\n\n" + descrivi(res) +
+                self.dire(p, f"⚡ Conferma automatica: ho trovato una data{'' if nuova else ' prima'}.\n\n" + descrivi(res) +
                           "\n\n" + self.regola(p))
                 if self.prenota(p, slot, res["sessione"], automatica=True) != "fallita":
                     return res
                 p = self.store.get(p["id"])
-                if not p:
+                if not p or da_prenotare(p) != nuova:
+                    # nel frattempo e' risultata prenotata: le date (e la sessione) di questo controllo erano
+                    # della prenotazione nuova e non valgono per spostare quella attuale
                     return res
         # si ripropone una data se la sua offerta e' scaduta o persa (es. riavvio), non se l'utente l'ha ignorata
         ora = time.time()
@@ -490,8 +546,10 @@ class Bot:
                    for i, x in enumerate(slots)]
         buttons.append([{"text": "Ignora", "callback_data": f"x:{pid}:{token}"}])
         prova = "\n(MODALITA' PROVA: il pulsante si ferma al riepilogo, non conferma)" if self.prova else ""
-        ok = self.dire(p, "🎉 C'e' una data PRIMA!\n\n" + descrivi(res) + "\n\n" + self.regola(p) +
-                       f"\n\nTocca per spostare la prenotazione (valido {TTL_OFFERTA // 60} minuti).{prova}", buttons)
+        nuova = da_prenotare(p)
+        ok = self.dire(p, ("🎉 C'e' una data libera!" if nuova else "🎉 C'e' una data PRIMA!") + "\n\n" + descrivi(res) +
+                       "\n\n" + self.regola(p) + f"\n\nTocca per {'prenotare' if nuova else 'spostare la prenotazione'} "
+                       f"(valido {TTL_OFFERTA // 60} minuti).{prova}", buttons)
         if ok:
             self.offerte[pid] = {"token": token, "ts": time.time(), "sessione": res["sessione"], "slots": slots}
         return ok
@@ -521,7 +579,8 @@ class Bot:
         """Ritorna "ok", "fallita" o "incerta" (conferma inviata ma esito non verificato)."""
         chat = p["chat_id"]
         self.sessioni.pop(p["id"], None)  # la sessione va al Riepilogo: nessun'altra data la riusa
-        self.dire(p, f"Sposto la prenotazione a:\n📅 {fmt(slot.quando)}\n📍 {slot.luogo}…")
+        nuova = da_prenotare(p)
+        self.dire(p, f"{'Prenoto' if nuova else 'Sposto la prenotazione a'}:\n📅 {fmt(slot.quando)}\n📍 {slot.luogo}…")
         attuale_db = self.store.get(p["id"])
         if not attuale_db:
             log.info("prenotazione %s/%s annullata: dati cancellati nel frattempo", uid(chat), p["id"])
@@ -531,10 +590,17 @@ class Bot:
             return "fallita"
         try:
             esito = self.portale(cup_http.prenota, p["cf"], p["nre"], slot, sessione=sessione,
-                                 zona=zona_di(p), dry_run=self.prova, libera=libera)
+                                 zona=zona_di(p), dry_run=self.prova, libera=libera, nuova=nuova)
+        except cup_http.GiaPrenotata as e:
+            self.dire(p, f"❌ Non prenotata: {e}.")
+            try:
+                self.diventa_prenotata(p)
+            except (cup_http.CupError, requests.RequestException):
+                pass  # ci riprova il prossimo controllo
+            return "fallita"
         except (cup_http.CupError, requests.RequestException) as e:
             urgente = "Conferma inviata" in str(e)
-            self.dire(p, ("🚨 " if urgente else "❌ Non spostata: ") + str(e))
+            self.dire(p, ("🚨 " if urgente else ("❌ Non prenotata: " if nuova else "❌ Non spostata: ")) + str(e))
             if urgente:
                 self.alert_admin(f"Esito incerto dopo la conferma per {uid(chat)}")
                 self.sospendi_auto(p)
@@ -559,14 +625,35 @@ class Bot:
         p["attuale"] = {**p.get("attuale", {}), "quando": slot.quando.isoformat(), "sede": slot.luogo.sede,
                         "ambulatorio": slot.luogo.ambulatorio, "indirizzo": slot.luogo.indirizzo}
         p["prossimo"] = time.time() + self.intervallo_di(chat) * 60
-        self.salva(p, "notificati", "ignorati", "tentati_auto", "attuale", "prossimo")
-        self.dire(p, f"✅ Prenotazione spostata{' (conferma automatica)' if automatica else ''}!\n"
+        p.pop("da_prenotare", None)  # da qui e' una prenotazione come le altre: si cercano date prima
+        self.salva(p, "notificati", "ignorati", "tentati_auto", "attuale", "prossimo", "da_prenotare")
+        self.dire(p, f"✅ Prenotazione {'fatta' if nuova else 'spostata'}{' (conferma automatica)' if automatica else ''}!\n"
                      f"📅 {fmt(slot.quando)}\n📍 {slot.luogo}\n\n"
                      "Arriveranno SMS/email dal CUP con il nuovo promemoria; controlla anche il codice di "
                      "pagamento del ticket. Se non si puo' andare, disdire o spostare almeno 2 giorni lavorativi "
                      "prima. Continuo a cercare date ancora prima.\n\n" + self.regola(p))
         self.aggiorna_pannello(chat)
         return "ok"
+
+    def diventa_prenotata(self, p):
+        """Una ricetta da prenotare risulta prenotata fuori dal bot: da qui si anticipa quella prenotazione.
+        CupError se la prenotazione non si legge (il chiamante lo tratta come un errore del portale)."""
+        try:
+            att = self.portale(cup_http.cerca, p["cf"], p["nre"])
+        except (cup_http.NonTrovata, cup_http.NonAttiva) as e:
+            raise cup_http.CupError(f"la ricetta risulta gia' prenotata, ma non trovo la prenotazione attiva ({e})")
+        auto = bool(p.get("auto"))
+        p["attuale"] = pren_to_dict(att)
+        p.pop("da_prenotare", None)
+        # una prenotazione fatta a mano non si sposta da sola: la conferma automatica la riaccende l'utente
+        p.update(notificati={}, ignorati=[], tentati_auto=[], auto=None)
+        self.scarta(p["id"])
+        self.salva(p, "attuale", "da_prenotare", "notificati", "ignorati", "tentati_auto", "auto")
+        self.dire(p, descrivi_prenotazione(att, "La ricetta risulta prenotata") +
+                  "\n\nDa ora cerco date prima di questa." +
+                  ("\nHo spento la conferma automatica: se vuoi, riattivala con /auto." if auto else "") +
+                  "\n\n" + self.regola(p))
+        self.aggiorna_pannello(p["chat_id"])
 
     def sospendi_auto(self, p):
         """Dopo un esito incerto niente altri tentativi automatici: decide l'utente."""
@@ -580,7 +667,8 @@ class Bot:
     def chiedi_cf(self, p):
         p.pop("nre", None)  # la coppia CF+NRE si riforma solo a ricerca riuscita
         p.pop("attende_comune", None)
-        p.pop("viste", None)  # le date trovate erano della ricetta vecchia
+        p.pop("viste", None)  # le date e le sedi trovate erano della ricetta vecchia
+        p.pop("luoghi", None)
         self.scarta(p["id"])
         p.pop("libera", None)
         p.update(stato="cf", creato=time.time(), auto=None, notificati={}, ignorati=[], tentati_auto=[])
@@ -609,37 +697,64 @@ class Bot:
         if len(recenti) >= MAX_RICERCHE_FALLITE:
             self.send(chat, "Troppe ricerche non riuscite oggi. Riprova domani.")
             return
-        self.send(chat, "Cerco la prenotazione sul portale CUP…")
+        self.send(chat, "Cerco la ricetta sul portale CUP…")
         try:
-            att = self.portale(cup_http.cerca, p["cf"], nre)
-        except cup_http.NonTrovata:
-            recenti.append(time.time())
-            self.send(chat, "Il portale non trova prenotazioni con questo codice fiscale e questa ricetta.\n"
-                            "Il bot funziona solo per appuntamenti gia' prenotati sul CUP Piemonte: per ora non "
-                            "cerca il primo appuntamento di una ricetta non ancora prenotata.")
-            self.chiedi_cf(p)
-            return
+            att, cosa = self.cerca_ricetta(p["cf"], nre)
         except cup_http.NonAttiva as e:
             recenti.append(time.time())
             self.send(chat, f"La prenotazione di questa ricetta non e' attiva ({e}).")
+            self.chiedi_cf(p)
+            return
+        except cup_http.NonTrovata as e:
+            recenti.append(time.time())
+            self.send(chat, f"{e}." if isinstance(e, cup_http.PiuPrestazioni) else
+                      f"Il portale non accetta questa ricetta con questo codice fiscale ({e}).")
             self.chiedi_cf(p)
             return
         except (cup_http.CupError, requests.RequestException) as e:
             self.send(chat, f"Il portale CUP non risponde ({e}). Rimandami il numero ricetta tra qualche minuto.")
             return
         altre = [x for x in self.store.della_chat(chat) if x["id"] != p["id"]]
-        p.update(nre=nre, attuale=pren_to_dict(att), stato="nome" if altre and not p.get("nome") else "sede")
+        p.update(nre=nre, attuale=pren_to_dict(att) if att else senza_prenotazione(cosa),
+                 stato="nome" if altre and not p.get("nome") else "sede")
+        if att:
+            p.pop("da_prenotare", None)
+        else:
+            p["da_prenotare"] = True
         try:
             self.store.save(p)
         except storemod.GiaRegistrata:
             self.send(chat, "Questa ricetta e' gia' seguita dal bot (in questa o in un'altra chat).")
             self.chiedi_cf(self.store.get(p["id"]))
             return
-        self.send(chat, descrivi_prenotazione(att, "Ho trovato la prenotazione"))
+        if att:
+            self.send(chat, descrivi_prenotazione(att, "Ho trovato la prenotazione"))
+        else:
+            self.send(chat, f"Ho trovato la ricetta: non e' ancora prenotata.\n🩺 {cosa or 'la prestazione della ricetta'}\n\n"
+                            "Cerco il primo appuntamento libero e ti avviso con il pulsante Prenota. Dopo la "
+                            "prenotazione continuo a cercare date ancora prima.")
         if p["stato"] == "nome":
             self.send(chat, "Come chiamo questa ricetta nei messaggi? Per esempio: Papà, Mamma, Nonna.")
         else:
-            self.chiedi_sede(p, att)
+            self.chiedi_sede(p, attuale_di(p))
+
+    def cerca_ricetta(self, cf, nre):
+        """(prenotazione, None) se la ricetta ha un appuntamento attivo; (None, prestazione) se e' da prenotare.
+        NonTrovata se il portale non accetta la ricetta. Per una ricetta da prenotare si fa solo il passo
+        "Ricerca" della prenotazione nuova: non apre gli appuntamenti, non blocca date."""
+        try:
+            return self.portale(cup_http.cerca, cf, nre), None
+        except cup_http.NonAttiva as e:
+            if not e.solo_disdette():
+                raise  # erogata o in un altro stato: non e' una ricetta da prenotare
+            nessuna = e
+        except cup_http.NonTrovata as e:
+            nessuna = e
+        try:
+            return None, self.portale(cup_http.nuova, cf, nre)
+        except cup_http.GiaPrenotata:
+            # il portale la considera gia' prenotata ma non c'e' una prenotazione attiva da spostare
+            raise cup_http.NonTrovata(f"la ricetta risulta gia' usata, ma senza una prenotazione attiva: {nessuna}")
 
     def ricevi_nome(self, p, testo):
         nome = " ".join(testo.split())[:20]
@@ -653,6 +768,13 @@ class Bot:
 
     def chiedi_sede(self, p, att):
         pv = f"{p['id']}:{versione(p)}"
+        if da_prenotare(p):  # nessuna sede di riferimento: un comune scelto o dove propone il CUP
+            self.dire(p, "Dove cerco il primo appuntamento?\n(Con un comune allargo la ricerca con \"Estendi area\" "
+                         "del portale: il controllo e' piu' lento ma vede anche le altre aziende sanitarie. \"Dove "
+                         "propone il CUP\" guarda le sedi che il portale propone per questa ricetta.)",
+                      [[{"text": "Un comune…", "callback_data": f"sede:{pv}:altro"}],
+                       [{"text": "Dove propone il CUP", "callback_data": f"sede:{pv}:tutte"}]])
+            return
         righe = [[{"text": f"Solo {att.luogo.sede}", "callback_data": f"sede:{pv}:sede"}]]
         if cup_http.comune(att.luogo):
             righe.append([{"text": f"Solo il comune di {cup_http.comune(att.luogo).title()}", "callback_data": f"sede:{pv}:comune"}])
@@ -680,9 +802,10 @@ class Bot:
         if nuova:
             p.update(stato="attivo", prossimo=time.time() + 60)
         self.salva(p, "zona", "stessa_sede", "attende_comune", "stato", "prossimo")
+        quale = "data libera" if da_prenotare(p) else f"data prima del {fmt(att.quando)}"
         self.dire(p, f"Ok: cerco {descr_zona(zona, att)}." +
                   (f"\n\nFatto! Controllo ogni {self.intervallo_di(p['chat_id'])} minuti e ti scrivo appena esce una "
-                   f"data prima del {fmt(att.quando)}.\n\n{AIUTO}" if nuova else ""))
+                   f"{quale}.\n\n{AIUTO}" if nuova else ""))
         self.aggiorna_pannello(p["chat_id"], nuovo=nuova)
 
     def ricevi_comune(self, p, testo):
@@ -697,7 +820,7 @@ class Bot:
         righe = [[{"text": "Da domani" if g == 1 else f"Da tra {g} giorni", "callback_data": f"auto:{pv}:{g}"}
                   for g in ANTICIPI_AUTO]]
         righe.append([{"text": "Disattiva" if p.get("auto") else "Lascia disattivata", "callback_data": f"auto:{pv}:0"}])
-        self.dire(p, AUTO_TESTO + f"\n\nStato attuale: {auto_descr(p)}.", righe)
+        self.dire(p, (AUTO_TESTO_NUOVA if da_prenotare(p) else AUTO_TESTO) + f"\n\nStato attuale: {auto_descr(p)}.", righe)
 
     def privacy(self):
         return PRIVACY + (f"\n\nGestore del bot: {self.contatto}" if self.contatto else "")
@@ -769,7 +892,9 @@ class Bot:
         pezzi = [("1 data trovata" if r['viste'] == 1 else f"{r['viste']} date trovate") + (" in Piemonte" if r.get("estesa") else "")]
         if area_breve(zona, att):
             pezzi.append(f"{r['area']} {area_breve(zona, att)}")
-        if r["migliori"]:
+        if da_prenotare(p):
+            pezzi.append(f"✅ {r['migliori']} prenotabili dove cerchi" if r["migliori"] else "nessuna dove cerchi")
+        elif r["migliori"]:
             pezzi.append(f"✅ {r['migliori']} prima della tua")
         elif r.get("prima_area") and area_breve(zona, att):
             pezzi.append(f"la prima {area_breve(zona, att)} e' {r['prima_area']}, dopo la tua")
@@ -781,10 +906,15 @@ class Bot:
         if p["stato"] in REGISTRAZIONE or not p.get("attuale"):
             return f"👤 {self.nome(p)}\n📝 Registrazione in corso"
         att = attuale_di(p)
-        righe = [f"👤 {self.nome(p)} — {prestazione(att.cosa)}",
-                 f"📅 {fmt(att.quando)}",
-                 f"📍 {titolo(att.luogo.sede)}, {indirizzo(att.luogo)}",
-                 f"🔎 Cerco: {descr_zona(zona_di(p), att)}"]
+        if da_prenotare(p):
+            righe = [f"👤 {self.nome(p)} — {prestazione(att.cosa) or 'ricetta'}",
+                     "📅 da prenotare: cerco il primo appuntamento libero",
+                     f"🔎 Cerco: {descr_zona(zona_di(p), att)}"]
+        else:
+            righe = [f"👤 {self.nome(p)} — {prestazione(att.cosa)}",
+                     f"📅 {fmt(att.quando)}",
+                     f"📍 {titolo(att.luogo.sede)}, {indirizzo(att.luogo)}",
+                     f"🔎 Cerco: {descr_zona(zona_di(p), att)}"]
         if cup_http.estensioni(zona_di(p)):
             righe.append("     (allargo la ricerca a tutto il Piemonte, poi filtro)")
         righe.append(f"⚡ Prenoto da solo: {auto_descr(p)}")
@@ -1038,7 +1168,9 @@ class Bot:
             p["auto"] = {"giorni": giorni} if giorni else None
             self.salva(p, "auto")
             if giorni:
-                self.dire(p, "⚡ Conferma automatica attiva: prenoto da solo la prima data prima di quella attuale.\n"
+                self.dire(p, ("⚡ Conferma automatica attiva: prenoto da solo la prima data libera dove cerchi.\n"
+                              if da_prenotare(p) else
+                              "⚡ Conferma automatica attiva: prenoto da solo la prima data prima di quella attuale.\n")
                              + self.regola(p))
             else:
                 self.dire(p, "Conferma automatica disattivata: ti mando il pulsante e decidi tu.")
@@ -1103,17 +1235,18 @@ class Bot:
         if len(recenti) >= MAX_RICERCHE_FALLITE:
             return esito(errore="Troppe ricerche non riuscite oggi. Riprova domani.")
         try:
-            att = self.portale(cup_http.cerca, cf, nre)
-        except cup_http.NonTrovata:
-            recenti.append(ora)
-            return esito(errore="Il portale non trova prenotazioni con questo codice fiscale e questa ricetta. "
-                                "Il bot segue solo appuntamenti già prenotati sul CUP Piemonte.")
+            att, cosa = self.cerca_ricetta(cf, nre)
         except cup_http.NonAttiva as e:
             recenti.append(ora)
             return esito(errore=f"La prenotazione di questa ricetta non è attiva ({e}).")
+        except cup_http.NonTrovata as e:
+            recenti.append(ora)
+            return esito(errore=f"{e}." if isinstance(e, cup_http.PiuPrestazioni) else
+                         f"Il portale non accetta questa ricetta con questo codice fiscale ({e}).")
         except (cup_http.CupError, requests.RequestException):
             return esito(errore="Il portale CUP non risponde: riprova tra qualche minuto.")
-        nuovi = {"cf": cf, "nre": nre, "attuale": pren_to_dict(att), "auto": None, "notificati": {}, "ignorati": [],
+        nuovi = {"cf": cf, "nre": nre, "attuale": pren_to_dict(att) if att else senza_prenotazione(cosa),
+                 "da_prenotare": not att, "auto": None, "notificati": {}, "ignorati": [],
                  "tentati_auto": [], "creato": time.time(), "errori": 0}
         try:
             if modo == "nuova":
@@ -1123,8 +1256,15 @@ class Bot:
                 self.store.save(p)  # "sede": l'app chiede subito dove cercare, poi diventa attiva
             else:
                 def cambia(f):
-                    f.update(nuovi)
-                    for k in ("libera", "viste", "storico", "riassunto", "ultimo"):
+                    z, vecchia = zona_di(f), attuale_di(f)
+                    if z["tipo"] in ("sede", "comune", "provincia") and not z["valore"] and vecchia:
+                        # la zona era "quella della prenotazione": con la ricetta nuova vale quella di prima
+                        z["valore"] = {"sede": vecchia.luogo.sede, "comune": cup_http.comune(vecchia.luogo),
+                                       "provincia": cup_http.provincia(vecchia.luogo)}[z["tipo"]]
+                    if not att and z["tipo"] != "tutte" and not z["valore"]:
+                        z = {"tipo": "tutte", "valore": ""}  # senza prenotazione non c'e' una sede da cui ricavarla
+                    f.update(nuovi, zona=z)
+                    for k in ("libera", "viste", "storico", "riassunto", "ultimo", "luoghi"):
                         f.pop(k, None)
                 p = self.store.modifica(pid, cambia)
                 self.scarta(pid)

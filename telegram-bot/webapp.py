@@ -34,6 +34,12 @@ STATIC = Path(__file__).resolve().parent / "web" / "static"
 FILE_STATICI = {"htmx.min.js": "text/javascript; charset=utf-8", "app.js": "text/javascript; charset=utf-8",
                 "app.css": "text/css; charset=utf-8"}
 MAX_ETA_INITDATA = 24 * 3600  # secondi: oltre, Telegram deve rifirmare (basta riaprire l'app)
+AUTO_SPOSTA = ("Quando trovo una data prima della prenotazione la prenoto subito, senza aspettare il tuo tocco: "
+               "le date buone spariscono in pochi minuti. La data vecchia si perde; se poi non si può andare bisogna "
+               "disdire almeno 2 giorni lavorativi prima, altrimenti si paga la prestazione.")
+AUTO_NUOVA = ("La ricetta non è ancora prenotata: la prima data libera dove cerchi la prenoto subito, senza aspettare "
+              "il tuo tocco, poi continuo a cercare date prima. Se poi non si può andare bisogna disdire almeno 2 "
+              "giorni lavorativi prima, altrimenti si paga la prestazione.")
 MAX_ETA_PRENOTA = 2 * 3600  # per spostare o cancellare dati la firma dev'essere recente
 MAX_CORPO = 4096
 PAUSA_AZIONI = 1.5  # secondi minimi tra due azioni della stessa chat
@@ -213,8 +219,16 @@ class App:
     def azione_dove(self, chat, p, dati):
         att = botmod.attuale_di(p)
         tipo = dati.get("tipo", "")
-        luoghi = {l["sede"] for l in p.get("luoghi", [])} | {att.luogo.sede}
-        if tipo == "sede":
+        luoghi = {l["sede"] for l in p.get("luoghi", [])} | ({att.luogo.sede} - {""})
+        province = {l["prov"] for l in p.get("luoghi", []) if l.get("prov")}
+        if tipo in ("sede", "comune", "provincia") and not att.luogo.sede:
+            raise Richiesta(400, "Questa ricetta non è ancora prenotata: scegli un comune, una sede trovata o ovunque.")
+        if tipo == "provincia_vista":
+            prov = dati.get("prov", "").upper()
+            if prov not in province:  # solo province che il portale ha davvero mostrato per questa ricetta
+                raise Richiesta(400, "Scegli una provincia dall'elenco.")
+            zona = {"tipo": "provincia", "valore": prov}
+        elif tipo == "sede":
             zona = {"tipo": "sede", "valore": att.luogo.sede}
         elif tipo == "sede_vista":
             sede = dati.get("sede", "")
@@ -294,7 +308,8 @@ class App:
             raise Richiesta(400, "Richiesta non valida.")
         # con la chiave il bot prenota solo se la data e' ancora quella che l'utente ha confermato
         self._in_coda("offerta", chat, p["id"], tipo, token, indice, chiave if tipo == "p" else None)
-        return (f"{self.bot.nome(p)}: sto spostando la prenotazione, ti scrivo nel bot l'esito." if tipo == "p"
+        return (f"{self.bot.nome(p)}: {'sto prenotando' if botmod.da_prenotare(p) else 'sto spostando la prenotazione'}"
+                ", ti scrivo nel bot l'esito." if tipo == "p"
                 else f"{self.bot.nome(p)}: ok, non ti ripropongo queste date.")
 
     def azione_vista(self, chat, p, dati):
@@ -307,7 +322,8 @@ class App:
             raise Richiesta(400, "Richiesta non valida.")
         # la prenotazione mostrata all'utente viaggia con la richiesta: se nel frattempo e' cambiata, niente
         self._in_coda("vista", chat, p["id"], chiave, attuale_vista)
-        return f"{self.bot.nome(p)}: sto spostando la prenotazione, ti scrivo nel bot l'esito."
+        return (f"{self.bot.nome(p)}: {'sto prenotando' if botmod.da_prenotare(p) else 'sto spostando la prenotazione'}"
+                ", ti scrivo nel bot l'esito.")
 
     def azione_nome(self, chat, p, dati):
         nome = nome_valido(dati.get("nome", ""))
@@ -385,6 +401,11 @@ class App:
         if not p or p["chat_id"] != chat:
             raise Richiesta(404, "Ricetta non trovata.")
         att = botmod.attuale_di(p)
+        if botmod.da_prenotare(p):
+            return (f'<p class="avviso" role="status">Ho trovato la ricetta di {e(self.bot.nome(p))}: non è ancora '
+                    f'prenotata.</p><div class="trovata"><strong>{e(botmod.prestazione(att.cosa, 80) or "Prestazione della ricetta")}'
+                    f'</strong><small>Cerco il primo appuntamento libero e ti avviso con il pulsante Prenota. Dopo la '
+                    f'prenotazione continuo a cercare date ancora prima.</small></div>' + self.foglio_dove(p))
         return (f'<p class="avviso" role="status">Ho trovato la prenotazione di {e(self.bot.nome(p))}.</p>'
                 f'<div class="trovata"><strong>{e(botmod.fmt(att.quando))}</strong><br>{e(botmod.titolo(att.luogo.sede))}'
                 f'<small>{e(botmod.prestazione(att.cosa, 80))}</small></div>' + self.foglio_dove(p))
@@ -441,13 +462,23 @@ class App:
 <article class="scheda in-attesa" id="r-{p['id']}">
   <header><h2>{e(self.bot.nome(p))}</h2><span class="stato">Da completare</span></header>
   <p class="cosa">{e(botmod.prestazione(att.cosa, 80))}</p>
-  <div class="quando"><strong>{e(botmod.fmt(att.quando))}</strong></div>
-  <div class="dove">{e(botmod.titolo(att.luogo.sede))}</div>
+  {self.quando_dove(p, att)}
   <nav class="azioni secondarie">
     <button type="button" class="primario" hx-get="/ui/r/{p['id']}/dove" hx-target="#foglio">🔎 Scegli dove cercare</button>
     <form action="/ui/r/{p['id']}/cancella" method="post" data-conferma="{e(conferma)}"><button class="pericolo">Cancella</button></form>
   </nav>
 </article>"""
+
+    def quando_dove(self, p, att):
+        """Data e luogo della prenotazione; per una ricetta mai prenotata, che non lo e' ancora."""
+        if botmod.da_prenotare(p):
+            return ('<div class="quando da-prenotare"><strong>Non ancora prenotata</strong></div>'
+                    '<div class="dove"><small>Cerco il primo appuntamento libero dove scegli tu.</small></div>')
+        giorno, data, ora = botmod.GIORNI[att.quando.weekday()], f"{att.quando:%d/%m/%Y}", f"{att.quando:%H:%M}"
+        return (f'<div class="quando"><span class="unito"><span class="giorno">{e(giorno)}</span> <strong>{e(data)}</strong>'
+                f'</span> <span class="unito">· ore <strong>{e(ora)}</strong></span></div>'
+                f'<div class="dove">{e(botmod.titolo(att.luogo.sede))}<small>{e(att.luogo.ambulatorio)}<br>'
+                f'{e(botmod.indirizzo(att.luogo))}</small></div>')
 
     def prossimo(self, p):
         if p["stato"] == "pausa":
@@ -460,7 +491,6 @@ class App:
         pid, nome = p["id"], self.bot.nome(p)
         zona = botmod.zona_di(p)
         pausa = p["stato"] == "pausa"
-        giorno, data, ora = botmod.GIORNI[att.quando.weekday()], f"{att.quando:%d/%m/%Y}", f"{att.quando:%H:%M}"
         estesa = ('<small>Allargo la ricerca a tutto il Piemonte, poi filtro.</small>'
                   if cup_http.estensioni(zona) else "")
         riassunto = self.bot.riassunto(p)
@@ -468,11 +498,10 @@ class App:
 <article class="scheda{' in-pausa' if pausa else ''}" id="r-{pid}">
   <header>
     <h2>{e(nome)}</h2>
-    <span class="stato">{'In pausa' if pausa else 'Attiva'}</span>
+    <span class="stato">{'In pausa' if pausa else 'Da prenotare' if botmod.da_prenotare(p) else 'Attiva'}</span>
   </header>
-  <p class="cosa">{e(botmod.prestazione(att.cosa, 80))}</p>
-  <div class="quando"><span class="unito"><span class="giorno">{e(giorno)}</span> <strong>{e(data)}</strong></span> <span class="unito">· ore <strong>{e(ora)}</strong></span></div>
-  <div class="dove">{e(botmod.titolo(att.luogo.sede))}<small>{e(att.luogo.ambulatorio)}<br>{e(botmod.indirizzo(att.luogo))}</small></div>
+  <p class="cosa">{e(botmod.prestazione(att.cosa, 80) or "Prestazione della ricetta")}</p>
+  {self.quando_dove(p, att)}
   {self.offerta(p)}
   {self.riga_date(p)}
   <div class="regole">
@@ -514,9 +543,11 @@ class App:
         if not o or time.time() - o["ts"] > botmod.TTL_OFFERTA:
             return ""
         scade = botmod.orario(o["ts"] + botmod.TTL_OFFERTA)
-        voci = []
+        voci, nuova = [], botmod.da_prenotare(p)
         for i, x in enumerate(o["slots"]):
-            conferma = (f"Sposto la prenotazione di {self.bot.nome(p)} a {botmod.fmt(x.quando)}, "
+            conferma = (f"Prenoto {self.bot.nome(p)} il {botmod.fmt(x.quando)}, {botmod.titolo(x.luogo.sede)}? "
+                        "Se poi non si può andare, va disdetta almeno 2 giorni lavorativi prima." if nuova else
+                        f"Sposto la prenotazione di {self.bot.nome(p)} a {botmod.fmt(x.quando)}, "
                         f"{botmod.titolo(x.luogo.sede)}? La data attuale si perde.")
             voci.append(f"""
     <li><span class="quando">{e(botmod.fmt(x.quando))}</span><small>{e(botmod.titolo(x.luogo.sede))} · {e(botmod.indirizzo(x.luogo))}</small>
@@ -526,7 +557,7 @@ class App:
         <button class="primario">Prenota</button></form></li>""")
         return f"""
   <section class="offerta">
-    <h3>🎉 C’è una data prima</h3>
+    <h3>{'🎉 C’è una data libera' if nuova else '🎉 C’è una data prima'}</h3>
     <ul>{''.join(voci)}</ul>
     <form hx-post="/ui/r/{p['id']}/offerta" hx-target="#ricette" hx-swap="innerMorph">
       <input type="hidden" name="tipo" value="x"><input type="hidden" name="token" value="{e(o['token'])}">
@@ -538,6 +569,8 @@ class App:
     def foglio_dove(self, p):
         att = botmod.attuale_di(p)
         z = botmod.zona_di(p) if p["stato"] != "sede" else {"tipo": "", "valore": ""}
+        if botmod.da_prenotare(p):
+            return self.foglio_dove_nuova(p, z)
         comune, prov = cup_http.comune(att.luogo), cup_http.provincia(att.luogo)
         luoghi = [l for l in p.get("luoghi", []) if l["sede"] != att.luogo.sede]
         scelte = [("sede", f"Solo in questa sede ({botmod.titolo(att.luogo.sede)})")]
@@ -580,6 +613,44 @@ class App:
   <button class="primario">Salva</button>
 </form>"""
 
+    def foglio_dove_nuova(self, p, z):
+        """Ricetta mai prenotata: nessuna sede di riferimento. Un comune, una provincia o una sede tra quelle
+        trovate nei controlli, oppure dove propone il CUP."""
+        luoghi = p.get("luoghi", [])
+        province = sorted({l["prov"] for l in luoghi if l.get("prov")})
+        comuni = sorted({l["comune"] for l in luoghi if l.get("comune")})
+        scelto = {"comune": "altro", "sede": "sede_vista", "provincia": "provincia_vista"}.get(z["tipo"], z["tipo"])
+
+        def voce(tipo, testo, extra=""):
+            return (f'<label class="scelta"><input type="radio" name="tipo" value="{tipo}"'
+                    f'{" checked" if tipo == scelto else ""}><span>{testo}{extra}</span></label>')
+        parti = [voce("tutte", "Dove propone il CUP")]
+        parti.append(voce("altro", "In un comune", f'<input type="text" name="comune" value="'
+                          f'{e(botmod.titolo(z["valore"]) if scelto == "altro" else "")}" placeholder="es. Torino" '
+                          f'list="comuni-{p["id"]}" autocomplete="off" maxlength="40">'))
+        if province:
+            opzioni = "".join(f'<option value="{e(v)}"{" selected" if scelto == "provincia_vista" and v == z["valore"] else ""}>'
+                              f'{e(v)}</option>' for v in province)
+            parti.append(voce("provincia_vista", "In una provincia trovata nei controlli", f'<select name="prov">{opzioni}</select>'))
+        if luoghi:
+            opzioni = "".join(
+                f'<option value="{e(l["sede"])}"{" selected" if scelto == "sede_vista" and l["sede"] == z["valore"] else ""}>'
+                f'{e(botmod.titolo(l["sede"]))}{" · " + e(botmod.titolo(l["comune"])) if l.get("comune") else ""}</option>'
+                for l in sorted(luoghi, key=lambda l: (l.get("comune", ""), l["sede"])))
+            parti.append(voce("sede_vista", "Una sede trovata nei controlli", f'<select name="sede">{opzioni}</select>'))
+        lista = "".join(f'<option value="{e(botmod.titolo(c))}">' for c in comuni)
+        return f"""
+<h2>🔎 Dove cercare · {e(self.bot.nome(p))}</h2>
+<p class="nota">Ricetta non ancora prenotata: scegli dove cercare il primo appuntamento.{"" if luoghi else
+  " Dopo il primo controllo qui compaiono anche le sedi e le province trovate."}</p>
+<form hx-post="/ui/r/{p['id']}/dove" hx-target="#ricette" hx-swap="innerMorph" class="scelte">
+  {"".join(parti)}
+  <datalist id="comuni-{p['id']}">{lista}</datalist>
+  <p class="nota">Comune e provincia allargano la ricerca a tutto il Piemonte: il controllo è più lento
+    ma vede anche le altre aziende sanitarie.</p>
+  <button class="primario">Salva</button>
+</form>"""
+
     def foglio_auto(self, p):
         attivo = (p.get("auto") or {}).get("giorni", 0)
         oggi = botmod.adesso().date()
@@ -591,9 +662,7 @@ class App:
             f'<span>{e(t)}</span></label>' for v, t in voci)
         return f"""
 <h2>⚡ Prenoto da solo · {e(self.bot.nome(p))}</h2>
-<p class="nota">Quando trovo una data prima della prenotazione la prenoto subito, senza aspettare il tuo tocco:
-  le date buone spariscono in pochi minuti. La data vecchia si perde; se poi non si può andare bisogna
-  disdire almeno 2 giorni lavorativi prima, altrimenti si paga la prestazione.</p>
+<p class="nota">{e(AUTO_NUOVA if botmod.da_prenotare(p) else AUTO_SPOSTA)}</p>
 <form hx-post="/ui/r/{p['id']}/auto" hx-target="#ricette" hx-swap="innerMorph" class="scelte">
   {scelte}
   <button class="primario">Salva</button>
@@ -606,7 +675,8 @@ class App:
         if not viste:
             return titolo + '<p class="nota">Nessuna data ancora: arrivano con il prossimo controllo.</p>'
         quando = botmod.orario(r["ts"]).strftime("%H:%M") if r.get("ts") else ""
-        gruppi = [("✅ Prima della tua prenotazione, dove cerchi", [v for v in viste if v["ok"]]),
+        gruppi = [("✅ Dove cerchi" if botmod.da_prenotare(p) else "✅ Prima della tua prenotazione, dove cerchi",
+                   [v for v in viste if v["ok"]]),
                   ("Dove cerchi, ma dopo la tua prenotazione", [v for v in viste if v["area"] and not v["ok"]]),
                   ("In altre zone", [v for v in viste if not v["area"]])]
         s = self.bot.sessioni.get(p["id"])
@@ -648,9 +718,14 @@ class App:
             return f'<li>{testo}<small>Alla stessa ora della prenotazione attuale.</small></li>'
         rispetto = "PRIMA" if quando < att.quando else "DOPO"
         fuori = "" if v["area"] else ", fuori dalla zona in cui cerchi"
-        conferma = (f"Sposto la prenotazione di {self.bot.nome(p)} a {botmod.fmt(quando)}, "
-                    f"{botmod.titolo(v['sede'])} ({botmod.indirizzo(luogo)})? È {rispetto} della data attuale "
-                    f"({botmod.fmt(att.quando)}){fuori}. La data attuale si perde.")
+        if botmod.da_prenotare(p):
+            conferma = (f"Prenoto {self.bot.nome(p)} il {botmod.fmt(quando)}, {botmod.titolo(v['sede'])} "
+                        f"({botmod.indirizzo(luogo)}){' (fuori dalla zona in cui cerchi)' if fuori else ''}? "
+                        "Se poi non si può andare, va disdetta almeno 2 giorni lavorativi prima.")
+        else:
+            conferma = (f"Sposto la prenotazione di {self.bot.nome(p)} a {botmod.fmt(quando)}, "
+                        f"{botmod.titolo(v['sede'])} ({botmod.indirizzo(luogo)})? È {rispetto} della data attuale "
+                        f"({botmod.fmt(att.quando)}){fuori}. La data attuale si perde.")
         return (f'<li class="prenotabile">{testo}<form action="/ui/r/{p["id"]}/vista" method="post" '
                 f'data-conferma="{e(conferma)}"><input type="hidden" name="slot" value="{e(v["k"])}">'
                 f'<input type="hidden" name="att" value="{e(att.quando.isoformat())}">'
@@ -667,10 +742,12 @@ class App:
                              "Lo storico si riempie a ogni controllo.</p>")
         ultimo = con_data[-1][1]
         migliore = min(a for _, a in con_data)
+        nuova = botmod.da_prenotare(p)
+        tua = "Non ancora prenotata" if nuova else f"La tua prenotazione: {botmod.fmt(att.quando)}"
         testa = (f'<div class="numero"><span>Prima data dove cerchi, ora</span><strong>{e(botmod.fmt(ultimo))}</strong>'
-                 f'<small>La tua prenotazione: {e(botmod.fmt(att.quando))}. La migliore vista negli ultimi '
+                 f'<small>{e(tua)}. La migliore vista negli ultimi '
                  f'{botmod.STORICO_GIORNI} giorni: {e(botmod.fmt(migliore))}.</small></div>')
-        grafico = self.grafico_storico(punti, att.quando) if len(con_data) >= 2 else \
+        grafico = self.grafico_storico(punti, None if nuova else att.quando) if len(con_data) >= 2 else \
             '<p class="nota">Il grafico compare dal secondo controllo.</p>'
         cambi, prec = [], "x"
         for t, a in punti:
@@ -689,7 +766,7 @@ class App:
         scritto in grande sopra il grafico: qui il punto dell'ultimo controllo e' solo evidenziato."""
         L, H, ml, mr, mt, mb, pad = 340, 200, 60, 10, 16, 30, 8
         t0, t1 = punti[0][0], max(punti[-1][0], punti[0][0] + 1)
-        date = [a for _, a in punti if a] + [riferimento]
+        date = [a for _, a in punti if a] + ([riferimento] if riferimento else [])
         d0, d1 = min(date), max(date)
         margine = max((d1 - d0) * 0.1, botmod.timedelta(days=1))
         d0, d1 = d0 - margine, d1 + margine
@@ -718,7 +795,7 @@ class App:
                          for i, (cx, cy, testo) in enumerate(marcatori) if i >= len(marcatori) - 60)
         legenda_punto = ('· <span class="pallino" aria-hidden="true"></span>ultimo controllo' if evidenza >= 0
                          else "· l'ultimo controllo non ha trovato date")
-        yr = y(riferimento)
+        yr = y(riferimento) if riferimento else None
 
         # asse delle date: giorni "tondi" (settimane, 1 e 15 del mese, inizio mese) invece di date qualsiasi
         def tacche(passo):
@@ -738,7 +815,7 @@ class App:
         # la data della prenotazione sta sull'asse, in evidenza, accanto al suo tratteggio; le altre date
         # non le si avvicinano (ne' tra loro) per meno di 16 px
         def asse(passo):
-            righe, occupate = [], [yr]
+            righe, occupate = [], [yr] if yr is not None else []
             for d in tacche(passo):
                 yy = y(d)
                 if all(abs(yy - o) >= 16 for o in occupate):
@@ -755,7 +832,8 @@ class App:
             i -= 1
             righe = max(righe, asse(passi[i]), key=len)
         griglia = [f'<line class="griglia" x1="{ml}" x2="{L - mr}" y1="{yy:.1f}" y2="{yy:.1f}"/>' for yy, _ in righe]
-        etichette = [f'<text class="asse forte" x="{ml - 8}" y="{yr + 4:.1f}" text-anchor="end">{riferimento:%d/%m/%y}</text>']
+        etichette = [f'<text class="asse forte" x="{ml - 8}" y="{yr + 4:.1f}" text-anchor="end">{riferimento:%d/%m/%y}</text>'] \
+            if riferimento else []
         etichette += [f'<text class="asse" x="{ml - 8}" y="{yy + 4:.1f}" text-anchor="end">{d:%d/%m/%y}</text>' for yy, d in righe]
 
         # asse del tempo: primo e ultimo controllo, con l'ora se sono nello stesso giorno
@@ -766,11 +844,11 @@ class App:
         return f"""
 <figure class="grafico">
   <figcaption>Prima data dove cerchi, a ogni controllo (più in alto = prima).
-    <span class="legenda"><span class="tratto" aria-hidden="true"></span>la tua prenotazione
-    {legenda_punto}</span></figcaption>
+    <span class="legenda">{'<span class="tratto" aria-hidden="true"></span>la tua prenotazione ' if riferimento else ''}
+    {legenda_punto if riferimento else legenda_punto.lstrip("· ")}</span></figcaption>
   <svg viewBox="0 0 {L} {H}" role="img" aria-label="Andamento della prima data utile rispetto alla prenotazione attuale">
     {"".join(griglia)}
-    <line class="riferimento" x1="{ml}" x2="{L - mr}" y1="{yr:.1f}" y2="{yr:.1f}"/>
+    {f'<line class="riferimento" x1="{ml}" x2="{L - mr}" y1="{yr:.1f}" y2="{yr:.1f}"/>' if riferimento else ''}
     {linee}{cerchi}
     {"".join(etichette)}
   </svg>
