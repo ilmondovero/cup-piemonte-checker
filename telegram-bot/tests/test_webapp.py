@@ -339,9 +339,9 @@ def test_scheda_con_prossimo_controllo_e_barra(app):
     _, _, corpo = get(app, "/ui/ricette")
     t = corpo.decode()
     assert "⏭ Prossimo" in t and "📅 Date viste" in t and "📈 Storico" in t and "🔒" in t
-    assert "＋ Aggiungi" in t  # 2 ricette su 3: si puo' aggiungere
+    assert "Aggiungi una ricetta" in t  # 2 ricette su 3: si puo' aggiungere
     app.bot.max_pratiche = 2
-    assert "＋ Aggiungi" not in get(app, "/ui/ricette")[2].decode()
+    assert "Aggiungi una ricetta" not in get(app, "/ui/ricette")[2].decode()
 
 
 def test_date_viste_prenotabili_anche_fuori_area(app):
@@ -474,3 +474,49 @@ def test_file_statici_con_versione(app):
     assert f"/static/app.css?v={v}" in t and "/static/app.js?v=" in t and "/static/htmx.min.js?v=" in t
     stato, h, _ = app.gestisci("GET", "/static/app.css", {})  # il gestore toglie ?v= prima di arrivare qui
     assert stato == 200 and "immutable" in h["Cache-Control"]
+
+
+def test_grafico_senza_scritte_nell_area_dei_dati(app):
+    """Le scritte del grafico stanno solo sugli assi: linea e punti non possono coprirle."""
+    b = app.bot
+    p = pratica(b, 1, 0)
+    rif = botmod.attuale_di(p).quando
+    ora = time.time()
+    for giorni in ((-400, 30), (-3, 5), (0, 0)):  # anni diversi, pochi giorni, sempre uguale alla prenotazione
+        p["storico"] = [{"t": ora - 3600 * (5 - i), "a": (rif + botmod.timedelta(days=g)).isoformat(), "r": rif.isoformat()}
+                        for i, g in enumerate(giorni * 3)]
+        b.store.save(p)
+        t = get(app, f"/ui/r/{p['id']}/storico")[2].decode()
+        svg = t[t.index("<svg"):t.index("</svg>")]
+        assert 'class="etichetta' not in svg and f"{rif:%d/%m/%y}" in svg and 'class="punto ultimo"' in svg
+        assert "la tua prenotazione" in t
+
+
+def test_controlla_ora_rifiutato_subito_se_troppo_presto_o_con_offerta(app):
+    """L'app non dice "controllo avviato" quando il bot lo rifiuterebbe: lo dice subito, con l'ora."""
+    b = app.bot
+    p = pratica(b, 1, 0)
+    p["ultimo"] = {"ts": time.time() - 60}
+    b.store.save(p)
+    stato, _, corpo = post(app, f"/ui/r/{p['id']}/controlla", {})
+    assert stato == 429 and "il prossimo è possibile dalle" in corpo.decode() and not b.coda.qsize()
+    b.controlla(b.store.get(p["id"]))  # apre un'offerta
+    p = b.store.get(p["id"])
+    p["ultimo"] = {"ts": 0}
+    b.store.save(p)
+    stato, _, corpo = post(app, f"/ui/r/{p['id']}/controlla", {})
+    assert stato == 409 and "offerta aperta" in corpo.decode() and not b.coda.qsize()
+
+
+def test_grafico_asse_mai_vuoto_e_legenda_onesta(app):
+    """Con pochi giorni di escursione l'asse ha comunque almeno due date oltre alla prenotazione; se l'ultimo
+    controllo non ha trovato date, nessun punto viene spacciato per "ultimo controllo"."""
+    from datetime import datetime
+    rif = datetime(2027, 1, 21, 13, 0)
+    ora = time.time()
+    punti = [(ora - 3600, datetime(2027, 1, 17, 9, 0)), (ora - 1800, datetime(2027, 1, 26, 9, 0)), (ora, None)]
+    svg = app.grafico_storico(punti, rif)
+    assert svg.count('class="asse"') >= 2 + 2  # 2 date del tempo + almeno 2 date sull'asse verticale
+    assert 'class="punto ultimo"' not in svg and "non ha trovato date" in svg
+    svg = app.grafico_storico(punti[:2], rif)
+    assert 'class="punto ultimo"' in svg and "ultimo controllo" in svg

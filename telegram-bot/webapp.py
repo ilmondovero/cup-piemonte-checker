@@ -274,6 +274,15 @@ class App:
         return f"{self.bot.nome(p)}: controlli riattivati."
 
     def azione_controlla(self, chat, p, dati):
+        # le stesse regole di Bot.controlla_ora, qui subito: l'app non deve dire "avviato" a un controllo
+        # che il bot poi rifiuta (il bot le riapplica comunque quando esegue la coda)
+        if self.bot.offerta_valida(p["id"]):
+            raise Richiesta(409, "C'è un'offerta aperta: prenotala o ignorala prima di un nuovo controllo.")
+        ultimo = (p.get("ultimo") or {}).get("ts", 0)
+        pausa = min(botmod.PAUSA_CONTROLLA, self.bot.intervallo_di(chat) * 60)
+        if time.time() - ultimo < pausa:
+            raise Richiesta(429, f"Ultimo controllo alle {botmod.orario(ultimo):%H:%M}: ogni controllo tiene "
+                                 f"bloccata una data, il prossimo è possibile dalle {botmod.orario(ultimo + pausa):%H:%M}.")
         self._in_coda("controlla", chat, p["id"])
         return f"{self.bot.nome(p)}: controllo avviato. L'esito arriva qui e nel bot fra poco."
 
@@ -405,7 +414,7 @@ class App:
     def barra(self, chat, pratiche):
         pulsanti = []
         if len(pratiche) < self.bot.max_pratiche:
-            pulsanti.append('<button type="button" hx-get="/ui/nuova" hx-target="#foglio">＋ Aggiungi</button>')
+            pulsanti.append('<button type="button" hx-get="/ui/nuova" hx-target="#foglio" aria-label="Aggiungi una ricetta">＋<span class="lungo"> Aggiungi</span></button>')
         pulsanti.append('<button type="button" hx-get="/ui/dati" hx-target="#foglio" aria-label="Dati e privacy">🔒</button>')
         if self.bot.admin and str(chat) == self.bot.admin:
             pulsanti.append('<button type="button" hx-get="/ui/admin" hx-target="#foglio" aria-label="Admin">⚙️</button>')
@@ -462,7 +471,7 @@ class App:
     <span class="stato">{'In pausa' if pausa else 'Attiva'}</span>
   </header>
   <p class="cosa">{e(botmod.prestazione(att.cosa, 80))}</p>
-  <div class="quando"><span class="giorno">{e(giorno)}</span> <strong>{e(data)}</strong> · ore <strong>{e(ora)}</strong></div>
+  <div class="quando"><span class="unito"><span class="giorno">{e(giorno)}</span> <strong>{e(data)}</strong></span> <span class="unito">· ore <strong>{e(ora)}</strong></span></div>
   <div class="dove">{e(botmod.titolo(att.luogo.sede))}<small>{e(att.luogo.ambulatorio)}<br>{e(botmod.indirizzo(att.luogo))}</small></div>
   {self.offerta(p)}
   {self.riga_date(p)}
@@ -669,24 +678,20 @@ class App:
 
     def grafico_storico(self, punti, riferimento):
         """Linea a gradini della prima data utile nel tempo, con la prenotazione attuale tratteggiata.
-        Una serie sola: niente legenda (il titolo la nomina); tooltip nativi sui punti; tabella sotto."""
-        L, H, ml, mr, mt, mb = 340, 190, 58, 12, 14, 26
+        Tooltip nativi sui punti, tabella sotto. Scritte solo sugli assi e legenda nella didascalia: dentro
+        l'area dei dati non c'e' testo, cosi' linea e punti non lo coprono mai. Il valore attuale e' gia'
+        scritto in grande sopra il grafico: qui il punto dell'ultimo controllo e' solo evidenziato."""
+        L, H, ml, mr, mt, mb, pad = 340, 200, 60, 10, 16, 30, 8
         t0, t1 = punti[0][0], max(punti[-1][0], punti[0][0] + 1)
         date = [a for _, a in punti if a] + [riferimento]
         d0, d1 = min(date), max(date)
-        margine = max((d1 - d0) * 0.08, botmod.timedelta(days=1))
+        margine = max((d1 - d0) * 0.1, botmod.timedelta(days=1))
         d0, d1 = d0 - margine, d1 + margine
-        x = lambda t: ml + (t - t0) / (t1 - t0) * (L - ml - mr)
+        x0, x1 = ml + pad, L - mr - pad  # i punti stanno dentro, staccati dalle date dell'asse
+        x = lambda t: x0 + (t - t0) / (t1 - t0) * (x1 - x0)
         # piu' in alto = prima (meglio): la linea tratteggiata della prenotazione fa da riferimento
         y = lambda d: mt + (d - d0).total_seconds() / (d1 - d0).total_seconds() * (H - mt - mb)
-        griglia, etichette = [], []
-        for i in range(3):  # tre date sull'asse, dalla piu' vicina alla piu' lontana
-            d = d0 + (d1 - d0) * (i + 0.5) / 3
-            yy = y(d)
-            griglia.append(f'<line class="griglia" x1="{ml}" x2="{L - mr}" y1="{yy:.1f}" y2="{yy:.1f}"/>')
-            etichette.append(f'<text class="asse" x="{ml - 6}" y="{yy + 4:.1f}" text-anchor="end">{d:%d/%m/%y}</text>')
-        etichette.append(f'<text class="asse" x="{ml}" y="{H - 6}">{botmod.orario(t0):%d/%m}</text>')
-        etichette.append(f'<text class="asse" x="{L - mr}" y="{H - 6}" text-anchor="end">{botmod.orario(t1):%d/%m %H:%M}</text>')
+
         tratti, corrente, marcatori = [], [], []
         for (t, a), succ in zip(punti, punti[1:] + [(t1, None)]):
             if a is None:
@@ -695,23 +700,72 @@ class App:
                 corrente = []
                 continue
             corrente += [(x(t), y(a)), (x(succ[0]), y(a))]
-            marcatori.append(f'<circle class="punto" cx="{x(t):.1f}" cy="{y(a):.1f}" r="4">'
-                             f'<title>{e(botmod.orario(t).strftime("%d/%m %H:%M"))}: {e(botmod.fmt(a))}</title></circle>')
+            marcatori.append((x(t), y(a), f'{botmod.orario(t):%d/%m %H:%M}: {botmod.fmt(a)}'))
         if corrente:
             tratti.append(corrente)
         linee = "".join('<polyline class="serie" points="' + " ".join(f"{a:.1f},{b:.1f}" for a, b in tr) + '"/>'
                         for tr in tratti)
+        # in evidenza solo se l'ultimo controllo ha trovato una data: altrimenti il punto sarebbe di prima
+        evidenza = len(marcatori) - 1 if punti[-1][1] else -1
+        cerchi = "".join(f'<circle class="punto{" ultimo" if i == evidenza else ""}" cx="{cx:.1f}" '
+                         f'cy="{cy:.1f}" r="{6 if i == evidenza else 4}"><title>{e(testo)}</title></circle>'
+                         for i, (cx, cy, testo) in enumerate(marcatori) if i >= len(marcatori) - 60)
+        legenda_punto = ('· <span class="pallino" aria-hidden="true"></span>ultimo controllo' if evidenza >= 0
+                         else "· l'ultimo controllo non ha trovato date")
         yr = y(riferimento)
-        t_ultimo, ultimo = [(t, a) for t, a in punti if a][-1]
+
+        # asse delle date: giorni "tondi" (settimane, 1 e 15 del mese, inizio mese) invece di date qualsiasi
+        def tacche(passo):
+            fuori, d = [], datetime(d0.year, d0.month, 1)
+            while d <= d1:
+                if d >= d0:
+                    fuori.append(d)
+                if passo >= 31:
+                    mese = d.month - 1 + passo // 30
+                    d = datetime(d.year + mese // 12, mese % 12 + 1, 1)
+                elif passo == 14:
+                    d = d.replace(day=15) if d.day == 1 else datetime(d.year + d.month // 12, d.month % 12 + 1, 1)
+                else:
+                    d += botmod.timedelta(days=passo)
+            return fuori
+
+        # la data della prenotazione sta sull'asse, in evidenza, accanto al suo tratteggio; le altre date
+        # non le si avvicinano (ne' tra loro) per meno di 16 px
+        def asse(passo):
+            righe, occupate = [], [yr]
+            for d in tacche(passo):
+                yy = y(d)
+                if all(abs(yy - o) >= 16 for o in occupate):
+                    occupate.append(yy)
+                    righe.append((yy, d))
+            return righe
+
+        # passo piu' largo con al massimo 4 date; se ne sopravvivono meno di 2, uno piu' fitto
+        span = (d1 - d0).days
+        passi = [1, 2, 7, 14, 31, 61, 92, 183, 366]
+        i = next((k for k, g in enumerate(passi) if span / g <= 4), len(passi) - 1)
+        righe = asse(passi[i])
+        while len(righe) < 2 and i > 0:
+            i -= 1
+            righe = max(righe, asse(passi[i]), key=len)
+        griglia = [f'<line class="griglia" x1="{ml}" x2="{L - mr}" y1="{yy:.1f}" y2="{yy:.1f}"/>' for yy, _ in righe]
+        etichette = [f'<text class="asse forte" x="{ml - 8}" y="{yr + 4:.1f}" text-anchor="end">{riferimento:%d/%m/%y}</text>']
+        etichette += [f'<text class="asse" x="{ml - 8}" y="{yy + 4:.1f}" text-anchor="end">{d:%d/%m/%y}</text>' for yy, d in righe]
+
+        # asse del tempo: primo e ultimo controllo, con l'ora se sono nello stesso giorno
+        inizio, fine = botmod.orario(t0), botmod.orario(t1)
+        fmt_t = "%d/%m %H:%M" if inizio.date() == fine.date() or t1 - t0 < 2 * 86400 else "%d/%m"
+        etichette.append(f'<text class="asse" x="{x0}" y="{H - 8}">{inizio:{fmt_t}}</text>')
+        etichette.append(f'<text class="asse" x="{x1}" y="{H - 8}" text-anchor="end">{fine:{fmt_t}}</text>')
         return f"""
 <figure class="grafico">
-  <figcaption>Prima data dove cerchi, a ogni controllo (più in alto = prima)</figcaption>
+  <figcaption>Prima data dove cerchi, a ogni controllo (più in alto = prima).
+    <span class="legenda"><span class="tratto" aria-hidden="true"></span>la tua prenotazione
+    {legenda_punto}</span></figcaption>
   <svg viewBox="0 0 {L} {H}" role="img" aria-label="Andamento della prima data utile rispetto alla prenotazione attuale">
     {"".join(griglia)}
     <line class="riferimento" x1="{ml}" x2="{L - mr}" y1="{yr:.1f}" y2="{yr:.1f}"/>
-    <text class="etichetta" x="{L - mr}" y="{yr - 5:.1f}" text-anchor="end">tua prenotazione</text>
-    {linee}{"".join(marcatori[-60:])}
-    <text class="etichetta forte" x="{x(t_ultimo) - 8:.1f}" y="{y(ultimo) - 8:.1f}" text-anchor="end">{ultimo:%d/%m/%y}</text>
+    {linee}{cerchi}
     {"".join(etichette)}
   </svg>
 </figure>"""
