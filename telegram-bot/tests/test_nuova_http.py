@@ -1,6 +1,7 @@
 """Prenotazione nuova via HTTP: passi Ricerca e Prestazioni con pagine sintetiche (nessuna rete).
 Le pagine hanno la struttura di quelle registrate dal portale: form JSF con i campi ICEfaces, carrello
 "Prestazioni Selezionate", pagina Appuntamenti come quella di "Sposta"."""
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -518,3 +519,16 @@ def test_piu_prestazioni_una_data_non_proposta_non_si_seleziona(monkeypatch):
     with pytest.raises(c.CupError, match="solo la data proposta"):
         prenota_nuova(sessione)  # con la sessione del controllo: nessun'altra sessione aperta
     assert not selezionate and log["conferma"] == 0 and log["ricetta"] == 1
+
+
+def test_tempi_della_prenotazione_nel_diario(monkeypatch):
+    sessioni_finte(monkeypatch, [c.NonTrovata("Non esistono prenotazioni"), FATTA])
+    c.DIARIO.clear()
+    assert prenota_nuova() == "Prenotazione fatta."
+    [tempi] = [x for x in c.DIARIO if x.startswith("tempi: ")]
+    assert re.fullmatch(r"tempi: elenco [\d.]+s, riepilogo [\d.]+s, conferma [\d.]+s, fine [\d.]+s", tempi)
+    c.DIARIO.clear()
+    sessioni_finte(monkeypatch, [FATTA])
+    with pytest.raises(c.GiaPrenotata):
+        prenota_nuova()
+    assert c.DIARIO[-1].startswith("tempi: fine")  # anche quando si ferma prima

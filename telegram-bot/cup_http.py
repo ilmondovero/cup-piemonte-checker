@@ -680,6 +680,21 @@ def _verifica_riepilogo(testo, data_riep, dopo_data, slot, cosa):
 
 
 def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=False, nuova=False):
+    """Come _prenota, e nel diario quanto e' durata ogni fase: per capire dove va il tempo di una prenotazione."""
+    tempi, inizio = [], [time.time()]
+
+    def tappa(nome):
+        ora = time.time()
+        tempi.append(f"{nome} {ora - inizio[0]:.1f}s")
+        inizio[0] = ora
+    try:
+        return _prenota(cf, nre, slot, sessione, zona, dry_run, libera, nuova, tappa)
+    finally:
+        tappa("fine")
+        DIARIO.append("tempi: " + ", ".join(tempi))
+
+
+def _prenota(cf, nre, slot, sessione, zona, dry_run, libera, nuova, tappa):
     """Sposta la prenotazione sullo slot. sessione: quella del controllo che ha trovato lo slot
     (lo tiene bloccato per noi); se manca o fallisce si riparte da una sessione nuova.
     Con dry_run si ferma al Riepilogo. Ritorna un messaggio; CupError se un controllo fallisce.
@@ -705,6 +720,7 @@ def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=Fals
             raise CupError("Elenco delle prenotazioni non leggibile del tutto: non sposto")
         # piu' prestazioni prenotate nello stesso appuntamento: si spostano insieme o niente
         insieme = [x.cosa for x in lista.prenotate if x.quando == att.quando]
+    tappa("elenco")
     if not dry_run and not libera and att and slot.quando >= att.quando:
         raise CupError(f"Lo slot {slot.quando:%d/%m/%Y %H:%M} non e' prima dell'appuntamento attuale "
                        f"({att.quando:%d/%m/%Y %H:%M})")
@@ -747,6 +763,7 @@ def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=Fals
             s, testo, data_riep, dopo, page = arriva_al_riepilogo(cup)
         except CupError as e2:
             raise CupError(f"{e2} (tentativo nella sessione originale: {primo_errore})")
+    tappa("riepilogo")
     # la prestazione del Riepilogo deve essere quella della prenotazione (o, per una nuova, quella
     # che il portale ha messo nel carrello): se non si legge, _verifica_riepilogo non conferma
     _verifica_riepilogo(testo, data_riep, dopo, s, att.cosa if att else (cup.nomi[:1] or [cup.cosa])[0])
@@ -787,6 +804,7 @@ def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=Fals
     nuova_att = None
     try:
         cup.conferma(page)
+        tappa("conferma")
         for _ in range(3):
             try:
                 verifica = CupSession(cf, nre)

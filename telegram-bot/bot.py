@@ -31,6 +31,7 @@ import secrets
 import sys
 import time
 import traceback
+import urllib.parse
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -422,9 +423,11 @@ class Bot:
                 self.pazienza[pid] = meno
 
     def portale(self, fn, *args, pid=None, paziente=False, **kwargs):
-        """Una sessione sul portale. paziente: per le prenotazioni, rare e preziose, tutta l'attesa possibile."""
+        """Una sessione sul portale. paziente: per le prenotazioni, rare e preziose, tutta l'attesa possibile.
+        Una prenotazione parte subito, senza la distanza dalla sessione precedente: la data trovata (spesso
+        dal controllo appena finito) va presa prima che la prenda qualcun altro."""
         attesa = self.distanza - (time.time() - self.ultimo_portale)
-        if attesa > 0:
+        if attesa > 0 and not paziente:
             time.sleep(attesa)
         # un solo thread parla col portale: l'attesa vale per questa sessione
         cup_http.LENTO = pazienza = ATTESA_MAX if paziente else self.attesa(pid)
@@ -665,6 +668,10 @@ class Bot:
         pid = p["id"]
         buttons = [[{"text": f"✅ Prenota {fmt(x.quando)}", "callback_data": f"p:{pid}:{token}:{i}"}]
                    for i, x in enumerate(slots)]
+        if self.webapp_url:  # l'app si apre gia' su questa ricetta, col pulsante Prenota di Telegram in basso
+            u = urllib.parse.urlsplit(self.webapp_url)
+            url = u._replace(query=f"{u.query}&r={pid}" if u.query else f"r={pid}").geturl()
+            buttons.append([{"text": "📱 Apri nell'app", "web_app": {"url": url}}])
         buttons.append([{"text": "Ignora", "callback_data": f"x:{pid}:{token}"}])
         prova = "\n(MODALITA' PROVA: il pulsante si ferma al riepilogo, non conferma)" if self.prova else ""
         nuova = da_prenotare(p)

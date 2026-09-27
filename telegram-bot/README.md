@@ -101,7 +101,12 @@ Con `WEBAPP_URL` impostato il bot serve anche una **Mini App Telegram**. Si apre
 accanto al campo di scrittura o dal pannello in chat. Ogni ricetta ha la sua scheda con prenotazione
 attuale, dove cerco, prenotazione automatica, ultimo e prossimo controllo, e quattro pulsanti:
 "🔄 Controlla ora", "⏸ Pausa", "📈 Andamento", "✏️ Modifica". Dall'app si può fare tutto quello che si
-fa in chat:
+fa in chat.
+
+Quando il bot trova una data, il messaggio ha anche "📱 Apri nell'app": l'app si apre già su quella
+ricetta, con il pulsante **Prenota** di Telegram in basso (la prima data offerta, con la conferma nativa).
+Tornando all'app da un'altra chat le schede si ricaricano subito, così non resta sullo schermo una data
+vecchia. Cosa si fa dall'app:
 
 - **Ricette.** Aggiungere una ricetta (codice fiscale, NRE, nome; per il primo utente anche il consenso
   all'informativa). Da "✏️ Modifica": rinominarla, sostituirla con un'altra ricetta, cancellarla. Da 🔒
@@ -300,7 +305,7 @@ database sta nel volume `cup-data`. Per aggiornare: `git pull && docker compose 
 | `MAX_PRATICHE` | 0 | Ricette seguite al massimo da una stessa chat (0 = nessun limite) |
 | `INTERVALLO_MIN` | 45 | Minuti tra due controlli dello stesso utente (minimo 30) |
 | `ADMIN_INTERVALLO_MIN` | come sopra | Intervallo solo per `ADMIN_CHAT_ID` (minimo 5) |
-| `DISTANZA_PORTALE_S` | 20 | Secondi minimi tra due sessioni sul portale, fra tutti gli utenti |
+| `DISTANZA_PORTALE_S` | 20 | Secondi minimi tra due sessioni sul portale, fra tutti gli utenti (una prenotazione parte subito) |
 | `MODALITA_PROVA` | 0 | 1 = i pulsanti si fermano al Riepilogo senza confermare |
 | `WEBAPP_URL` | — | Indirizzo HTTPS pubblico della Mini App; vuoto = Mini App spenta |
 | `WEBAPP_PORTA` | 8095 | Porta locale (`127.0.0.1`) a cui il reverse proxy inoltra la Mini App |

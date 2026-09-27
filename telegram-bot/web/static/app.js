@@ -45,16 +45,59 @@
     const azione = ctx && ctx.request && String(ctx.request.method).toUpperCase() !== "GET";
     if (azione && !navigator.onLine) avvisa("Sei offline: riprova quando torna la connessione.");
   });
+  // pulsante "Prenota" di Telegram, in basso sotto il pollice: la prima data della ricetta aperta dal
+  // messaggio del bot (?r=<id>), altrimenti la prima offerta in pagina. Con un foglio aperto si nasconde
+  const principale = tg && tg.MainButton;
+  const richiesta = new URLSearchParams(location.search).get("r");
+  let portato = false; // la scheda della ricetta richiesta si porta in vista una volta sola
+  const formPrincipale = () => {
+    const sua = /^\d+$/.test(richiesta || "") && document.querySelector(`#r-${richiesta} .offerta form[data-conferma]`);
+    return sua || document.querySelector(".offerta form[data-conferma]");
+  };
+  const aggiornaPrincipale = () => {
+    if (!principale) return;
+    const f = foglio.hidden ? formPrincipale() : null;
+    const quando = f && f.closest("li") && f.closest("li").querySelector(".quando");
+    if (!quando) {
+      principale.hide();
+      return;
+    }
+    principale.setText("Prenota " + quando.textContent.trim());
+    principale.show();
+  };
+  if (principale) principale.onClick(() => {
+    const f = formPrincipale();
+    if (f) f.requestSubmit(); // passa dalla conferma nativa, come il pulsante nella scheda
+  });
+  new MutationObserver(() => {
+    aggiornaPrincipale();
+    const scheda = !portato && /^\d+$/.test(richiesta || "") && document.getElementById("r-" + richiesta);
+    if (scheda) {
+      portato = true;
+      scheda.scrollIntoView({ block: "start" });
+    }
+  }).observe(ricette, { childList: true, subtree: true });
+
+  // tornando all'app (da un'altra chat, o dal messaggio del bot) le schede si ricaricano subito:
+  // una data vecchia non deve restare sullo schermo fino al prossimo aggiornamento
+  const ricarica = () => ricette.dispatchEvent(new Event("aggiorna"));
+  if (tg && tg.onEvent) tg.onEvent("activated", ricarica);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") ricarica();
+  });
+
   const apri = () => {
     foglio.hidden = false;
     velo.hidden = false;
     if (tg) tg.BackButton.show();
+    aggiornaPrincipale();
   };
   const chiudi = () => {
     foglio.hidden = true;
     velo.hidden = true;
     foglio.innerHTML = "";
     if (tg) tg.BackButton.hide();
+    aggiornaPrincipale();
   };
   if (tg) tg.BackButton.onClick(chiudi);
   velo.addEventListener("click", chiudi);
@@ -97,8 +140,9 @@
     // i dati si fissano PRIMA della conferma: mentre la finestra e' aperta le schede possono aggiornarsi
     const url = f.action;
     const corpo = new URLSearchParams(new FormData(f));
-    const invia = () =>
-      fetch(url, {
+    const invia = () => {
+      if (principale && principale.isVisible) principale.showProgress();
+      return fetch(url, {
         method: "POST",
         headers: { Authorization: firma, "Content-Type": "application/x-www-form-urlencoded" },
         body: corpo,
@@ -109,8 +153,12 @@
         } else {
           avvisa(testoDi(await r.text()) || "Non sono riuscito a inviare la richiesta.");
         }
-        ricette.dispatchEvent(new Event("aggiorna"));
-      });
+      }, () => avvisa("Non sono riuscito a inviare la richiesta: controlla la connessione."))
+        .finally(() => {
+          if (principale) principale.hideProgress();
+          ricarica();
+        });
+    };
     if (tg && tg.showConfirm) tg.showConfirm(f.dataset.conferma, (ok) => ok && invia());
     else if (window.confirm(f.dataset.conferma)) invia();
   }, true);

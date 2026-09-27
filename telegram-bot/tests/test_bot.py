@@ -1397,3 +1397,24 @@ def test_piu_prestazioni_le_date_non_proposte_non_si_prenotano_dalla_app(b, monk
     b.controlla(pratica(b))
     viste = pratica(b)["viste"]
     assert viste and not any(v["sel"] for v in viste)  # visibili, ma senza "prenota"
+
+
+def test_offerta_apre_l_app_sulla_ricetta(b):
+    b.webapp_url = "https://app.example/cup"
+    registra(b)
+    b.controlla(pratica(b))
+    [tastiera] = [d["reply_markup"]["inline_keyboard"] for m, d in b.out
+                  if m == "sendMessage" and "C'e' una data PRIMA" in d["text"]]
+    app = [x["web_app"]["url"] for riga in tastiera for x in riga if "web_app" in x]
+    assert app == [f"https://app.example/cup?r={pratica(b)['id']}"]
+
+
+def test_la_prenotazione_non_aspetta_la_distanza_dal_portale(b, monkeypatch):
+    b.distanza, b.ultimo_portale = 20, time.time()
+    attese = []
+    monkeypatch.setattr(botmod.time, "sleep", attese.append)
+    b.portale(lambda: "ok", paziente=True)  # prenotazione: subito
+    assert not attese
+    b.ultimo_portale = time.time()
+    b.portale(lambda: "ok")  # controllo: rispetta la distanza
+    assert attese and attese[0] > 15
