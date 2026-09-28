@@ -14,9 +14,10 @@ piccolo, senza Chromium.
 1. **Registrazione in chat.** Informativa e consenso, poi codice fiscale e numero ricetta (NRE). Il bot
    verifica subito la prenotazione sul portale e mostra prestazione, data, ora e luogo. Se la ricetta non
    è ancora prenotata la segue lo stesso (vedi "Ricetta mai prenotata" qui sotto). Poi chiede
-   **dove cercare**: stessa sede, un comune (quello della prenotazione o un altro, per esempio Novara),
-   la provincia, oppure qualsiasi sede proposta dal CUP.
-   - Per comune e provincia il bot preme "Estendi area di ricerca" del portale, fino a 4 volte: le
+   **dove cercare** (vedi "Dove cercare" qui sotto): stessa sede, un comune (quello della prenotazione o
+   un altro, per esempio Novara), Torino e prima cintura, la provincia, oppure qualsiasi sede proposta
+   dal CUP.
+   - Per comuni e provincia il bot preme "Estendi area di ricerca" del portale, fino a 4 volte: le
      aziende sanitarie lontane compaiono solo così, e solo se hanno posti. Il controllo è più lento
      (anche un minuto e mezzo), ma vede tutta la regione.
    - **Più ricette per chat, senza limite** (`MAX_PRATICHE` lo reintroduce). Con `/aggiungi` si segue
@@ -52,6 +53,24 @@ piccolo, senza Chromium.
 
 Comandi: `/stato`, `/date`, `/controlla`, `/aggiungi`, `/dati`, `/modifica`, `/sede`, `/auto`, `/pausa`, `/riprendi`, `/cancella`,
 `/privacy`. Chi gestisce il bot ha anche `/admin`.
+
+## Dove cercare
+
+Ogni ricetta ha la sua zona: una data va bene solo se la sede è lì.
+
+- **Stessa sede** della prenotazione (o una sede vista nei controlli).
+- **Un comune**: quello della prenotazione o un altro scritto a mano.
+- **Alcuni comuni**: un elenco, fino a 30. Il preset **"Torino e prima cintura"** (in chat e nella Mini
+  App) vale per Torino, Beinasco, Borgaro Torinese, Collegno, Grugliasco, Moncalieri, Nichelino,
+  Orbassano, Rivoli, San Mauro Torinese, Settimo Torinese e Venaria Reale. Un elenco scelto a mano si fa
+  solo dalla Mini App: i comuni vicini a un centro, dal più vicino, con i km in linea d'aria, da spuntare.
+- **La provincia**, oppure **ovunque proponga il CUP**.
+
+Il comune di una sede si legge dall'indirizzo del portale; se l'indirizzo non lo riporta, dal nome della
+sede ("PRESIDIO - SUSA"). Se non si legge, la data non viene proposta. I nomi si confrontano senza
+accenti e apostrofi ("Mondovì" = "MONDOVI'"). L'elenco dei 1180 comuni del Piemonte, con provincia e
+coordinate del centro, è in `comuni_piemonte.txt` (ISTAT). Per comune, comuni e provincia il bot estende
+l'area di ricerca del portale, come detto sopra.
 
 ## Ricetta mai prenotata (sperimentale)
 
@@ -93,8 +112,8 @@ prestazioni, date, luoghi o dati della ricetta. Se una prenotazione fallisce, il
 con codice fiscale e numero ricetta mascherati. Lo fa solo per le
 prenotazioni nuove e per le ricette con più prestazioni.
 
-Dove cercare: un comune, oppure dove propone il CUP; dopo il primo controllo anche una provincia o una
-sede tra quelle trovate. Ogni data nella zona scelta arriva con il pulsante "✅ Prenota". La conferma
+Dove cercare: un comune, alcuni comuni (per esempio Torino e prima cintura), oppure dove propone il CUP;
+dopo il primo controllo anche una provincia o una sede tra quelle trovate. Ogni data nella zona scelta arriva con il pulsante "✅ Prenota". La conferma
 automatica si può attivare anche qui. Dopo la prima prenotazione la ricetta diventa una prenotazione come le
 altre e il bot cerca date ancora prima. Se nel frattempo la ricetta viene prenotata a mano, il bot se ne
 accorge e passa da solo ad anticipare quella prenotazione.
@@ -116,7 +135,11 @@ vecchia. Cosa si fa dall'app:
   all'informativa). Da "✏️ Modifica": rinominarla, sostituirla con un'altra ricetta, cancellarla. Da 🔒
   anche "cancella tutti i miei dati". La ricerca sul portale la fa il bot e l'app aspetta il risultato.
 - **Dove cerco** (si tocca la riga sulla scheda). Stessa sede, comune, provincia, ovunque, oppure una
-  delle sedi trovate nei controlli. I comuni trovati compaiono come suggerimenti.
+  delle sedi trovate nei controlli. I comuni trovati compaiono come suggerimenti. Con **"Questi comuni"**
+  si spuntano i comuni vicini, ordinati per distanza dal centro: il comune della prenotazione, oppure
+  Torino per una ricetta mai prenotata; "Centra qui" cambia il centro senza perdere le spunte. Si vedono
+  quelli entro 20 km, "Mostra fino a 40 km" allarga l'elenco. "＋ Torino e prima cintura" spunta il
+  preset, 🏥 segna i comuni dove i controlli hanno già visto sedi.
 - **Prenoto da solo** (si tocca la riga sulla scheda). La conferma automatica: sì o no.
 - **Calendario** (si tocca la riga "📅 Calendario" sulla scheda). Un mese alla volta, da quello
   corrente fino a 12 mesi dopo (◀ ▶). Ogni giorno è sì o no: un tocco lo cambia. Un tocco sul nome del

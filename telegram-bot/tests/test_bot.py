@@ -1062,10 +1062,10 @@ def test_ricetta_mai_prenotata_si_registra(b):
     assert botmod.attuale_di(p).quando == botmod.SENZA_DATA and botmod.attuale_di(p).cosa == COSA3
     t = "\n".join(inviati(b))
     assert "non e' ancora prenotata" in t and COSA3 in t and "data libera" in t
-    # nessuna sede di riferimento: solo "un comune" o "dove propone il CUP"
+    # nessuna sede di riferimento: "un comune", Torino e prima cintura o "dove propone il CUP"
     scelte = [d for m, d in b.out if m == "sendMessage" and "Dove cerco il primo appuntamento" in d["text"]]
     assert scelte and {x["callback_data"].rsplit(":", 1)[1] for r in scelte[0]["reply_markup"]["inline_keyboard"]
-                       for x in r} == {"altro", "tutte"}
+                       for x in r} == {"altro", "cintura", "tutte"}
     assert "2100" not in t
 
 
@@ -1749,3 +1749,82 @@ def test_esito_incerto_non_andato(b):
 def fmt_ok(testo):
     """Data, ora e luogo nel messaggio (sempre, per ogni prenotazione)."""
     return "📅" in testo and " ore " in testo and "📍" in testo
+
+
+# --- zona "alcuni comuni" -----------------------------------------------------------------
+def test_zona_comuni_preset_ed_elenco():
+    torino = c.Slot(datetime(2026, 12, 1), c.Luogo("OSP T", "ESAME", "Via Po 1 - TORINO (TO)"), "a")
+    moncalieri = c.Slot(datetime(2026, 12, 1), c.Luogo("OSP M", "ESAME", "Via Roma 2 - MONCALIERI (TO)"), "b")
+    susa = c.Slot(datetime(2026, 12, 1), c.Luogo("PRESIDIO - SUSA", "ESAME", "CORSO INGHILTERRA - ()"), "c")
+    senza = c.Slot(datetime(2026, 12, 1), c.Luogo("OSP S", "ESAME", "Via W - ()"), "d")
+    cintura = {"tipo": "comuni", "valore": list(c.CINTURA_TORINO)}
+    assert c.ammesso(torino, None, cintura) and c.ammesso(moncalieri, ATT, cintura)
+    assert not c.ammesso(susa, None, cintura) and not c.ammesso(senza, None, cintura)
+    elenco = {"tipo": "comuni", "valore": ["SUSA", "RIVOLI"]}
+    assert c.ammesso(susa, None, elenco) and not c.ammesso(moncalieri, None, elenco)  # Susa dal nome della sede
+    # chiavi: accenti e apostrofi del portale
+    mondovi = c.Slot(datetime(2026, 12, 1), c.Luogo("OSPEDALE - MONDOVI'", "AMB", ""), "e")
+    assert c.ammesso(mondovi, None, {"tipo": "comuni", "valore": ["MONDOVÌ"]})
+    assert c.estensioni(cintura) == c.ESTENDI_MAX
+    assert not c.ammesso(torino, None, {"tipo": "comuni", "valore": []})
+
+
+def test_cintura_di_torino_e_elenco_comuni():
+    assert len(c.CINTURA_TORINO) == 12 and all(c._chiave_comune(n) in c.COMUNI_PIEMONTE for n in c.CINTURA_TORINO)
+    assert all(c.COMUNI_PIEMONTE[c._chiave_comune(n)] == "TO" for n in c.CINTURA_TORINO)
+    ok, ignoti = c.elenco_comuni(["torino", " Mondovi' ", "MONDOVÌ", "Paperopoli", "", "  "])
+    assert ok == ["TORINO", "MONDOVÌ"] and ignoti == ["Paperopoli"]  # niente doppioni, nomi ISTAT
+    assert c.elenco_comuni(["Sant'Ambrogio di Torino"])[0] == ["SANT'AMBROGIO DI TORINO"]
+    assert c.e_cintura(list(reversed(c.CINTURA_TORINO))) and not c.e_cintura(["TORINO"])
+
+
+def test_zone_vecchie_compatibili():
+    assert c.zona_norm(True) == {"tipo": "sede", "valore": ""} and c.zona_norm("provincia")["tipo"] == "provincia"
+    assert c.zona_norm({"tipo": "comune", "valore": "ALBA"}) == {"tipo": "comune", "valore": "ALBA"}
+    assert c.zona_norm({"tipo": "comune", "valore": ["ALBA"]}) == {"tipo": "comune", "valore": ""}
+    assert c.zona_norm({"tipo": "comuni", "valore": "TORINO"}) == {"tipo": "comuni", "valore": []}
+    assert c.zona_norm({"tipo": "comuni", "valore": ["TORINO", 3, ""]}) == {"tipo": "comuni", "valore": ["TORINO"]}
+
+
+def test_descrizione_zona_comuni():
+    assert botmod.descr_zona({"tipo": "comuni", "valore": list(c.CINTURA_TORINO)}, ATT) == "a Torino e prima cintura"
+    tre = {"tipo": "comuni", "valore": ["TORINO", "MONCALIERI", "RIVOLI"]}
+    assert botmod.descr_zona(tre, None) == "a Torino, Moncalieri, Rivoli"
+    sei = ["TORINO", "MONCALIERI", "RIVOLI", "SAN MAURO TORINESE", "SUSA", "ALBA"]
+    assert botmod.descr_zona({"tipo": "comuni", "valore": sei}, None) == \
+        "a Torino, Moncalieri, Rivoli, San Mauro Torinese e altri 2"
+    assert botmod.descr_zona({"tipo": "comuni", "valore": sei[:5]}, None).endswith("San Mauro Torinese e un altro")
+    assert botmod.area_breve(tre, ATT) == "a Torino, Moncalieri, Rivoli"
+    assert botmod.descr_zona({"tipo": "comuni", "valore": []}, None) == "in nessun comune"
+
+
+def test_comuni_vicini_per_distanza():
+    assert len(c.COMUNI_PIEMONTE) == len(c.COORD) == 1180
+    vicini = c.vicini("Torino", 20)
+    assert vicini[0] == ("TORINO", 0.0) and [d for _, d in vicini] == sorted(d for _, d in vicini)
+    km = dict(vicini)
+    assert 7 < km["MONCALIERI"] < 9 and "SUSA" not in km and max(km.values()) <= 20
+    assert c.COMUNI_PIEMONTE["SUSA"] == "TO" and c.vicini("Paperopoli", 20) == []
+    assert c.vicini("mondovi'", 0)[0][0] == "MONDOVÌ"
+
+
+def test_chat_torino_e_prima_cintura(b):
+    registra(b, zona="cintura")
+    p = pratica(b)
+    assert p["zona"] == {"tipo": "comuni", "valore": list(c.CINTURA_TORINO)} and p["stato"] == "attivo"
+    assert any("Ok: cerco a Torino e prima cintura." in t for t in inviati(b))
+    b.controlla(p)
+    assert len(pulsanti(b)) == 3  # TORINO e MONCALIERI, non CUNEO
+    t = pannello(b)
+    assert "🔎 Cerco: a Torino e prima cintura" in t and "allargo la ricerca" in t
+    assert "3 date trovate in Piemonte, 2 a Torino e prima cintura, ✅ 2 prima della tua" in t
+    assert b.zone_viste[-1] == p["zona"]
+
+
+def test_chat_cintura_per_ricetta_mai_prenotata(b):
+    registra_nuova(b, zona="cintura")
+    p = pratica(b)
+    assert p["zona"]["tipo"] == "comuni" and c.e_cintura(p["zona"]["valore"])
+    b.controlla(p)
+    assert "a Torino e prima cintura" in pannello(b)
+    assert b.zone_viste[-1]["tipo"] == "comuni"

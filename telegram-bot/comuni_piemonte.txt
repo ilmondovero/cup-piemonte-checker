@@ -1,1181 +1,1182 @@
-# Comuni del Piemonte e sigla della provincia (ISTAT, Elenco comuni italiani, settembre 2026)
-Acceglio;CN
-Acqui Terme;AL
-Agliano Terme;AT
-Agliè;TO
-Agrate Conturbia;NO
-Ailoche;BI
-Airasca;TO
-Aisone;CN
-Ala di Stura;TO
-Alagna Valsesia;VC
-Alba;CN
-Albano Vercellese;VC
-Albaretto della Torre;CN
-Albera Ligure;AL
-Albiano d'Ivrea;TO
-Albugnano;AT
-Alessandria;AL
-Alfiano Natta;AL
-Alice Bel Colle;AL
-Alice Castello;VC
-Alluvioni Piovera;AL
-Almese;TO
-Alpette;TO
-Alpignano;TO
-Altavilla Monferrato;AL
-Alto;CN
-Alto Sermenza;VC
-Alzano Scrivia;AL
-Ameno;NO
-Andezeno;TO
-Andorno Micca;BI
-Andrate;TO
-Angrogna;TO
-Antignano;AT
-Antrona Schieranco;VB
-Anzola d'Ossola;VB
-Aramengo;AT
-Arborio;VC
-Argentera;CN
-Arguello;CN
-Arignano;TO
-Arizzano;VB
-Armeno;NO
-Arola;VB
-Arona;NO
-Arquata Scrivia;AL
-Asigliano Vercellese;VC
-Asti;AT
-Aurano;VB
-Avigliana;TO
-Avolasca;AL
-Azeglio;TO
-Azzano d'Asti;AT
-Baceno;VB
-Bagnasco;CN
-Bagnolo Piemonte;CN
-Bairo;TO
-Balangero;TO
-Baldichieri d'Asti;AT
-Baldissero Canavese;TO
-Baldissero Torinese;TO
-Baldissero d'Alba;CN
-Balme;TO
-Balmuccia;VC
-Balocco;VC
-Balzola;AL
-Banchette;TO
-Bannio Anzino;VB
-Barbania;TO
-Barbaresco;CN
-Bardonecchia;TO
-Barengo;NO
-Barge;CN
-Barolo;CN
-Barone Canavese;TO
-Basaluzzo;AL
-Bassignana;AL
-Bastia Mondovì;CN
-Battifollo;CN
-Baveno;VB
-Bee;VB
-Beinasco;TO
-Beinette;CN
-Belforte Monferrato;AL
-Belgirate;VB
-Bellino;CN
-Bellinzago Novarese;NO
-Belvedere Langhe;CN
-Belveglio;AT
-Bene Vagienna;CN
-Benevello;CN
-Benna;BI
-Bergamasco;AL
-Bergolo;CN
-Bernezzo;CN
-Berzano di San Pietro;AT
-Berzano di Tortona;AL
-Beura-Cardezza;VB
-Biandrate;NO
-Bianzè;VC
-Bibiana;TO
-Biella;BI
-Bioglio;BI
-Bistagno;AL
-Bobbio Pellice;TO
-Boca;NO
-Boccioleto;VC
-Bognanco;VB
-Bogogno;NO
-Bollengo;TO
-Bolzano Novarese;NO
-Bonvicino;CN
-Borgaro Torinese;TO
-Borghetto di Borbera;AL
-Borgiallo;TO
-Borgo San Dalmazzo;CN
-Borgo San Martino;AL
-Borgo Ticino;NO
-Borgo Vercelli;VC
-Borgo d'Ale;VC
-Borgofranco d'Ivrea;TO
-Borgolavezzaro;NO
-Borgomale;CN
-Borgomanero;NO
-Borgomasino;TO
-Borgomezzavalle;VB
-Borgone Susa;TO
-Borgoratto Alessandrino;AL
-Borgosesia;VC
-Borriana;BI
-Bosco Marengo;AL
-Bosconero;TO
-Bosia;CN
-Bosio;AL
-Bossolasco;CN
-Boves;CN
-Bozzole;AL
-Bra;CN
-Brandizzo;TO
-Briaglia;CN
-Bricherasio;TO
-Briga Alta;CN
-Briga Novarese;NO
-Brignano-Frascata;AL
-Briona;NO
-Brondello;CN
-Brossasco;CN
-Brosso;TO
-Brovello-Carpugnino;VB
-Brozolo;TO
-Bruino;TO
-Bruno;AT
-Brusasco;TO
-Brusnengo;BI
-Bruzolo;TO
-Bubbio;AT
-Buriasco;TO
-Burolo;TO
-Buronzo;VC
-Busano;TO
-Busca;CN
-Bussoleno;TO
-Buttigliera Alta;TO
-Buttigliera d'Asti;AT
-Cabella Ligure;AL
-Cafasse;TO
-Calamandrana;AT
-Calasca-Castiglione;VB
-Callabiana;BI
-Calliano Monferrato;AT
-Calosso;AT
-Caltignaga;NO
-Caluso;TO
-Camagna Monferrato;AL
-Camandona;BI
-Cambiano;TO
-Cambiasca;VB
-Camburzano;BI
-Camerana;CN
-Camerano Casasco;AT
-Cameri;NO
-Camino;AL
-Campertogno;VC
-Campiglia Cervo;BI
-Campiglione Fenile;TO
-Canale;CN
-Candelo;BI
-Candia Canavese;TO
-Candiolo;TO
-Canelli;AT
-Canischio;TO
-Cannero Riviera;VB
-Cannobio;VB
-Canosio;CN
-Cantalupa;TO
-Cantalupo Ligure;AL
-Cantarana;AT
-Cantoira;TO
-Caprauna;CN
-Caprezzo;VB
-Capriata d'Orba;AL
-Caprie;TO
-Capriglio;AT
-Caprile;BI
-Caraglio;CN
-Caramagna Piemonte;CN
-Caravino;TO
-Carbonara Scrivia;AL
-Carcoforo;VC
-Cardè;CN
-Carema;TO
-Carentino;AL
-Caresana;VC
-Caresanablot;VC
-Carezzano;AL
-Carignano;TO
-Carisio;VC
-Carmagnola;TO
-Carpeneto;AL
-Carpignano Sesia;NO
-Carrega Ligure;AL
-Carrosio;AL
-Carrù;CN
-Cartignano;CN
-Cartosio;AL
-Casal Cermelli;AL
-Casalbeltrame;NO
-Casalborgone;TO
-Casale Corte Cerro;VB
-Casale Monferrato;AL
-Casaleggio Boiro;AL
-Casaleggio Novara;NO
-Casalgrasso;CN
-Casalino;NO
-Casalnoceto;AL
-Casalvolone;NO
-Casanova Elvo;VC
-Casapinta;BI
-Casasco;AL
-Cascinette d'Ivrea;TO
-Caselette;TO
-Caselle Torinese;TO
-Casorzo Monferrato;AT
-Cassano Spinola;AL
-Cassinasco;AT
-Cassine;AL
-Cassinelle;AL
-Castagneto Po;TO
-Castagnito;CN
-Castagnole Monferrato;AT
-Castagnole Piemonte;TO
-Castagnole delle Lanze;AT
-Castel Boglione;AT
-Castel Rocchero;AT
-Casteldelfino;CN
-Castell'Alfero;AT
-Castellamonte;TO
-Castellania Coppi;AL
-Castellar Guidobono;AL
-Castellazzo Bormida;AL
-Castellazzo Novarese;NO
-Castellero;AT
-Castelletto Cervo;BI
-Castelletto Merli;AL
-Castelletto Molina;AT
-Castelletto Monferrato;AL
-Castelletto Stura;CN
-Castelletto Uzzone;CN
-Castelletto d'Erro;AL
-Castelletto d'Orba;AL
-Castelletto sopra Ticino;NO
-Castellinaldo d'Alba;CN
-Castellino Tanaro;CN
-Castello di Annone;AT
-Castelmagno;CN
-Castelnuovo Belbo;AT
-Castelnuovo Bormida;AL
-Castelnuovo Calcea;AT
-Castelnuovo Don Bosco;AT
-Castelnuovo Nigra;TO
-Castelnuovo Scrivia;AL
-Castelnuovo di Ceva;CN
-Castelspina;AL
-Castiglione Falletto;CN
-Castiglione Tinella;CN
-Castiglione Torinese;TO
-Castino;CN
-Cavaglietto;NO
-Cavaglio d'Agogna;NO
-Cavaglià;BI
-Cavagnolo;TO
-Cavallerleone;CN
-Cavallermaggiore;CN
-Cavallirio;NO
-Cavatore;AL
-Cavour;TO
-Cella Monte;AL
-Cellarengo;AT
-Celle Enomondo;AT
-Celle di Macra;CN
-Cellio con Breia;VC
-Centallo;CN
-Ceppo Morelli;VB
-Cerano;NO
-Cercenasco;TO
-Ceres;TO
-Cereseto;AL
-Ceresole Alba;CN
-Ceresole Reale;TO
-Cerreto Grue;AL
-Cerreto d'Asti;AT
-Cerretto Langhe;CN
-Cerrina Monferrato;AL
-Cerrione;BI
-Cerro Tanaro;AT
-Cervasca;CN
-Cervatto;VC
-Cervere;CN
-Cesana Torinese;TO
-Cesara;VB
-Cessole;AT
-Ceva;CN
-Cherasco;CN
-Chialamberto;TO
-Chianocco;TO
-Chiaverano;TO
-Chieri;TO
-Chiesanuova;TO
-Chiomonte;TO
-Chiusa di Pesio;CN
-Chiusa di San Michele;TO
-Chiusano d'Asti;AT
-Chivasso;TO
-Ciconio;TO
-Cigliano;VC
-Cigliè;CN
-Cinaglio;AT
-Cintano;TO
-Cinzano;TO
-Ciriè;TO
-Cissone;CN
-Cisterna d'Asti;AT
-Civiasco;VC
-Clavesana;CN
-Claviere;TO
-Coassolo Torinese;TO
-Coazze;TO
-Coazzolo;AT
-Cocconato;AT
-Coggiola;BI
-Colazza;NO
-Collegno;TO
-Colleretto Castelnuovo;TO
-Colleretto Giacosa;TO
-Collobiano;VC
-Comignago;NO
-Condove;TO
-Coniolo;AL
-Conzano;AL
-Corio;TO
-Corneliano d'Alba;CN
-Corsione;AT
-Cortandone;AT
-Cortanze;AT
-Cortazzone;AT
-Cortemilia;CN
-Cortiglione;AT
-Cossano Belbo;CN
-Cossano Canavese;TO
-Cossato;BI
-Cossogno;VB
-Cossombrato;AT
-Costa Vescovato;AL
-Costanzana;VC
-Costigliole Saluzzo;CN
-Costigliole d'Asti;AT
-Cravagliana;VC
-Cravanzana;CN
-Craveggia;VB
-Cremolino;AL
-Crescentino;VC
-Cressa;NO
-Crevacuore;BI
-Crevoladossola;VB
-Crissolo;CN
-Crodo;VB
-Crova;VC
-Cuceglio;TO
-Cumiana;TO
-Cuneo;CN
-Cunico;AT
-Cuorgnè;TO
-Cureggio;NO
-Curino;BI
-Demonte;CN
-Denice;AL
-Dernice;AL
-Desana;VC
-Diano d'Alba;CN
-Divignano;NO
-Dogliani;CN
-Domodossola;VB
-Donato;BI
-Dormelletto;NO
-Dorzano;BI
-Dronero;CN
-Druento;TO
-Druogno;VB
-Dusino San Michele;AT
-Elva;CN
-Entracque;CN
-Envie;CN
-Exilles;TO
-Fabbrica Curone;AL
-Fara Novarese;NO
-Farigliano;CN
-Faule;CN
-Favria;TO
-Feisoglio;CN
-Feletto;TO
-Felizzano;AL
-Fenestrelle;TO
-Ferrere;AT
-Fiano;TO
-Fiorano Canavese;TO
-Fobello;VC
-Foglizzo;TO
-Fontaneto d'Agogna;NO
-Fontanetto Po;VC
-Fontanile;AT
-Formazza;VB
-Formigliana;VC
-Forno Canavese;TO
-Fossano;CN
-Frabosa Soprana;CN
-Frabosa Sottana;CN
-Fraconalto;AL
-Francavilla Bisio;AL
-Frascaro;AL
-Frassinello Monferrato;AL
-Frassineto Po;AL
-Frassinetto;TO
-Frassino;CN
-Fresonara;AL
-Frinco;AT
-Front;TO
-Frossasco;TO
-Frugarolo;AL
-Fubine Monferrato;AL
-Gabiano;AL
-Gaglianico;BI
-Gaiola;CN
-Galliate;NO
-Gamalero;AL
-Gambasca;CN
-Garbagna;AL
-Garbagna Novarese;NO
-Garessio;CN
-Gargallo;NO
-Garzigliana;TO
-Gassino Torinese;TO
-Gattico-Veruno;NO
-Gattinara;VC
-Gavi;AL
-Genola;CN
-Germagnano;TO
-Germagno;VB
-Ghemme;NO
-Ghiffa;VB
-Ghislarengo;VC
-Giaglione;TO
-Giarole;AL
-Giaveno;TO
-Gifflenga;BI
-Gignese;VB
-Givoletto;TO
-Gorzegno;CN
-Gottasecca;CN
-Govone;CN
-Gozzano;NO
-Graglia;BI
-Grana Monferrato;AT
-Granozzo con Monticello;NO
-Gravellona Toce;VB
-Gravere;TO
-Grazzano Badoglio;AT
-Greggio;VC
-Gremiasco;AL
-Grignasco;NO
-Grinzane Cavour;CN
-Grognardo;AL
-Grondona;AL
-Groscavallo;TO
-Grosso;TO
-Grugliasco;TO
-Guardabosone;VC
-Guarene;CN
-Guazzora;AL
-Gurro;VB
-Igliano;CN
-Incisa Scapaccino;AT
-Ingria;TO
-Intragna;VB
-Inverso Pinasca;TO
-Invorio;NO
-Isasca;CN
-Isola Sant'Antonio;AL
-Isola d'Asti;AT
-Isolabella;TO
-Issiglio;TO
-Ivrea;TO
-La Cassa;TO
-La Loggia;TO
-La Morra;CN
-Lagnasco;CN
-Lamporo;VC
-Landiona;NO
-Lanzo Torinese;TO
-Lauriano;TO
-Leini;TO
-Lemie;TO
-Lenta;VC
-Lequio Berria;CN
-Lequio Tanaro;CN
-Lerma;AL
-Lesa;NO
-Lesegno;CN
-Lessolo;TO
-Lessona;BI
-Levice;CN
-Levone;TO
-Lignana;VC
-Limone Piemonte;CN
-Lisio;CN
-Livorno Ferraris;VC
-Loazzolo;AT
-Locana;TO
-Lombardore;TO
-Lombriasco;TO
-Loranzè;TO
-Loreglia;VB
-Lozzolo;VC
-Lu e Cuccaro Monferrato;AL
-Luserna San Giovanni;TO
-Lusernetta;TO
-Lusigliè;TO
-Macello;TO
-Macra;CN
-Macugnaga;VB
-Madonna del Sasso;VB
-Maggiora;NO
-Magliano Alfieri;CN
-Magliano Alpi;CN
-Maglione;TO
-Magnano;BI
-Malesco;VB
-Malvicino;AL
-Mandello Vitta;NO
-Mango;CN
-Manta;CN
-Mappano;TO
-Marano Ticino;NO
-Maranzana;AT
-Marene;CN
-Marentino;TO
-Maretto;AT
-Margarita;CN
-Marmora;CN
-Marsaglia;CN
-Martiniana Po;CN
-Masera;VB
-Masio;AL
-Massazza;BI
-Massello;TO
-Masserano;BI
-Massino Visconti;NO
-Massiola;VB
-Mathi;TO
-Mattie;TO
-Mazzè;TO
-Meana di Susa;TO
-Meina;NO
-Melazzo;AL
-Melle;CN
-Merana;AL
-Mercenasco;TO
-Mergozzo;VB
-Mezzana Mortigliengo;BI
-Mezzenile;TO
-Mezzomerico;NO
-Miagliano;BI
-Miasino;NO
-Miazzina;VB
-Mirabello Monferrato;AL
-Moasca;AT
-Moiola;CN
-Molare;AL
-Molino dei Torti;AL
-Mollia;VC
-Mombaldone;AT
-Mombarcaro;CN
-Mombaruzzo;AT
-Mombasiglio;CN
-Mombello Monferrato;AL
-Mombello di Torino;TO
-Mombercelli;AT
-Momo;NO
-Mompantero;TO
-Momperone;AL
-Monale;AT
-Monastero Bormida;AT
-Monastero di Lanzo;TO
-Monastero di Vasco;CN
-Monasterolo Casotto;CN
-Monasterolo di Savigliano;CN
-Moncalieri;TO
-Moncalvo;AT
-Moncenisio;TO
-Moncestino;AL
-Monchiero;CN
-Moncrivello;VC
-Moncucco Torinese;AT
-Mondovì;CN
-Monesiglio;CN
-Monforte d'Alba;CN
-Mongardino;AT
-Mongiardino Ligure;AL
-Mongrando;BI
-Monleale;AL
-Montabone;AT
-Montacuto;AL
-Montafia;AT
-Montaldeo;AL
-Montaldo Bormida;AL
-Montaldo Roero;CN
-Montaldo Scarampi;AT
-Montaldo Torinese;TO
-Montaldo di Mondovì;CN
-Montalenghe;TO
-Montalto Dora;TO
-Montanaro;TO
-Montanera;CN
-Montecastello;AL
-Montechiaro d'Acqui;AL
-Montechiaro d'Asti;AT
-Montecrestese;VB
-Montegioco;AL
-Montegrosso d'Asti;AT
-Montelupo Albese;CN
-Montemagno Monferrato;AT
-Montemale di Cuneo;CN
-Montemarzino;AL
-Monterosso Grana;CN
-Montescheno;VB
-Monteu Roero;CN
-Monteu da Po;TO
-Montezemolo;CN
-Monticello d'Alba;CN
-Montiglio Monferrato;AT
-Montà;CN
-Morano sul Po;AL
-Moransengo-Tonengo;AT
-Morbello;AL
-Moretta;CN
-Moriondo Torinese;TO
-Mornese;AL
-Morozzo;CN
-Morsasco;AL
-Motta de' Conti;VC
-Mottalciata;BI
-Murazzano;CN
-Murello;CN
-Murisengo;AL
-Muzzano;BI
-Narzole;CN
-Nebbiuno;NO
-Neive;CN
-Netro;BI
-Neviglie;CN
-Nibbiola;NO
-Nichelino;TO
-Niella Belbo;CN
-Niella Tanaro;CN
-Nizza Monferrato;AT
-Noasca;TO
-Nole;TO
-Nomaglio;TO
-None;TO
-Nonio;VB
-Novalesa;TO
-Novara;NO
-Novello;CN
-Novi Ligure;AL
-Nucetto;CN
-Occhieppo Inferiore;BI
-Occhieppo Superiore;BI
-Occimiano;AL
-Odalengo Grande;AL
-Odalengo Piccolo;AL
-Oggebbio;VB
-Oglianico;TO
-Olcenengo;VC
-Oldenico;VC
-Oleggio;NO
-Oleggio Castello;NO
-Olivola;AL
-Olmo Gentile;AT
-Omegna;VB
-Oncino;CN
-Orbassano;TO
-Orio Canavese;TO
-Ormea;CN
-Ornavasso;VB
-Orsara Bormida;AL
-Orta San Giulio;NO
-Osasco;TO
-Osasio;TO
-Ostana;CN
-Ottiglio;AL
-Oulx;TO
-Ovada;AL
-Oviglio;AL
-Ozegna;TO
-Ozzano Monferrato;AL
-Paderna;AL
-Paesana;CN
-Pagno;CN
-Palazzo Canavese;TO
-Palazzolo Vercellese;VC
-Pallanzeno;VB
-Pamparato;CN
-Pancalieri;TO
-Parella;TO
-Pareto;AL
-Parodi Ligure;AL
-Paroldo;CN
-Paruzzaro;NO
-Passerano Marmorito;AT
-Pasturana;AL
-Pavarolo;TO
-Pavone Canavese;TO
-Pecetto Torinese;TO
-Pecetto di Valenza;AL
-Pella;NO
-Penango;AT
-Perletto;CN
-Perlo;CN
-Perosa Argentina;TO
-Perosa Canavese;TO
-Perrero;TO
-Pertengo;VC
-Pertusio;TO
-Pessinetto;TO
-Pettenasco;NO
-Pettinengo;BI
-Peveragno;CN
-Pezzana;VC
-Pezzolo Valle Uzzone;CN
-Pianezza;TO
-Pianfei;CN
-Piasco;CN
-Piatto;BI
-Piea;AT
-Piedicavallo;BI
-Piedimulera;VB
-Pietra Marazzi;AL
-Pietraporzio;CN
-Pieve Vergonte;VB
-Pila;VC
-Pinasca;TO
-Pinerolo;TO
-Pino Torinese;TO
-Pino d'Asti;AT
-Piobesi Torinese;TO
-Piobesi d'Alba;CN
-Piode;VC
-Piossasco;TO
-Piovà Massaia;AT
-Piozzo;CN
-Pisano;NO
-Piscina;TO
-Piverone;TO
-Pocapaglia;CN
-Pogno;NO
-Poirino;TO
-Pollone;BI
-Polonghera;CN
-Pomaretto;TO
-Pomaro Monferrato;AL
-Pombia;NO
-Ponderano;BI
-Pont Canavese;TO
-Pontechianale;CN
-Pontecurone;AL
-Pontestura;AL
-Ponti;AL
-Ponzano Monferrato;AL
-Ponzone;AL
-Portacomaro;AT
-Porte;TO
-Portula;BI
-Postua;VC
-Pozzol Groppo;AL
-Pozzolo Formigaro;AL
-Pradleves;CN
-Pragelato;TO
-Prali;TO
-Pralormo;TO
-Pralungo;BI
-Pramollo;TO
-Prarolo;VC
-Prarostino;TO
-Prasco;AL
-Prascorsano;TO
-Pratiglione;TO
-Prato Sesia;NO
-Pray;BI
-Prazzo;CN
-Predosa;AL
-Premeno;VB
-Premia;VB
-Premosello-Chiovenda;VB
-Priero;CN
-Priocca;CN
-Priola;CN
-Prunetto;CN
-Quagliuzzo;TO
-Quaranti;AT
-Quaregna Cerreto;BI
-Quargnento;AL
-Quarna Sopra;VB
-Quarna Sotto;VB
-Quarona;VC
-Quassolo;TO
-Quattordio;AL
-Quincinetto;TO
-Quinto Vercellese;VC
-Racconigi;CN
-Rassa;VC
-Re;VB
-Reano;TO
-Recetto;NO
-Refrancore;AT
-Revello;CN
-Revigliasco d'Asti;AT
-Ribordone;TO
-Ricaldone;AL
-Rifreddo;CN
-Rimella;VC
-Rittana;CN
-Riva presso Chieri;TO
-Rivalba;TO
-Rivalta Bormida;AL
-Rivalta di Torino;TO
-Rivara;TO
-Rivarolo Canavese;TO
-Rivarone;AL
-Rivarossa;TO
-Rive;VC
-Rivoli;TO
-Roaschia;CN
-Roascio;CN
-Roasio;VC
-Roatto;AT
-Robassomero;TO
-Robella;AT
-Robilante;CN
-Roburent;CN
-Rocca Canavese;TO
-Rocca Cigliè;CN
-Rocca Grimalda;AL
-Rocca d'Arazzo;AT
-Rocca de' Baldi;CN
-Roccabruna;CN
-Roccaforte Ligure;AL
-Roccaforte Mondovì;CN
-Roccasparvera;CN
-Roccaverano;AT
-Roccavione;CN
-Rocchetta Belbo;CN
-Rocchetta Ligure;AL
-Rocchetta Palafea;AT
-Rocchetta Tanaro;AT
-Roddi;CN
-Roddino;CN
-Rodello;CN
-Roletto;TO
-Romagnano Sesia;NO
-Romano Canavese;TO
-Romentino;NO
-Ronco Biellese;BI
-Ronco Canavese;TO
-Rondissone;TO
-Ronsecco;VC
-Roppolo;BI
-Rorà;TO
-Rosazza;BI
-Rosignano Monferrato;AL
-Rossa;VC
-Rossana;CN
-Rosta;TO
-Roure;TO
-Rovasenda;VC
-Rubiana;TO
-Rueglio;TO
-Ruffia;CN
-Sagliano Micca;BI
-Sala Biellese;BI
-Sala Monferrato;AL
-Salasco;VC
-Salassa;TO
-Salbertrand;TO
-Sale;AL
-Sale San Giovanni;CN
-Sale delle Langhe;CN
-Salerano Canavese;TO
-Sali Vercellese;VC
-Saliceto;CN
-Salmour;CN
-Saluggia;VC
-Salussola;BI
-Saluzzo;CN
-Salza di Pinerolo;TO
-Sambuco;CN
-Samone;TO
-Sampeyre;CN
-San Benedetto Belbo;CN
-San Benigno Canavese;TO
-San Bernardino Verbano;VB
-San Carlo Canavese;TO
-San Colombano Belmonte;TO
-San Cristoforo;AL
-San Damiano Macra;CN
-San Damiano d'Asti;AT
-San Didero;TO
-San Francesco al Campo;TO
-San Germano Chisone;TO
-San Germano Vercellese;VC
-San Giacomo Vercellese;VC
-San Gillio;TO
-San Giorgio Canavese;TO
-San Giorgio Monferrato;AL
-San Giorgio Scarampi;AT
-San Giorio di Susa;TO
-San Giusto Canavese;TO
-San Martino Alfieri;AT
-San Martino Canavese;TO
-San Marzano Oliveto;AT
-San Maurizio Canavese;TO
-San Maurizio d'Opaglio;NO
-San Mauro Torinese;TO
-San Michele Mondovì;CN
-San Nazzaro Sesia;NO
-San Paolo Solbrito;AT
-San Pietro Mosezzo;NO
-San Pietro Val Lemina;TO
-San Ponso;TO
-San Raffaele Cimena;TO
-San Salvatore Monferrato;AL
-San Sebastiano Curone;AL
-San Sebastiano da Po;TO
-San Secondo di Pinerolo;TO
-Sandigliano;BI
-Sanfront;CN
-Sanfrè;CN
-Sangano;TO
-Sant'Agata Fossili;AL
-Sant'Albano Stura;CN
-Sant'Ambrogio di Torino;TO
-Sant'Antonino di Susa;TO
-Santa Maria Maggiore;VB
-Santa Vittoria d'Alba;CN
-Santena;TO
-Santhià;VC
-Santo Stefano Belbo;CN
-Santo Stefano Roero;CN
-Sardigliano;AL
-Sarezzano;AL
-Sauze d'Oulx;TO
-Sauze di Cesana;TO
-Savigliano;CN
-Scagnello;CN
-Scalenghe;TO
-Scarmagno;TO
-Scarnafigi;CN
-Sciolze;TO
-Scopa;VC
-Scopello;VC
-Scurzolengo;AT
-Serole;AT
-Serralunga d'Alba;CN
-Serralunga di Crea;AL
-Serravalle Langhe;CN
-Serravalle Scrivia;AL
-Serravalle Sesia;VC
-Sessame;AT
-Sestriere;TO
-Settime;AT
-Settimo Rottaro;TO
-Settimo Torinese;TO
-Settimo Vittone;TO
-Sezzadio;AL
-Sillavengo;NO
-Silvano d'Orba;AL
-Sinio;CN
-Sizzano;NO
-Soglio;AT
-Solero;AL
-Solonghello;AL
-Somano;CN
-Sommariva Perno;CN
-Sommariva del Bosco;CN
-Sordevolo;BI
-Soriso;NO
-Sostegno;BI
-Sozzago;NO
-Sparone;TO
-Spigno Monferrato;AL
-Spineto Scrivia;AL
-Stazzano;AL
-Strambinello;TO
-Strambino;TO
-Stresa;VB
-Strevi;AL
-Strona;BI
-Stroppiana;VC
-Stroppo;CN
-Suno;NO
-Susa;TO
-Tagliolo Monferrato;AL
-Tarantasca;CN
-Tassarolo;AL
-Tavagnasco;TO
-Tavigliano;BI
-Terdobbiate;NO
-Ternengo;BI
-Terruggia;AL
-Terzo;AL
-Ticineto;AL
-Tigliole;AT
-Toceno;VB
-Tollegno;BI
-Tonco;AT
-Torino;TO
-Tornaco;NO
-Torrazza Piemonte;TO
-Torrazzo;BI
-Torre Bormida;CN
-Torre Canavese;TO
-Torre Mondovì;CN
-Torre Pellice;TO
-Torre San Giorgio;CN
-Torresina;CN
-Tortona;AL
-Trana;TO
-Trarego Viggiona;VB
-Trasquera;VB
-Traversella;TO
-Traves;TO
-Trecate;NO
-Treiso;CN
-Treville;AL
-Trezzo Tinella;CN
-Tricerro;VC
-Trinità;CN
-Trino;VC
-Trisobbio;AL
-Trofarello;TO
-Trontano;VB
-Tronzano Vercellese;VC
-Usseaux;TO
-Usseglio;TO
-Vaglio Serra;AT
-Vaie;TO
-Val della Torre;TO
-Val di Chy;TO
-Valchiusa;TO
-Valdengo;BI
-Valdieri;CN
-Valdilana;BI
-Valduggia;VC
-Valenza;AL
-Valfenera;AT
-Valgioie;TO
-Valgrana;CN
-Vallanzengo;BI
-Valle Cannobina;VB
-Valle San Nicolao;BI
-Vallo Torinese;TO
-Valloriate;CN
-Valmacca;AL
-Valperga;TO
-Valprato Soana;TO
-Valstrona;VB
-Vanzone con San Carlo;VB
-Vaprio d'Agogna;NO
-Varallo;VC
-Varallo Pombia;NO
-Varisella;TO
-Varzo;VB
-Vauda Canavese;TO
-Veglio;BI
-Venaria Reale;TO
-Venasca;CN
-Venaus;TO
-Verbania;VB
-Vercelli;VC
-Verduno;CN
-Vernante;CN
-Verolengo;TO
-Verrone;BI
-Verrua Savoia;TO
-Verzuolo;CN
-Vesime;AT
-Vespolate;NO
-Vestignè;TO
-Vezza d'Alba;CN
-Viale;AT
-Vialfrè;TO
-Viarigi;AT
-Vicoforte;CN
-Vicolungo;NO
-Vidracco;TO
-Vigliano Biellese;BI
-Vigliano d'Asti;AT
-Vignale Monferrato;AL
-Vignole Borbera;AL
-Vignolo;CN
-Vignone;VB
-Vigone;TO
-Viguzzolo;AL
-Villa San Secondo;AT
-Villa del Bosco;BI
-Villadeati;AL
-Villadossola;VB
-Villafalletto;CN
-Villafranca Piemonte;TO
-Villafranca d'Asti;AT
-Villalvernia;AL
-Villamiroglio;AL
-Villanova Biellese;BI
-Villanova Canavese;TO
-Villanova Mondovì;CN
-Villanova Monferrato;AL
-Villanova Solaro;CN
-Villanova d'Asti;AT
-Villar Dora;TO
-Villar Focchiardo;TO
-Villar Pellice;TO
-Villar Perosa;TO
-Villar San Costanzo;CN
-Villarbasse;TO
-Villarboit;VC
-Villareggia;TO
-Villaromagnano;AL
-Villastellone;TO
-Villata;VC
-Villette;VB
-Vinadio;CN
-Vinchio;AT
-Vinovo;TO
-Vinzaglio;NO
-Viola;CN
-Virle Piemonte;TO
-Vische;TO
-Visone;AL
-Vistrorio;TO
-Viverone;BI
-Viù;TO
-Vocca;VC
-Vogogna;VB
-Volpedo;AL
-Volpeglino;AL
-Volpiano;TO
-Voltaggio;AL
-Volvera;TO
-Vottignasco;CN
-Zimone;BI
-Zubiena;BI
-Zumaglia;BI
+# Comuni del Piemonte: nome;sigla provincia;lat;lon (ISTAT, Elenco comuni italiani, settembre 2026;
+# coordinate del centro dal dataset pubblico dei comuni italiani 2018 (comuni nati da fusioni dopo: quelle di uno dei comuni fusi)
+Acceglio;CN;44.4758;6.9912
+Acqui Terme;AL;44.6766;8.4698
+Agliano Terme;AT;44.7907;8.2511
+Agliè;TO;45.3634;7.7686
+Agrate Conturbia;NO;45.6760;8.5599
+Ailoche;BI;45.6981;8.2204
+Airasca;TO;44.9169;7.4844
+Aisone;CN;44.3134;7.2208
+Ala di Stura;TO;45.3151;7.3043
+Alagna Valsesia;VC;45.8533;7.9381
+Alba;CN;44.7009;8.0357
+Albano Vercellese;VC;45.4251;8.3806
+Albaretto della Torre;CN;44.5959;8.0641
+Albera Ligure;AL;44.7009;9.0684
+Albiano d'Ivrea;TO;45.4339;7.9491
+Albugnano;AT;45.0780;7.9715
+Alessandria;AL;44.9130;8.6154
+Alfiano Natta;AL;45.0472;8.2085
+Alice Bel Colle;AL;44.7258;8.4512
+Alice Castello;VC;45.3665;8.0747
+Alluvioni Piovera;AL;44.9954;8.7726
+Almese;TO;45.1177;7.3952
+Alpette;TO;45.4100;7.5786
+Alpignano;TO;45.0945;7.5243
+Altavilla Monferrato;AL;44.9929;8.3757
+Alto;CN;44.1083;8.0037
+Alto Sermenza;VC;45.8653;8.0234
+Alzano Scrivia;AL;45.0176;8.8813
+Ameno;NO;45.7888;8.4394
+Andezeno;TO;45.0359;7.8699
+Andorno Micca;BI;45.6156;8.0533
+Andrate;TO;45.5284;7.8738
+Angrogna;TO;44.8434;7.2243
+Antignano;AT;44.8454;8.1338
+Antrona Schieranco;VB;46.0614;8.1151
+Anzola d'Ossola;VB;45.9895;8.3475
+Aramengo;AT;45.0997;8.0020
+Arborio;VC;45.4961;8.3890
+Argentera;CN;44.3796;6.9694
+Arguello;CN;44.5829;8.1107
+Arignano;TO;45.0440;7.9024
+Arizzano;VB;45.9556;8.5831
+Armeno;NO;45.8220;8.4392
+Arola;VB;45.8095;8.3588
+Arona;NO;45.7604;8.5595
+Arquata Scrivia;AL;44.6867;8.8857
+Asigliano Vercellese;VC;45.2612;8.4062
+Asti;AT;44.8991;8.2041
+Aurano;VB;45.9987;8.5880
+Avigliana;TO;45.0794;7.3963
+Avolasca;AL;44.8030;8.9652
+Azeglio;TO;45.4249;7.9948
+Azzano d'Asti;AT;44.8747;8.2677
+Baceno;VB;46.2615;8.3195
+Bagnasco;CN;44.3021;8.0426
+Bagnolo Piemonte;CN;44.7599;7.3155
+Bairo;TO;45.3862;7.7569
+Balangero;TO;45.2700;7.5193
+Baldichieri d'Asti;AT;44.9070;8.0911
+Baldissero Canavese;TO;45.4084;7.7444
+Baldissero Torinese;TO;45.0684;7.8178
+Baldissero d'Alba;CN;44.7587;7.9157
+Balme;TO;45.3023;7.2183
+Balmuccia;VC;45.8183;8.1383
+Balocco;VC;45.4555;8.2810
+Balzola;AL;45.1832;8.4025
+Banchette;TO;45.4609;7.8566
+Bannio Anzino;VB;45.9845;8.1462
+Barbania;TO;45.2905;7.6305
+Barbaresco;CN;44.7255;8.0805
+Bardonecchia;TO;45.0782;6.7038
+Barengo;NO;45.5748;8.5120
+Barge;CN;44.7252;7.3234
+Barolo;CN;44.6099;7.9418
+Barone Canavese;TO;45.3277;7.8706
+Basaluzzo;AL;44.7683;8.7059
+Bassignana;AL;45.0032;8.7359
+Bastia Mondovì;CN;44.4414;7.8933
+Battifollo;CN;44.3192;8.0095
+Baveno;VB;45.9089;8.5048
+Bee;VB;45.9627;8.5802
+Beinasco;TO;45.0221;7.5792
+Beinette;CN;44.3657;7.6457
+Belforte Monferrato;AL;44.6244;8.6616
+Belgirate;VB;45.8384;8.5716
+Bellino;CN;44.5806;7.0172
+Bellinzago Novarese;NO;45.5703;8.6397
+Belvedere Langhe;CN;44.4946;7.9742
+Belveglio;AT;44.8305;8.3301
+Bene Vagienna;CN;44.5452;7.8328
+Benevello;CN;44.6282;8.1059
+Benna;BI;45.5124;8.1252
+Bergamasco;AL;44.8271;8.4552
+Bergolo;CN;44.5480;8.1835
+Bernezzo;CN;44.3886;7.4353
+Berzano di San Pietro;AT;45.0949;7.9540
+Berzano di Tortona;AL;44.8765;8.9506
+Beura-Cardezza;VB;46.0789;8.2993
+Biandrate;NO;45.4538;8.4637
+Bianzè;VC;45.3074;8.1201
+Bibiana;TO;44.7976;7.2898
+Biella;BI;45.5665;8.0541
+Bioglio;BI;45.6076;8.1303
+Bistagno;AL;44.6618;8.3686
+Bobbio Pellice;TO;44.8077;7.1179
+Boca;NO;45.6783;8.4087
+Boccioleto;VC;45.8300;8.1133
+Bognanco;VB;46.1228;8.2064
+Bogogno;NO;45.6672;8.5345
+Bollengo;TO;45.4734;7.9453
+Bolzano Novarese;NO;45.7628;8.4442
+Bonvicino;CN;44.5036;8.0159
+Borgaro Torinese;TO;45.1520;7.6579
+Borghetto di Borbera;AL;44.7311;8.9454
+Borgiallo;TO;45.4168;7.6677
+Borgo San Dalmazzo;CN;44.3288;7.4875
+Borgo San Martino;AL;45.0891;8.5236
+Borgo Ticino;NO;45.6881;8.6039
+Borgo Vercelli;VC;45.3572;8.4664
+Borgo d'Ale;VC;45.3499;8.0537
+Borgofranco d'Ivrea;TO;45.5130;7.8585
+Borgolavezzaro;NO;45.3184;8.6993
+Borgomale;CN;44.6204;8.1328
+Borgomanero;NO;45.6989;8.4630
+Borgomasino;TO;45.3616;7.9888
+Borgomezzavalle;VB;46.0532;8.1968
+Borgone Susa;TO;45.1231;7.2412
+Borgoratto Alessandrino;AL;44.8365;8.5394
+Borgosesia;VC;45.7167;8.2764
+Borriana;BI;45.5060;8.0396
+Bosco Marengo;AL;44.8221;8.6760
+Bosconero;TO;45.2686;7.7651
+Bosia;CN;44.6025;8.1462
+Bosio;AL;44.6478;8.7919
+Bossolasco;CN;44.5268;8.0575
+Boves;CN;44.3298;7.5520
+Bozzole;AL;45.0679;8.6049
+Bra;CN;44.6982;7.8547
+Brandizzo;TO;45.1777;7.8415
+Briaglia;CN;44.3951;7.8770
+Bricherasio;TO;44.8256;7.3029
+Briga Alta;CN;44.0832;7.7508
+Briga Novarese;NO;45.7314;8.4516
+Brignano-Frascata;AL;44.8120;9.0408
+Briona;NO;45.5422;8.4798
+Brondello;CN;44.6001;7.4051
+Brossasco;CN;44.5703;7.3604
+Brosso;TO;45.4928;7.8033
+Brovello-Carpugnino;VB;45.8427;8.5332
+Brozolo;TO;45.1174;8.0713
+Bruino;TO;45.0202;7.4677
+Bruno;AT;44.7906;8.4403
+Brusasco;TO;45.1560;8.0601
+Brusnengo;BI;45.5961;8.2525
+Bruzolo;TO;45.1431;7.1940
+Bubbio;AT;44.6638;8.2936
+Buriasco;TO;44.8734;7.4119
+Burolo;TO;45.4841;7.9321
+Buronzo;VC;45.4821;8.2683
+Busano;TO;45.3288;7.6557
+Busca;CN;44.5137;7.4735
+Bussoleno;TO;45.1373;7.1493
+Buttigliera Alta;TO;45.0670;7.4368
+Buttigliera d'Asti;AT;45.0225;7.9505
+Cabella Ligure;AL;44.6731;9.0963
+Cafasse;TO;45.2447;7.5181
+Calamandrana;AT;44.7365;8.3356
+Calasca-Castiglione;VB;46.0038;8.1702
+Callabiana;BI;45.6337;8.0907
+Calliano Monferrato;AT;45.0063;8.2573
+Calosso;AT;44.7395;8.2272
+Caltignaga;NO;45.5171;8.5879
+Caluso;TO;45.3079;7.8915
+Camagna Monferrato;AL;45.0178;8.4303
+Camandona;BI;45.6417;8.1000
+Cambiano;TO;44.9735;7.7793
+Cambiasca;VB;45.9643;8.5411
+Camburzano;BI;45.5442;8.0033
+Camerana;CN;44.4227;8.1408
+Camerano Casasco;AT;44.9887;8.0909
+Cameri;NO;45.5010;8.6622
+Camino;AL;45.1622;8.2870
+Campertogno;VC;45.7987;8.0322
+Campiglia Cervo;BI;45.6577;8.0121
+Campiglione Fenile;TO;44.8021;7.3250
+Canale;CN;44.7972;7.9914
+Candelo;BI;45.5463;8.1127
+Candia Canavese;TO;45.3282;7.8866
+Candiolo;TO;44.9603;7.6012
+Canelli;AT;44.7199;8.2882
+Canischio;TO;45.3743;7.5952
+Cannero Riviera;VB;46.0221;8.6793
+Cannobio;VB;46.0617;8.7002
+Canosio;CN;44.4553;7.0814
+Cantalupa;TO;44.9403;7.3326
+Cantalupo Ligure;AL;44.7190;9.0444
+Cantarana;AT;44.9004;8.0307
+Cantoira;TO;45.3432;7.3817
+Caprauna;CN;44.1158;7.9549
+Caprezzo;VB;45.9807;8.5613
+Capriata d'Orba;AL;44.7300;8.6889
+Caprie;TO;45.1179;7.3325
+Capriglio;AT;45.0042;8.0082
+Caprile;BI;45.6930;8.2130
+Caraglio;CN;44.4177;7.4276
+Caramagna Piemonte;CN;44.7804;7.7412
+Caravino;TO;45.3986;7.9602
+Carbonara Scrivia;AL;44.8498;8.8708
+Carcoforo;VC;45.9089;8.0489
+Cardè;CN;44.7442;7.4782
+Carema;TO;45.5844;7.8123
+Carentino;AL;44.8289;8.4705
+Caresana;VC;45.2211;8.5065
+Caresanablot;VC;45.3574;8.3888
+Carezzano;AL;44.8068;8.9000
+Carignano;TO;44.9067;7.6753
+Carisio;VC;45.4085;8.1986
+Carmagnola;TO;44.8465;7.7182
+Carpeneto;AL;44.6773;8.6063
+Carpignano Sesia;NO;45.5353;8.4183
+Carrega Ligure;AL;44.6191;9.1756
+Carrosio;AL;44.6594;8.8323
+Carrù;CN;44.4786;7.8801
+Cartignano;CN;44.4771;7.2877
+Cartosio;AL;44.5912;8.4185
+Casal Cermelli;AL;44.8357;8.6224
+Casalbeltrame;NO;45.4362;8.4684
+Casalborgone;TO;45.1300;7.9404
+Casale Corte Cerro;VB;45.9168;8.4151
+Casale Monferrato;AL;45.1350;8.4526
+Casaleggio Boiro;AL;44.6343;8.7317
+Casaleggio Novara;NO;45.4863;8.4927
+Casalgrasso;CN;44.8195;7.6250
+Casalino;NO;45.3577;8.5227
+Casalnoceto;AL;44.9132;8.9820
+Casalvolone;NO;45.3995;8.4644
+Casanova Elvo;VC;45.3995;8.2933
+Casapinta;BI;45.6150;8.1934
+Casasco;AL;44.8282;9.0061
+Cascinette d'Ivrea;TO;45.4785;7.9047
+Caselette;TO;45.1059;7.4832
+Caselle Torinese;TO;45.1772;7.6482
+Casorzo Monferrato;AT;45.0228;8.3341
+Cassano Spinola;AL;44.7662;8.8630
+Cassinasco;AT;44.6886;8.3017
+Cassine;AL;44.7482;8.5255
+Cassinelle;AL;44.6068;8.5605
+Castagneto Po;TO;45.1606;7.8870
+Castagnito;CN;44.7565;8.0302
+Castagnole Monferrato;AT;44.9614;8.3061
+Castagnole Piemonte;TO;44.8986;7.5666
+Castagnole delle Lanze;AT;44.7549;8.1492
+Castel Boglione;AT;44.7206;8.3812
+Castel Rocchero;AT;44.7188;8.4160
+Casteldelfino;CN;44.5910;7.0690
+Castell'Alfero;AT;44.9827;8.2094
+Castellamonte;TO;45.3833;7.7099
+Castellania Coppi;AL;44.7988;8.9305
+Castellar Guidobono;AL;44.9063;8.9467
+Castellazzo Bormida;AL;44.8455;8.5771
+Castellazzo Novarese;NO;45.5140;8.4887
+Castellero;AT;44.9240;8.0747
+Castelletto Cervo;BI;45.5190;8.2252
+Castelletto Merli;AL;45.0752;8.2406
+Castelletto Molina;AT;44.7503;8.4328
+Castelletto Monferrato;AL;44.9799;8.5662
+Castelletto Stura;CN;44.4442;7.6391
+Castelletto Uzzone;CN;44.4926;8.1860
+Castelletto d'Erro;AL;44.6251;8.3944
+Castelletto d'Orba;AL;44.6856;8.7023
+Castelletto sopra Ticino;NO;45.7141;8.6424
+Castellinaldo d'Alba;CN;44.7753;8.0315
+Castellino Tanaro;CN;44.4278;7.9819
+Castello di Annone;AT;44.8788;8.3137
+Castelmagno;CN;44.4092;7.2123
+Castelnuovo Belbo;AT;44.8018;8.4123
+Castelnuovo Bormida;AL;44.7437;8.5462
+Castelnuovo Calcea;AT;44.7882;8.2856
+Castelnuovo Don Bosco;AT;45.0413;7.9636
+Castelnuovo Nigra;TO;45.4373;7.6951
+Castelnuovo Scrivia;AL;44.9794;8.8816
+Castelnuovo di Ceva;CN;44.3533;8.1302
+Castelspina;AL;44.8045;8.5824
+Castiglione Falletto;CN;44.6233;7.9790
+Castiglione Tinella;CN;44.7260;8.1894
+Castiglione Torinese;TO;45.1233;7.8161
+Castino;CN;44.6170;8.1812
+Cavaglietto;NO;45.6028;8.5009
+Cavaglio d'Agogna;NO;45.6118;8.4828
+Cavaglià;BI;45.4058;8.0935
+Cavagnolo;TO;45.1521;8.0513
+Cavallerleone;CN;44.7394;7.6627
+Cavallermaggiore;CN;44.7079;7.6877
+Cavallirio;NO;45.6650;8.3967
+Cavatore;AL;44.6310;8.4524
+Cavour;TO;44.7840;7.3752
+Cella Monte;AL;45.0748;8.3907
+Cellarengo;AT;44.8660;7.9450
+Celle Enomondo;AT;44.8566;8.1230
+Celle di Macra;CN;44.4826;7.1797
+Cellio con Breia;VC;45.7555;8.3131
+Centallo;CN;44.5041;7.5901
+Ceppo Morelli;VB;45.9714;8.0667
+Cerano;NO;45.4107;8.7809
+Cercenasco;TO;44.8613;7.5013
+Ceres;TO;45.3131;7.3893
+Cereseto;AL;45.0860;8.3169
+Ceresole Alba;CN;44.7995;7.8206
+Ceresole Reale;TO;45.4326;7.2325
+Cerreto Grue;AL;44.8419;8.9320
+Cerreto d'Asti;AT;45.0498;8.0368
+Cerretto Langhe;CN;44.5743;8.0978
+Cerrina Monferrato;AL;45.1202;8.2152
+Cerrione;BI;45.4809;8.0740
+Cerro Tanaro;AT;44.8727;8.3602
+Cervasca;CN;44.3832;7.4679
+Cervatto;VC;45.8831;8.1624
+Cervere;CN;44.6348;7.7932
+Cesana Torinese;TO;44.9524;6.7942
+Cesara;VB;45.8351;8.3659
+Cessole;AT;44.6480;8.2432
+Ceva;CN;44.3862;8.0352
+Cherasco;CN;44.6522;7.8582
+Chialamberto;TO;45.3629;7.3457
+Chianocco;TO;45.1486;7.1694
+Chiaverano;TO;45.4994;7.9031
+Chieri;TO;45.0132;7.8211
+Chiesanuova;TO;45.4178;7.6561
+Chiomonte;TO;45.1194;6.9834
+Chiusa di Pesio;CN;44.3248;7.6779
+Chiusa di San Michele;TO;45.1015;7.3264
+Chiusano d'Asti;AT;44.9851;8.1178
+Chivasso;TO;45.1886;7.8871
+Ciconio;TO;45.3303;7.7599
+Cigliano;VC;45.3096;8.0215
+Cigliè;CN;44.4351;7.9262
+Cinaglio;AT;44.9748;8.1002
+Cintano;TO;45.4281;7.6866
+Cinzano;TO;45.0939;7.9211
+Ciriè;TO;45.2320;7.6038
+Cissone;CN;44.5631;8.0305
+Cisterna d'Asti;AT;44.8262;8.0048
+Civiasco;VC;45.8067;8.2928
+Clavesana;CN;44.4821;7.9120
+Claviere;TO;44.9386;6.7493
+Coassolo Torinese;TO;45.3007;7.4613
+Coazze;TO;45.0514;7.2946
+Coazzolo;AT;44.7282;8.1451
+Cocconato;AT;45.0872;8.0392
+Coggiola;BI;45.6846;8.1852
+Colazza;NO;45.7926;8.4991
+Collegno;TO;45.0774;7.5691
+Colleretto Castelnuovo;TO;45.4214;7.6790
+Colleretto Giacosa;TO;45.4329;7.8000
+Collobiano;VC;45.3971;8.3485
+Comignago;NO;45.7152;8.5651
+Condove;TO;45.1171;7.3107
+Coniolo;AL;45.1469;8.3720
+Conzano;AL;45.0205;8.4561
+Corio;TO;45.3127;7.5326
+Corneliano d'Alba;CN;44.7355;7.9613
+Corsione;AT;45.0007;8.1451
+Cortandone;AT;44.9597;8.0576
+Cortanze;AT;45.0152;8.0896
+Cortazzone;AT;44.9795;8.0619
+Cortemilia;CN;44.5809;8.1919
+Cortiglione;AT;44.8230;8.3586
+Cossano Belbo;CN;44.6691;8.1986
+Cossano Canavese;TO;45.3883;7.9934
+Cossato;BI;45.5701;8.1806
+Cossogno;VB;45.9640;8.5100
+Cossombrato;AT;44.9941;8.1375
+Costa Vescovato;AL;44.8182;8.9290
+Costanzana;VC;45.2362;8.3701
+Costigliole Saluzzo;CN;44.5646;7.4849
+Costigliole d'Asti;AT;44.7882;8.1806
+Cravagliana;VC;45.8473;8.2011
+Cravanzana;CN;44.5732;8.1282
+Craveggia;VB;46.1406;8.4898
+Cremolino;AL;44.6375;8.5858
+Crescentino;VC;45.1923;8.1026
+Cressa;NO;45.6480;8.5075
+Crevacuore;BI;45.6858;8.2471
+Crevoladossola;VB;46.1560;8.3036
+Crissolo;CN;44.6991;7.1572
+Crodo;VB;46.2235;8.3234
+Crova;VC;45.3300;8.2119
+Cuceglio;TO;45.3589;7.8148
+Cumiana;TO;44.9828;7.3744
+Cuneo;CN;44.3933;7.5512
+Cunico;AT;45.0404;8.0972
+Cuorgnè;TO;45.3912;7.6489
+Cureggio;NO;45.6751;8.4614
+Curino;BI;45.6276;8.2359
+Demonte;CN;44.3153;7.2975
+Denice;AL;44.5987;8.3340
+Dernice;AL;44.7676;9.0501
+Desana;VC;45.2687;8.3575
+Diano d'Alba;CN;44.6514;8.0277
+Divignano;NO;45.6623;8.6015
+Dogliani;CN;44.5301;7.9452
+Domodossola;VB;46.1153;8.2920
+Donato;BI;45.5283;7.9076
+Dormelletto;NO;45.7302;8.5732
+Dorzano;BI;45.4252;8.0970
+Dronero;CN;44.4670;7.3633
+Druento;TO;45.1347;7.5762
+Druogno;VB;46.1353;8.4318
+Dusino San Michele;AT;44.9202;7.9723
+Elva;CN;44.5398;7.0896
+Entracque;CN;44.2408;7.3978
+Envie;CN;44.6818;7.3722
+Exilles;TO;45.0975;6.9296
+Fabbrica Curone;AL;44.7548;9.1542
+Fara Novarese;NO;45.5551;8.4591
+Farigliano;CN;44.5117;7.9170
+Faule;CN;44.8054;7.5807
+Favria;TO;45.3328;7.6880
+Feisoglio;CN;44.5434;8.1042
+Feletto;TO;45.3055;7.7471
+Felizzano;AL;44.8980;8.4358
+Fenestrelle;TO;45.0343;7.0519
+Ferrere;AT;44.8734;7.9939
+Fiano;TO;45.2181;7.5198
+Fiorano Canavese;TO;45.4676;7.8290
+Fobello;VC;45.8896;8.1589
+Foglizzo;TO;45.2720;7.8232
+Fontaneto d'Agogna;NO;45.6399;8.4846
+Fontanetto Po;VC;45.1934;8.1917
+Fontanile;AT;44.7534;8.4222
+Formazza;VB;46.3767;8.4267
+Formigliana;VC;45.4288;8.2929
+Forno Canavese;TO;45.3468;7.5868
+Fossano;CN;44.5494;7.7249
+Frabosa Soprana;CN;44.2875;7.8071
+Frabosa Sottana;CN;44.3020;7.7983
+Fraconalto;AL;44.5922;8.8780
+Francavilla Bisio;AL;44.7359;8.7317
+Frascaro;AL;44.8271;8.5327
+Frassinello Monferrato;AL;45.0315;8.3866
+Frassineto Po;AL;45.1340;8.5361
+Frassinetto;TO;45.4360;7.6057
+Frassino;CN;44.5714;7.2756
+Fresonara;AL;44.7827;8.6848
+Frinco;AT;45.0056;8.1754
+Front;TO;45.2796;7.6656
+Frossasco;TO;44.9336;7.3508
+Frugarolo;AL;44.8390;8.6791
+Fubine Monferrato;AL;44.9656;8.4254
+Gabiano;AL;45.1589;8.1932
+Gaglianico;BI;45.5394;8.0747
+Gaiola;CN;44.3352;7.4068
+Galliate;NO;45.4777;8.6953
+Gamalero;AL;44.8089;8.5431
+Gambasca;CN;44.6294;7.3474
+Garbagna;AL;44.7809;8.9990
+Garbagna Novarese;NO;45.3867;8.6597
+Garessio;CN;44.1973;8.0299
+Gargallo;NO;45.7275;8.4292
+Garzigliana;TO;44.8368;7.3747
+Gassino Torinese;TO;45.1275;7.8249
+Gattico-Veruno;NO;45.7091;8.5205
+Gattinara;VC;45.6173;8.3713
+Gavi;AL;44.6883;8.8036
+Genola;CN;44.5877;7.6627
+Germagnano;TO;45.2622;7.4669
+Germagno;VB;45.8925;8.3880
+Ghemme;NO;45.5978;8.4201
+Ghiffa;VB;45.9564;8.6171
+Ghislarengo;VC;45.5293;8.3843
+Giaglione;TO;45.1397;7.0141
+Giarole;AL;45.0607;8.5679
+Giaveno;TO;45.0448;7.3531
+Gifflenga;BI;45.4933;8.2316
+Gignese;VB;45.8606;8.5099
+Givoletto;TO;45.1588;7.4968
+Gorzegno;CN;44.5119;8.1351
+Gottasecca;CN;44.4617;8.1673
+Govone;CN;44.8049;8.1000
+Gozzano;NO;45.7476;8.4347
+Graglia;BI;45.5579;7.9811
+Grana Monferrato;AT;44.9981;8.2991
+Granozzo con Monticello;NO;45.3601;8.5741
+Gravellona Toce;VB;45.9276;8.4314
+Gravere;TO;45.1239;7.0211
+Grazzano Badoglio;AT;45.0389;8.3136
+Greggio;VC;45.4518;8.3825
+Gremiasco;AL;44.7970;9.1047
+Grignasco;NO;45.6819;8.3397
+Grinzane Cavour;CN;44.6565;7.9822
+Grognardo;AL;44.6299;8.4915
+Grondona;AL;44.6972;8.9625
+Groscavallo;TO;45.3690;7.2823
+Grosso;TO;45.2564;7.5566
+Grugliasco;TO;45.0621;7.5778
+Guardabosone;VC;45.7009;8.2503
+Guarene;CN;44.7378;8.0337
+Guazzora;AL;45.0136;8.8449
+Gurro;VB;46.0860;8.5701
+Igliano;CN;44.4435;8.0125
+Incisa Scapaccino;AT;44.8084;8.3809
+Ingria;TO;45.4663;7.5709
+Intragna;VB;45.9953;8.5763
+Inverso Pinasca;TO;44.9472;7.2160
+Invorio;NO;45.7559;8.4867
+Isasca;CN;44.5873;7.3815
+Isola Sant'Antonio;AL;45.0309;8.8504
+Isola d'Asti;AT;44.8295;8.1772
+Isolabella;TO;44.9066;7.9093
+Issiglio;TO;45.4468;7.7542
+Ivrea;TO;45.4662;7.8760
+La Cassa;TO;45.1818;7.5191
+La Loggia;TO;44.9567;7.6677
+La Morra;CN;44.6373;7.9335
+Lagnasco;CN;44.6247;7.5553
+Lamporo;VC;45.2301;8.0976
+Landiona;NO;45.4969;8.4222
+Lanzo Torinese;TO;45.2723;7.4766
+Lauriano;TO;45.1585;7.9917
+Leini;TO;45.1839;7.7151
+Lemie;TO;45.2286;7.2929
+Lenta;VC;45.5556;8.3844
+Lequio Berria;CN;44.6046;8.0977
+Lequio Tanaro;CN;44.5602;7.8836
+Lerma;AL;44.6350;8.7125
+Lesa;NO;45.8301;8.5648
+Lesegno;CN;44.4012;7.9665
+Lessolo;TO;45.4762;7.8142
+Lessona;BI;45.5861;8.1962
+Levice;CN;44.5377;8.1566
+Levone;TO;45.3181;7.6059
+Lignana;VC;45.2853;8.3460
+Limone Piemonte;CN;44.2013;7.5761
+Lisio;CN;44.3067;7.9796
+Livorno Ferraris;VC;45.2817;8.0820
+Loazzolo;AT;44.6690;8.2585
+Locana;TO;45.4170;7.4613
+Lombardore;TO;45.2357;7.7363
+Lombriasco;TO;44.8416;7.6358
+Loranzè;TO;45.4422;7.8109
+Loreglia;VB;45.9064;8.3710
+Lozzolo;VC;45.6226;8.3221
+Lu e Cuccaro Monferrato;AL;45.0018;8.4840
+Luserna San Giovanni;TO;44.8143;7.2458
+Lusernetta;TO;44.8024;7.2502
+Lusigliè;TO;45.3186;7.7665
+Macello;TO;44.8512;7.4008
+Macra;CN;44.4999;7.1792
+Macugnaga;VB;45.9686;7.9678
+Madonna del Sasso;VB;45.7923;8.3681
+Maggiora;NO;45.6908;8.4210
+Magliano Alfieri;CN;44.7665;8.0678
+Magliano Alpi;CN;44.4581;7.7996
+Maglione;TO;45.3477;8.0117
+Magnano;BI;45.4627;8.0051
+Malesco;VB;46.1267;8.5004
+Malvicino;AL;44.5597;8.4141
+Mandello Vitta;NO;45.4952;8.4592
+Mango;CN;44.6846;8.1503
+Manta;CN;44.6143;7.4863
+Mappano;TO;45.1475;7.7070
+Marano Ticino;NO;45.6298;8.6319
+Maranzana;AT;44.7598;8.4768
+Marene;CN;44.6615;7.7292
+Marentino;TO;45.0580;7.8733
+Maretto;AT;44.9444;8.0342
+Margarita;CN;44.4026;7.6869
+Marmora;CN;44.4575;7.0945
+Marsaglia;CN;44.4522;7.9830
+Martiniana Po;CN;44.6264;7.3663
+Masera;VB;46.1370;8.3265
+Masio;AL;44.8694;8.4080
+Massazza;BI;45.4921;8.1652
+Massello;TO;44.9586;7.0563
+Masserano;BI;45.5957;8.2233
+Massino Visconti;NO;45.8219;8.5388
+Massiola;VB;45.9122;8.3197
+Mathi;TO;45.2566;7.5413
+Mattie;TO;45.1187;7.1122
+Mazzè;TO;45.2985;7.9370
+Meana di Susa;TO;45.1207;7.0681
+Meina;NO;45.7900;8.5376
+Melazzo;AL;44.6440;8.4269
+Melle;CN;44.5621;7.3206
+Merana;AL;44.5178;8.2975
+Mercenasco;TO;45.3570;7.8826
+Mergozzo;VB;45.9610;8.4529
+Mezzana Mortigliengo;BI;45.6260;8.1894
+Mezzenile;TO;45.2924;7.3950
+Mezzomerico;NO;45.6203;8.6046
+Miagliano;BI;45.6141;8.0438
+Miasino;NO;45.8022;8.4304
+Miazzina;VB;45.9752;8.5239
+Mirabello Monferrato;AL;45.0357;8.5235
+Moasca;AT;44.7626;8.2779
+Moiola;CN;44.3197;7.3889
+Molare;AL;44.6206;8.6011
+Molino dei Torti;AL;45.0235;8.8920
+Mollia;VC;45.8153;8.0310
+Mombaldone;AT;44.5692;8.3292
+Mombarcaro;CN;44.4678;8.0851
+Mombaruzzo;AT;44.7710;8.4487
+Mombasiglio;CN;44.3633;7.9700
+Mombello Monferrato;AL;45.1330;8.2509
+Mombello di Torino;TO;45.0464;7.9195
+Mombercelli;AT;44.8170;8.2944
+Momo;NO;45.5739;8.5554
+Mompantero;TO;45.1399;7.0580
+Momperone;AL;44.8386;9.0345
+Monale;AT;44.9361;8.0716
+Monastero Bormida;AT;44.6475;8.3246
+Monastero di Lanzo;TO;45.3014;7.4391
+Monastero di Vasco;CN;44.3402;7.8228
+Monasterolo Casotto;CN;44.3308;7.9411
+Monasterolo di Savigliano;CN;44.6863;7.6208
+Moncalieri;TO;45.0009;7.6852
+Moncalvo;AT;45.0514;8.2635
+Moncenisio;TO;45.2053;6.9836
+Moncestino;AL;45.1549;8.1584
+Monchiero;CN;44.5730;7.9181
+Moncrivello;VC;45.3312;7.9959
+Moncucco Torinese;AT;45.0679;7.9322
+Mondovì;CN;44.3872;7.8198
+Monesiglio;CN;44.4649;8.1164
+Monforte d'Alba;CN;44.5823;7.9684
+Mongardino;AT;44.8488;8.2187
+Mongiardino Ligure;AL;44.6386;9.0613
+Mongrando;BI;45.5192;8.0072
+Monleale;AL;44.8851;8.9844
+Montabone;AT;44.6986;8.3903
+Montacuto;AL;44.7668;9.1069
+Montafia;AT;44.9892;8.0252
+Montaldeo;AL;44.6665;8.7307
+Montaldo Bormida;AL;44.6835;8.5890
+Montaldo Roero;CN;44.7686;7.9245
+Montaldo Scarampi;AT;44.8286;8.2574
+Montaldo Torinese;TO;45.0664;7.8509
+Montaldo di Mondovì;CN;44.3195;7.8658
+Montalenghe;TO;45.3377;7.8399
+Montalto Dora;TO;45.4936;7.8638
+Montanaro;TO;45.2329;7.8528
+Montanera;CN;44.4620;7.6656
+Montecastello;AL;44.9490;8.6866
+Montechiaro d'Acqui;AL;44.5950;8.3797
+Montechiaro d'Asti;AT;45.0082;8.1124
+Montecrestese;VB;46.1655;8.3265
+Montegioco;AL;44.8378;8.9541
+Montegrosso d'Asti;AT;44.8224;8.2387
+Montelupo Albese;CN;44.6231;8.0464
+Montemagno Monferrato;AT;44.9840;8.3240
+Montemale di Cuneo;CN;44.4377;7.3728
+Montemarzino;AL;44.8485;8.9931
+Monterosso Grana;CN;44.4089;7.3239
+Montescheno;VB;46.0666;8.2329
+Monteu Roero;CN;44.7802;7.9309
+Monteu da Po;TO;45.1505;8.0148
+Montezemolo;CN;44.3782;8.1415
+Monticello d'Alba;CN;44.7183;7.9410
+Montiglio Monferrato;AT;45.0674;8.0977
+Montà;CN;44.8131;7.9600
+Morano sul Po;AL;45.1640;8.3656
+Moransengo-Tonengo;AT;45.1152;8.0249
+Morbello;AL;44.6035;8.5100
+Moretta;CN;44.7639;7.5369
+Moriondo Torinese;TO;45.0391;7.9441
+Mornese;AL;44.6391;8.7562
+Morozzo;CN;44.4230;7.7104
+Morsasco;AL;44.6646;8.5491
+Motta de' Conti;VC;45.1915;8.5208
+Mottalciata;BI;45.5086;8.2075
+Murazzano;CN;44.4738;8.0188
+Murello;CN;44.7530;7.6009
+Murisengo;AL;45.0834;8.1375
+Muzzano;BI;45.5606;7.9865
+Narzole;CN;44.5942;7.8705
+Nebbiuno;NO;45.8061;8.5242
+Neive;CN;44.7263;8.1155
+Netro;BI;45.5380;7.9479
+Neviglie;CN;44.6921;8.1160
+Nibbiola;NO;45.3718;8.6564
+Nichelino;TO;44.9952;7.6474
+Niella Belbo;CN;44.5133;8.0791
+Niella Tanaro;CN;44.4148;7.9214
+Nizza Monferrato;AT;44.7736;8.3565
+Noasca;TO;45.4531;7.3135
+Nole;TO;45.2452;7.5701
+Nomaglio;TO;45.5352;7.8597
+None;TO;44.9323;7.5412
+Nonio;VB;45.8451;8.3768
+Novalesa;TO;45.1876;7.0147
+Novara;NO;45.4459;8.6219
+Novello;CN;44.5872;7.9277
+Novi Ligure;AL;44.7602;8.7871
+Nucetto;CN;44.3394;8.0589
+Occhieppo Inferiore;BI;45.5532;8.0226
+Occhieppo Superiore;BI;45.5648;8.0047
+Occimiano;AL;45.0602;8.5067
+Odalengo Grande;AL;45.1095;8.1667
+Odalengo Piccolo;AL;45.0719;8.2095
+Oggebbio;VB;45.9969;8.6529
+Oglianico;TO;45.3426;7.6927
+Olcenengo;VC;45.3636;8.3114
+Oldenico;VC;45.4024;8.3827
+Oleggio;NO;45.5967;8.6374
+Oleggio Castello;NO;45.7493;8.5297
+Olivola;AL;45.0377;8.3670
+Olmo Gentile;AT;44.5856;8.2470
+Omegna;VB;45.8756;8.4089
+Oncino;CN;44.6765;7.1903
+Orbassano;TO;45.0070;7.5370
+Orio Canavese;TO;45.3285;7.8603
+Ormea;CN;44.1486;7.9107
+Ornavasso;VB;45.9692;8.4158
+Orsara Bormida;AL;44.6901;8.5624
+Orta San Giulio;NO;45.7992;8.4057
+Osasco;TO;44.8495;7.3432
+Osasio;TO;44.8695;7.6075
+Ostana;CN;44.6922;7.1885
+Ottiglio;AL;45.0518;8.3391
+Oulx;TO;45.0313;6.8322
+Ovada;AL;44.6375;8.6464
+Oviglio;AL;44.8598;8.4867
+Ozegna;TO;45.3490;7.7431
+Ozzano Monferrato;AL;45.1019;8.3762
+Paderna;AL;44.8207;8.8900
+Paesana;CN;44.6854;7.2766
+Pagno;CN;44.6137;7.4299
+Palazzo Canavese;TO;45.4575;7.9780
+Palazzolo Vercellese;VC;45.1845;8.2328
+Pallanzeno;VB;46.0435;8.2579
+Pamparato;CN;44.2771;7.9139
+Pancalieri;TO;44.8305;7.5882
+Parella;TO;45.4300;7.7910
+Pareto;AL;44.5157;8.3829
+Parodi Ligure;AL;44.6708;8.7586
+Paroldo;CN;44.4317;8.0713
+Paruzzaro;NO;45.7487;8.5135
+Passerano Marmorito;AT;45.0564;8.0188
+Pasturana;AL;44.7507;8.7490
+Pavarolo;TO;45.0689;7.8348
+Pavone Canavese;TO;45.4353;7.8540
+Pecetto Torinese;TO;45.0196;7.7487
+Pecetto di Valenza;AL;44.9897;8.6705
+Pella;NO;45.7971;8.3831
+Penango;AT;45.0333;8.2501
+Perletto;CN;44.5990;8.2141
+Perlo;CN;44.3331;8.0836
+Perosa Argentina;TO;44.9581;7.1924
+Perosa Canavese;TO;45.3972;7.8293
+Perrero;TO;44.9375;7.1153
+Pertengo;VC;45.2356;8.4176
+Pertusio;TO;45.3534;7.6387
+Pessinetto;TO;45.2905;7.4028
+Pettenasco;NO;45.8173;8.4086
+Pettinengo;BI;45.6140;8.1053
+Peveragno;CN;44.3300;7.6171
+Pezzana;VC;45.2621;8.4842
+Pezzolo Valle Uzzone;CN;44.5393;8.1941
+Pianezza;TO;45.1006;7.5464
+Pianfei;CN;44.3705;7.7098
+Piasco;CN;44.5686;7.4574
+Piatto;BI;45.5918;8.1352
+Piea;AT;45.0253;8.0721
+Piedicavallo;BI;45.6896;7.9561
+Piedimulera;VB;46.0271;8.2598
+Pietra Marazzi;AL;44.9441;8.6706
+Pietraporzio;CN;44.3440;7.0319
+Pieve Vergonte;VB;46.0056;8.2685
+Pila;VC;45.7702;8.0808
+Pinasca;TO;44.9427;7.2277
+Pinerolo;TO;44.8873;7.3320
+Pino Torinese;TO;45.0435;7.7722
+Pino d'Asti;AT;45.0582;7.9863
+Piobesi Torinese;TO;44.9331;7.6119
+Piobesi d'Alba;CN;44.7349;7.9785
+Piode;VC;45.7698;8.0531
+Piossasco;TO;44.9907;7.4628
+Piovà Massaia;AT;45.0545;8.0509
+Piozzo;CN;44.5158;7.8924
+Pisano;NO;45.7935;8.5104
+Piscina;TO;44.9195;7.4259
+Piverone;TO;45.4475;8.0071
+Pocapaglia;CN;44.7195;7.8872
+Pogno;NO;45.7567;8.3831
+Poirino;TO;44.9212;7.8436
+Pollone;BI;45.5835;8.0009
+Polonghera;CN;44.8034;7.5961
+Pomaretto;TO;44.9551;7.1822
+Pomaro Monferrato;AL;45.0639;8.5952
+Pombia;NO;45.6493;8.6324
+Ponderano;BI;45.5386;8.0568
+Pont Canavese;TO;45.4207;7.5936
+Pontechianale;CN;44.6220;7.0283
+Pontecurone;AL;44.9588;8.9359
+Pontestura;AL;45.1436;8.3325
+Ponti;AL;44.6274;8.3652
+Ponzano Monferrato;AL;45.0845;8.2662
+Ponzone;AL;44.5864;8.4596
+Portacomaro;AT;44.9571;8.2585
+Porte;TO;44.8876;7.2680
+Portula;BI;45.6753;8.1791
+Postua;VC;45.7142;8.2315
+Pozzol Groppo;AL;44.8775;9.0293
+Pozzolo Formigaro;AL;44.7939;8.7815
+Pradleves;CN;44.4186;7.2821
+Pragelato;TO;45.0163;6.9423
+Prali;TO;44.8904;7.0490
+Pralormo;TO;44.8614;7.9007
+Pralungo;BI;45.5909;8.0381
+Pramollo;TO;44.9046;7.2117
+Prarolo;VC;45.2822;8.4793
+Prarostino;TO;44.8658;7.2697
+Prasco;AL;44.6424;8.5529
+Prascorsano;TO;45.3677;7.6157
+Pratiglione;TO;45.3536;7.5961
+Prato Sesia;NO;45.6479;8.3738
+Pray;BI;45.6762;8.2087
+Prazzo;CN;44.4831;7.0554
+Predosa;AL;44.7527;8.6592
+Premeno;VB;45.9771;8.5915
+Premia;VB;46.2688;8.3395
+Premosello-Chiovenda;VB;46.0027;8.3294
+Priero;CN;44.3766;8.0924
+Priocca;CN;44.7913;8.0627
+Priola;CN;44.2460;8.0224
+Prunetto;CN;44.4894;8.1443
+Quagliuzzo;TO;45.4265;7.7818
+Quaranti;AT;44.7510;8.4491
+Quaregna Cerreto;BI;45.5764;8.1648
+Quargnento;AL;44.9448;8.4877
+Quarna Sopra;VB;45.8730;8.3722
+Quarna Sotto;VB;45.8682;8.3639
+Quarona;VC;45.7599;8.2654
+Quassolo;TO;45.5249;7.8325
+Quattordio;AL;44.8992;8.4060
+Quincinetto;TO;45.5608;7.8058
+Quinto Vercellese;VC;45.3805;8.3622
+Racconigi;CN;44.7678;7.6760
+Rassa;VC;45.7686;8.0142
+Re;VB;46.1306;8.5444
+Reano;TO;45.0517;7.4296
+Recetto;NO;45.4608;8.4361
+Refrancore;AT;44.9376;8.3427
+Revello;CN;44.6547;7.3890
+Revigliasco d'Asti;AT;44.8587;8.1584
+Ribordone;TO;45.4316;7.5024
+Ricaldone;AL;44.7321;8.4696
+Rifreddo;CN;44.6505;7.3491
+Rimella;VC;45.9079;8.1826
+Rittana;CN;44.3506;7.4006
+Riva presso Chieri;TO;44.9863;7.8692
+Rivalba;TO;45.1188;7.8870
+Rivalta Bormida;AL;44.7114;8.5503
+Rivalta di Torino;TO;45.0345;7.5233
+Rivara;TO;45.3323;7.6251
+Rivarolo Canavese;TO;45.3328;7.7252
+Rivarone;AL;44.9777;8.7157
+Rivarossa;TO;45.2513;7.7172
+Rive;VC;45.2126;8.4183
+Rivoli;TO;45.0706;7.5339
+Roaschia;CN;44.2701;7.4561
+Roascio;CN;44.4172;8.0225
+Roasio;VC;45.6086;8.2889
+Roatto;AT;44.9515;8.0266
+Robassomero;TO;45.2001;7.5702
+Robella;AT;45.1023;8.1001
+Robilante;CN;44.2942;7.5112
+Roburent;CN;44.3050;7.8902
+Rocca Canavese;TO;45.3094;7.5785
+Rocca Cigliè;CN;44.4441;7.9511
+Rocca Grimalda;AL;44.6711;8.6473
+Rocca d'Arazzo;AT;44.8739;8.2858
+Rocca de' Baldi;CN;44.4302;7.7457
+Roccabruna;CN;44.4763;7.3407
+Roccaforte Ligure;AL;44.6777;9.0278
+Roccaforte Mondovì;CN;44.3184;7.7459
+Roccasparvera;CN;44.3417;7.4413
+Roccaverano;AT;44.5930;8.2719
+Roccavione;CN;44.3144;7.4813
+Rocchetta Belbo;CN;44.6371;8.1753
+Rocchetta Ligure;AL;44.7065;9.0500
+Rocchetta Palafea;AT;44.7070;8.3457
+Rocchetta Tanaro;AT;44.8589;8.3443
+Roddi;CN;44.6785;7.9761
+Roddino;CN;44.5741;8.0187
+Rodello;CN;44.6306;8.0593
+Roletto;TO;44.9252;7.3307
+Romagnano Sesia;NO;45.6334;8.3829
+Romano Canavese;TO;45.3913;7.8679
+Romentino;NO;45.4626;8.7209
+Ronco Biellese;BI;45.5816;8.0989
+Ronco Canavese;TO;45.4994;7.5457
+Rondissone;TO;45.2468;7.9658
+Ronsecco;VC;45.2535;8.2778
+Roppolo;BI;45.4204;8.0687
+Rorà;TO;44.7923;7.1985
+Rosazza;BI;45.6761;7.9775
+Rosignano Monferrato;AL;45.0798;8.3991
+Rossa;VC;45.8335;8.1256
+Rossana;CN;44.5425;7.4326
+Rosta;TO;45.0714;7.4640
+Roure;TO;45.0011;7.1291
+Rovasenda;VC;45.5368;8.3136
+Rubiana;TO;45.1392;7.3824
+Rueglio;TO;45.4678;7.7558
+Ruffia;CN;44.7072;7.6024
+Sagliano Micca;BI;45.6228;8.0453
+Sala Biellese;BI;45.5083;7.9555
+Sala Monferrato;AL;45.0754;8.3582
+Salasco;VC;45.3253;8.2638
+Salassa;TO;45.3596;7.6894
+Salbertrand;TO;45.0724;6.8837
+Sale;AL;44.9847;8.8090
+Sale San Giovanni;CN;44.3994;8.0786
+Sale delle Langhe;CN;44.3971;8.0835
+Salerano Canavese;TO;45.4564;7.8499
+Sali Vercellese;VC;45.3093;8.3297
+Saliceto;CN;44.4133;8.1668
+Salmour;CN;44.5782;7.7921
+Saluggia;VC;45.2358;8.0111
+Salussola;BI;45.4493;8.1089
+Saluzzo;CN;44.6470;7.4908
+Salza di Pinerolo;TO;44.9405;7.0532
+Sambuco;CN;44.3373;7.0778
+Samone;TO;45.4490;7.8410
+Sampeyre;CN;44.5794;7.1889
+San Benedetto Belbo;CN;44.4899;8.0579
+San Benigno Canavese;TO;45.2240;7.7827
+San Bernardino Verbano;VB;45.9568;8.5202
+San Carlo Canavese;TO;45.2482;7.6102
+San Colombano Belmonte;TO;45.3814;7.6185
+San Cristoforo;AL;44.6924;8.7500
+San Damiano Macra;CN;44.4884;7.2563
+San Damiano d'Asti;AT;44.8346;8.0652
+San Didero;TO;45.1352;7.2152
+San Francesco al Campo;TO;45.2255;7.6557
+San Germano Chisone;TO;44.8987;7.2409
+San Germano Vercellese;VC;45.3502;8.2509
+San Giacomo Vercellese;VC;45.4974;8.3253
+San Gillio;TO;45.1421;7.5338
+San Giorgio Canavese;TO;45.3354;7.7943
+San Giorgio Monferrato;AL;45.1078;8.4149
+San Giorgio Scarampi;AT;44.6113;8.2420
+San Giorio di Susa;TO;45.1284;7.1775
+San Giusto Canavese;TO;45.3122;7.8083
+San Martino Alfieri;AT;44.8185;8.1094
+San Martino Canavese;TO;45.3946;7.8184
+San Marzano Oliveto;AT;44.7532;8.2962
+San Maurizio Canavese;TO;45.2191;7.6308
+San Maurizio d'Opaglio;NO;45.7725;8.3910
+San Mauro Torinese;TO;45.1031;7.7663
+San Michele Mondovì;CN;44.3765;7.9082
+San Nazzaro Sesia;NO;45.4381;8.4236
+San Paolo Solbrito;AT;44.9523;7.9728
+San Pietro Mosezzo;NO;45.4556;8.5435
+San Pietro Val Lemina;TO;44.9073;7.3136
+San Ponso;TO;45.3508;7.6675
+San Raffaele Cimena;TO;45.1472;7.8487
+San Salvatore Monferrato;AL;44.9948;8.5667
+San Sebastiano Curone;AL;44.7856;9.0652
+San Sebastiano da Po;TO;45.1664;7.9535
+San Secondo di Pinerolo;TO;44.8666;7.2986
+Sandigliano;BI;45.5215;8.0759
+Sanfront;CN;44.6458;7.3202
+Sanfrè;CN;44.7522;7.8035
+Sangano;TO;45.0262;7.4505
+Sant'Agata Fossili;AL;44.7859;8.9189
+Sant'Albano Stura;CN;44.5099;7.7211
+Sant'Ambrogio di Torino;TO;45.0997;7.3593
+Sant'Antonino di Susa;TO;45.1071;7.2735
+Santa Maria Maggiore;VB;46.1351;8.4669
+Santa Vittoria d'Alba;CN;44.6965;7.9332
+Santena;TO;44.9497;7.7732
+Santhià;VC;45.3669;8.1744
+Santo Stefano Belbo;CN;44.7075;8.2310
+Santo Stefano Roero;CN;44.7888;7.9399
+Sardigliano;AL;44.7543;8.9077
+Sarezzano;AL;44.8676;8.9154
+Sauze d'Oulx;TO;45.0281;6.8582
+Sauze di Cesana;TO;44.9404;6.8605
+Savigliano;CN;44.6480;7.6575
+Scagnello;CN;44.3323;7.9868
+Scalenghe;TO;44.8883;7.4980
+Scarmagno;TO;45.3858;7.8407
+Scarnafigi;CN;44.6818;7.5669
+Sciolze;TO;45.0950;7.8777
+Scopa;VC;45.7917;8.1132
+Scopello;VC;45.7737;8.0948
+Scurzolengo;AT;44.9657;8.2783
+Serole;AT;44.5538;8.2597
+Serralunga d'Alba;CN;44.6092;8.0006
+Serralunga di Crea;AL;45.1007;8.2819
+Serravalle Langhe;CN;44.5609;8.0577
+Serravalle Scrivia;AL;44.7195;8.8590
+Serravalle Sesia;VC;45.6861;8.3115
+Sessame;AT;44.6689;8.3378
+Sestriere;TO;44.9576;6.8766
+Settime;AT;44.9641;8.1129
+Settimo Rottaro;TO;45.4049;7.9922
+Settimo Torinese;TO;45.1370;7.7712
+Settimo Vittone;TO;45.5481;7.8317
+Sezzadio;AL;44.7856;8.5727
+Sillavengo;NO;45.5205;8.4405
+Silvano d'Orba;AL;44.6856;8.6710
+Sinio;CN;44.5995;8.0216
+Sizzano;NO;45.5773;8.4373
+Soglio;AT;44.9974;8.0781
+Solero;AL;44.9198;8.5077
+Solonghello;AL;45.1310;8.2818
+Somano;CN;44.5359;8.0114
+Sommariva Perno;CN;44.7432;7.9056
+Sommariva del Bosco;CN;44.7713;7.7843
+Sordevolo;BI;45.5715;7.9753
+Soriso;NO;45.7423;8.4094
+Sostegno;BI;45.6535;8.2690
+Sozzago;NO;45.3978;8.7210
+Sparone;TO;45.4133;7.5442
+Spigno Monferrato;AL;44.5430;8.3353
+Spineto Scrivia;AL;44.8376;8.8724
+Stazzano;AL;44.7273;8.8674
+Strambinello;TO;45.4232;7.7687
+Strambino;TO;45.3846;7.8806
+Stresa;VB;45.8839;8.5407
+Strevi;AL;44.6987;8.5225
+Strona;BI;45.6207;8.1693
+Stroppiana;VC;45.2314;8.4535
+Stroppo;CN;44.5056;7.1259
+Suno;NO;45.6311;8.5409
+Susa;TO;45.1353;7.0464
+Tagliolo Monferrato;AL;44.6391;8.6683
+Tarantasca;CN;44.4934;7.5451
+Tassarolo;AL;44.7266;8.7695
+Tavagnasco;TO;45.5432;7.8226
+Tavigliano;BI;45.6236;8.0532
+Terdobbiate;NO;45.3764;8.6951
+Ternengo;BI;45.5901;8.1149
+Terruggia;AL;45.0831;8.4422
+Terzo;AL;44.6695;8.4211
+Ticineto;AL;45.0975;8.5556
+Tigliole;AT;44.8873;8.0755
+Toceno;VB;46.1434;8.4676
+Tollegno;BI;45.5945;8.0533
+Tonco;AT;45.0241;8.1898
+Torino;TO;45.0733;7.6807
+Tornaco;NO;45.3574;8.7179
+Torrazza Piemonte;TO;45.2152;7.9749
+Torrazzo;BI;45.4981;7.9554
+Torre Bormida;CN;44.5631;8.1556
+Torre Canavese;TO;45.3918;7.7605
+Torre Mondovì;CN;44.3520;7.9004
+Torre Pellice;TO;44.8207;7.2240
+Torre San Giorgio;CN;44.7358;7.5299
+Torresina;CN;44.4322;8.0348
+Tortona;AL;44.8947;8.8602
+Trana;TO;45.0371;7.4173
+Trarego Viggiona;VB;46.0339;8.6640
+Trasquera;VB;46.2125;8.2140
+Traversella;TO;45.5094;7.7504
+Traves;TO;45.2706;7.4297
+Trecate;NO;45.4319;8.7351
+Treiso;CN;44.6894;8.0868
+Treville;AL;45.0971;8.3598
+Trezzo Tinella;CN;44.6770;8.1076
+Tricerro;VC;45.2338;8.3251
+Trinità;CN;44.5075;7.7580
+Trino;VC;45.1942;8.2969
+Trisobbio;AL;44.6623;8.5863
+Trofarello;TO;44.9860;7.7403
+Trontano;VB;46.1222;8.3345
+Tronzano Vercellese;VC;45.3428;8.1747
+Usseaux;TO;45.0485;7.0269
+Usseglio;TO;45.2327;7.2172
+Vaglio Serra;AT;44.7965;8.3389
+Vaie;TO;45.1019;7.2866
+Val della Torre;TO;45.1556;7.4494
+Val di Chy;TO;45.4601;7.7770
+Valchiusa;TO;45.4943;7.7794
+Valdengo;BI;45.5711;8.1361
+Valdieri;CN;44.2776;7.3961
+Valdilana;BI;45.6645;8.1611
+Valduggia;VC;45.7264;8.3279
+Valenza;AL;45.0145;8.6462
+Valfenera;AT;44.8969;7.9651
+Valgioie;TO;45.0760;7.3396
+Valgrana;CN;44.4096;7.3806
+Vallanzengo;BI;45.6035;8.1483
+Valle Cannobina;VB;46.0692;8.6457
+Valle San Nicolao;BI;45.6070;8.1408
+Vallo Torinese;TO;45.2235;7.4993
+Valloriate;CN;44.3381;7.3746
+Valmacca;AL;45.1005;8.5823
+Valperga;TO;45.3703;7.6568
+Valprato Soana;TO;45.5224;7.5490
+Valstrona;VB;45.9073;8.3408
+Vanzone con San Carlo;VB;45.9800;8.1104
+Vaprio d'Agogna;NO;45.6035;8.5541
+Varallo;VC;45.8140;8.2562
+Varallo Pombia;NO;45.6667;8.6331
+Varisella;TO;45.2098;7.4890
+Varzo;VB;46.2067;8.2555
+Vauda Canavese;TO;45.2792;7.6182
+Veglio;BI;45.6401;8.1141
+Venaria Reale;TO;45.1325;7.6315
+Venasca;CN;44.5625;7.3950
+Venaus;TO;45.1547;7.0119
+Verbania;VB;45.9214;8.5511
+Vercelli;VC;45.3240;8.4232
+Verduno;CN;44.6681;7.9338
+Vernante;CN;44.2456;7.5337
+Verolengo;TO;45.1890;7.9672
+Verrone;BI;45.5039;8.1197
+Verrua Savoia;TO;45.1566;8.0931
+Verzuolo;CN;44.5996;7.4831
+Vesime;AT;44.6372;8.2282
+Vespolate;NO;45.3495;8.6690
+Vestignè;TO;45.3867;7.9539
+Vezza d'Alba;CN;44.7639;7.9961
+Viale;AT;44.9993;8.0523
+Vialfrè;TO;45.3808;7.8182
+Viarigi;AT;44.9805;8.3587
+Vicoforte;CN;44.3750;7.8650
+Vicolungo;NO;45.4788;8.4613
+Vidracco;TO;45.4305;7.7590
+Vigliano Biellese;BI;45.5622;8.1099
+Vigliano d'Asti;AT;44.8351;8.2319
+Vignale Monferrato;AL;45.0109;8.3965
+Vignole Borbera;AL;44.7083;8.8906
+Vignolo;CN;44.3596;7.4699
+Vignone;VB;45.9604;8.5664
+Vigone;TO;44.8424;7.4945
+Viguzzolo;AL;44.9049;8.9201
+Villa San Secondo;AT;45.0052;8.1353
+Villa del Bosco;BI;45.6203;8.2826
+Villadeati;AL;45.0724;8.1697
+Villadossola;VB;46.0677;8.2601
+Villafalletto;CN;44.5443;7.5389
+Villafranca Piemonte;TO;44.7813;7.5045
+Villafranca d'Asti;AT;44.9137;8.0322
+Villalvernia;AL;44.8176;8.8566
+Villamiroglio;AL;45.1344;8.1698
+Villanova Biellese;BI;45.4827;8.1927
+Villanova Canavese;TO;45.2429;7.5535
+Villanova Mondovì;CN;44.3445;7.7621
+Villanova Monferrato;AL;45.1818;8.4785
+Villanova Solaro;CN;44.7296;7.5760
+Villanova d'Asti;AT;44.9419;7.9372
+Villar Dora;TO;45.1178;7.3838
+Villar Focchiardo;TO;45.1097;7.2267
+Villar Pellice;TO;44.8086;7.1583
+Villar Perosa;TO;44.9202;7.2493
+Villar San Costanzo;CN;44.4830;7.3803
+Villarbasse;TO;45.0449;7.4680
+Villarboit;VC;45.4367;8.3369
+Villareggia;TO;45.3110;7.9785
+Villaromagnano;AL;44.8511;8.8871
+Villastellone;TO;44.9216;7.7454
+Villata;VC;45.3856;8.4326
+Villette;VB;46.1313;8.5341
+Vinadio;CN;44.3071;7.1743
+Vinchio;AT;44.8074;8.3173
+Vinovo;TO;44.9488;7.6342
+Vinzaglio;NO;45.3237;8.5184
+Viola;CN;44.2905;7.9662
+Virle Piemonte;TO;44.8659;7.5689
+Vische;TO;45.3316;7.9514
+Visone;AL;44.6621;8.5033
+Vistrorio;TO;45.4411;7.7694
+Viverone;BI;45.4256;8.0507
+Viù;TO;45.2389;7.3765
+Vocca;VC;45.8310;8.1875
+Vogogna;VB;46.0078;8.2955
+Volpedo;AL;44.8888;8.9834
+Volpeglino;AL;44.8931;8.9590
+Volpiano;TO;45.2019;7.7756
+Voltaggio;AL;44.6201;8.8427
+Volvera;TO;44.9550;7.5123
+Vottignasco;CN;44.5648;7.5782
+Zimone;BI;45.4495;8.0374
+Zubiena;BI;45.4928;7.9973
+Zumaglia;BI;45.5948;8.0887

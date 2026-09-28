@@ -710,3 +710,77 @@ def test_calendario_salvato_uguale_resta_solo_anticipo(app):
                                                 "solo_prima": True}
     post(app, f"/ui/r/{pid}/calendario", {"no": "", "no_settimana": "6", "no_fino": fino, "si_fino": ""})
     assert "solo_prima" not in app.store.get(pid)["calendario"]  # cambiato dall'utente: regola nuova
+
+
+# --- zona "alcuni comuni" -----------------------------------------------------------------
+def riga_comune(t, nome):
+    """La riga di un comune nell'elenco "Questi comuni" (etichetta intera)."""
+    import re
+    m = re.search(r'<label class="cm"[^>]*><input type="checkbox" value="%s"[^>]*>.*?</label>' % re.escape(nome), t)
+    return m.group(0) if m else ""
+
+
+def test_questi_comuni_salva_valida_e_spiega(app):
+    pid = pratica(app.bot, 1)["id"]
+    stato, _, corpo = post(app, f"/ui/r/{pid}/dove", {"tipo": "comuni", "comuni": "TORINO,moncalieri, Rivoli,TORINO"})
+    assert stato == 200 and app.store.get(pid)["zona"] == {"tipo": "comuni", "valore": ["TORINO", "MONCALIERI", "RIVOLI"]}
+    assert "cerco a Torino, Moncalieri, Rivoli" in corpo.decode()
+    stato, _, corpo = post(app, f"/ui/r/{pid}/dove", {"tipo": "comuni", "comuni": "TORINO,Paperopoli,<script>"})
+    t = corpo.decode()
+    assert stato == 400 and "Paperopoli" in t and "&lt;script&gt;" in t and "<script>" not in t
+    assert post(app, f"/ui/r/{pid}/dove", {"tipo": "comuni", "comuni": " , "})[0] == 400
+    troppi = ",".join(n for n, _ in __import__("cup_http").vicini("Torino", 30)[:31])
+    stato, _, corpo = post(app, f"/ui/r/{pid}/dove", {"tipo": "comuni", "comuni": troppi})
+    assert stato == 400 and "Al massimo 30 comuni: ne hai scritti 31" in corpo.decode()
+    assert post(app, f"/ui/r/{pid}/dove", {"tipo": "comuni", "comuni": "x" * 3000})[0] == 400
+    assert app.store.get(pid)["zona"]["valore"] == ["TORINO", "MONCALIERI", "RIVOLI"]  # gli errori non toccano nulla
+    _, _, corpo = post(app, f"/ui/r/{pid}/dove", {"tipo": "cintura"})
+    assert "cerco a Torino e prima cintura" in corpo.decode()
+    assert app.store.get(pid)["zona"] == {"tipo": "comuni", "valore": list(botmod.cup_http.CINTURA_TORINO)}
+
+
+def test_foglio_dove_comuni_vicini_da_spuntare(app):
+    pid = pratica(app.bot, 1)["id"]  # prenotazione a Torino
+    t = get(app, f"/ui/r/{pid}/dove")[2].decode()
+    assert 'value="comuni">' in t and 'name="comuni" value=""' in t and 'name="centro" value="Torino"' in t
+    assert "<small>centro</small>" in riga_comune(t, "TORINO") and "<small>8 km</small>" in riga_comune(t, "MONCALIERI")
+    assert " hidden>" in riga_comune(t, "FIANO") and "Mostra fino a 40 km" in t  # 23 km: nascosto
+    assert riga_comune(t, "PINEROLO") and not riga_comune(t, "SUSA")  # 34 km si', 50 km no
+    assert 'class="cm-preset"' in t and 'value="Torino"' in t  # preset e datalist di tutti i comuni
+    assert t.index('value="MONCALIERI"') < t.index('value="RIVOLI"')  # dal piu' vicino
+    post(app, f"/ui/r/{pid}/dove", {"tipo": "comuni", "comuni": "SUSA,FIANO,MONCALIERI"})
+    t = get(app, f"/ui/r/{pid}/dove")[2].decode()
+    assert 'value="comuni" checked' in t and 'name="comuni" value="SUSA,FIANO,MONCALIERI"' in t
+    assert " checked" in riga_comune(t, "SUSA") and "50 km" in riga_comune(t, "SUSA")  # lontano ma scelto: c'e'
+    assert " hidden" not in riga_comune(t, "FIANO") and " checked" in riga_comune(t, "FIANO")
+    assert " checked" not in riga_comune(t, "TORINO")
+
+
+def test_foglio_dove_centra_qui_tiene_le_spunte(app):
+    b = app.bot
+    fam = pratica(b, 1, 1)  # prenotazione ad Asti, sedi viste anche ad Alba
+    b.controlla(fam)
+    t = get(app, f"/ui/r/{fam['id']}/dove")[2].decode()
+    assert 'name="centro" value="Asti"' in t and "🏥 Alba" in riga_comune(t, "ALBA") and "🏥 = sedi già viste" in t
+    assert 'class="cm-preset"' not in t  # Torino e la cintura non sono vicine ad Asti
+    t = get(app, f"/ui/r/{fam['id']}/dove?centro=torino&comuni=ALBA%2CRIVOLI&tipo=sede")[2].decode()
+    assert 'name="centro" value="Torino"' in t and 'value="comuni" checked' in t
+    assert " checked" in riga_comune(t, "RIVOLI") and " checked" in riga_comune(t, "ALBA")
+    t = get(app, f"/ui/r/{fam['id']}/dove?centro=%3Cb%3EPaperopoli&comuni=")[2].decode()
+    assert "Non trovo «&lt;b&gt;Paperopoli» tra i comuni del Piemonte: centro su Asti." in t and "<b>" not in t
+
+
+def test_foglio_dove_comuni_ricetta_mai_prenotata(b, monkeypatch):
+    from test_bot import registra_nuova
+    monkeypatch.setattr(webapp, "PAUSA_AZIONI", 0)
+    b.token = TOKEN
+    registra_nuova(b)
+    app = webapp.App(b, b.store)
+    pid = pratica(b)["id"]
+    t = get(app, f"/ui/r/{pid}/dove")[2].decode()
+    assert 'name="centro" value="Torino"' in t and 'class="cm-preset"' in t and riga_comune(t, "MONCALIERI")
+    stato, _, corpo = post(app, f"/ui/r/{pid}/dove", {"tipo": "comuni", "comuni": "TORINO,MONCALIERI"})
+    assert stato == 200 and "cerco a Torino, Moncalieri" in corpo.decode()
+    b.controlla(b.store.get(pid))
+    assert b.zone_viste[-1] == {"tipo": "comuni", "valore": ["TORINO", "MONCALIERI"]}
+    assert "a Torino, Moncalieri" in get(app, "/ui/ricette")[2].decode()

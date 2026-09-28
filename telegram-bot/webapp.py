@@ -31,6 +31,8 @@ from store import Store
 log = logging.getLogger("cupbot.web")
 
 STATIC = Path(__file__).resolve().parent / "web" / "static"
+MAX_TESTO_COMUNI = 2000  # campo nascosto "comuni": COMUNI_MAX nomi lunghi con le virgole ci stanno
+VICINI_KM, VICINI_MAX_KM = 20, 40  # "Questi comuni": i comuni vicini al centro, poi "Mostra fino a 40 km"
 FILE_STATICI = {"htmx.min.js": "text/javascript; charset=utf-8", "app.js": "text/javascript; charset=utf-8",
                 "app.css": "text/css; charset=utf-8"}
 MAX_ETA_INITDATA = 24 * 3600  # secondi: oltre, Telegram deve rifirmare (basta riaprire l'app)
@@ -147,6 +149,7 @@ class App:
     # --- instradamento ---------------------------------------------------------------
     def gestisci(self, metodo, percorso, intestazioni, corpo=b""):
         """(stato, intestazioni, corpo). Tutto passa da qui: comodo da testare senza rete."""
+        percorso, _, query = percorso.partition("?")
         try:
             if metodo == "GET" and percorso == "/":
                 return self._html(200, self.pagina())
@@ -157,6 +160,8 @@ class App:
             if chat is None:
                 raise Richiesta(401, "Apri l'app dal pulsante del bot su Telegram.")
             dati = dict(parse_qsl(corpo.decode("utf-8", "replace"))) if corpo else {}
+            if metodo == "GET":
+                dati = dict(parse_qsl(query))  # solo il foglio "dove" li usa ("Centra qui")
             if metodo == "POST":
                 self._limita(chat)
             # --- pagine della chat
@@ -189,6 +194,8 @@ class App:
             if not p or p["chat_id"] != chat or p["stato"] not in stati:
                 raise Richiesta(404, "Ricetta non trovata.")
             if metodo == "GET":
+                if azione == "dove":
+                    return self._html(200, self.foglio_dove(p, dati))
                 return self._html(200, getattr(self, "foglio_" + azione)(p))
             if azione in AZIONI_SENSIBILI:
                 self._firma_recente(firma)
@@ -249,6 +256,22 @@ class App:
             if not botmod.COMUNE_RE.match(comune):
                 raise Richiesta(400, "Scrivi il nome del comune, per esempio: Torino.")
             zona = {"tipo": "comune", "valore": comune}
+        elif tipo == "cintura":
+            zona = {"tipo": "comuni", "valore": list(cup_http.CINTURA_TORINO)}
+        elif tipo == "comuni":
+            testo = dati.get("comuni", "")
+            if len(testo) > MAX_TESTO_COMUNI:
+                raise Richiesta(400, f"Al massimo {cup_http.COMUNI_MAX} comuni.")
+            elenco, ignoti = cup_http.elenco_comuni(testo.split(","))
+            if ignoti:
+                raise Richiesta(400, "Non trovo tra i comuni del Piemonte: " + ", ".join(ignoti[:5]) +
+                                (f" e altri {len(ignoti) - 5}" if len(ignoti) > 5 else "") +
+                                ". Controlla come sono scritti e separali con una virgola.")
+            if not elenco:
+                raise Richiesta(400, "Scrivi i comuni separati da una virgola, per esempio: Torino, Moncalieri.")
+            if len(elenco) > cup_http.COMUNI_MAX:
+                raise Richiesta(400, f"Al massimo {cup_http.COMUNI_MAX} comuni: ne hai scritti {len(elenco)}.")
+            zona = {"tipo": "comuni", "valore": elenco}
         elif tipo == "tutte":
             zona = {"tipo": "tutte", "valore": ""}
         else:
@@ -624,11 +647,13 @@ class App:
   </section>"""
 
     # --- fogli dal basso -------------------------------------------------------------
-    def foglio_dove(self, p):
+    def foglio_dove(self, p, q=None):
+        """q: i campi del foglio quando lo ricarica "Centra qui" (centro e spunte di "Questi comuni")."""
+        q = q or {}
         att = botmod.attuale_di(p)
         z = botmod.zona_di(p) if p["stato"] != "sede" else {"tipo": "", "valore": ""}
         if botmod.da_prenotare(p):
-            return self.foglio_dove_nuova(p, z)
+            return self.foglio_dove_nuova(p, z, q)
         comune, prov = cup_http.comune(att.luogo), cup_http.provincia(att.luogo)
         luoghi = [l for l in p.get("luoghi", []) if l["sede"] != att.luogo.sede]
         scelte = [("sede", f"Solo in questa sede ({botmod.titolo(att.luogo.sede)})")]
@@ -642,6 +667,8 @@ class App:
             scelto = "altro"
         if z["tipo"] == "sede" and z["valore"] and z["valore"] != att.luogo.sede:
             scelto = "sede_vista"
+        if z["tipo"] == "comuni" or "centro" in q:  # "centro": il foglio ricaricato da "Centra qui"
+            scelto = "comuni"
         voci = "".join(
             f'<label class="scelta"><input type="radio" name="tipo" value="{t}"{" checked" if t == scelto else ""}>'
             f'<span>{e(testo)}</span></label>' for t, testo in scelte)
@@ -660,24 +687,27 @@ class App:
         return f"""
 <h2>🔎 Dove cercare · {e(self.bot.nome(p))}</h2>
 <p class="nota">Prenotazione attuale: {e(botmod.titolo(att.luogo.sede))}, {e(botmod.indirizzo(att.luogo))}</p>
-<form hx-post="/ui/r/{p['id']}/dove" hx-target="#ricette" hx-swap="innerMorph" class="scelte">
+<form id="dove-{p['id']}" hx-post="/ui/r/{p['id']}/dove" hx-target="#ricette" hx-swap="innerMorph" class="scelte">
   {voci}{sede_vista}
   <label class="scelta"><input type="radio" name="tipo" value="altro"{" checked" if scelto == "altro" else ""}>
     <span>Un altro comune <input type="text" name="comune" value="{e(altro_val)}" placeholder="es. Torino"
       list="comuni-{p['id']}" autocomplete="off" maxlength="40"></span></label>
+  {self.voci_comuni(p, z, scelto, q)}
   <datalist id="comuni-{p['id']}">{lista_comuni}</datalist>
-  <p class="nota">Comune e provincia allargano la ricerca a tutto il Piemonte: il controllo è più lento
+  <p class="nota">Comuni e provincia allargano la ricerca a tutto il Piemonte: il controllo è più lento
     ma vede anche le altre aziende sanitarie.</p>
   <button class="primario">Salva</button>
 </form>"""
 
-    def foglio_dove_nuova(self, p, z):
+    def foglio_dove_nuova(self, p, z, q):
         """Ricetta mai prenotata: nessuna sede di riferimento. Un comune, una provincia o una sede tra quelle
         trovate nei controlli, oppure dove propone il CUP."""
         luoghi = p.get("luoghi", [])
         province = sorted({l["prov"] for l in luoghi if l.get("prov")})
         comuni = sorted({l["comune"] for l in luoghi if l.get("comune")})
         scelto = {"comune": "altro", "sede": "sede_vista", "provincia": "provincia_vista"}.get(z["tipo"], z["tipo"])
+        if z["tipo"] == "comuni" or "centro" in q:
+            scelto = "comuni"
 
         def voce(tipo, testo, extra=""):
             return (f'<label class="scelta"><input type="radio" name="tipo" value="{tipo}"'
@@ -686,6 +716,7 @@ class App:
         parti.append(voce("altro", "In un comune", f'<input type="text" name="comune" value="'
                           f'{e(botmod.titolo(z["valore"]) if scelto == "altro" else "")}" placeholder="es. Torino" '
                           f'list="comuni-{p["id"]}" autocomplete="off" maxlength="40">'))
+        parti.append(self.voci_comuni(p, z, scelto, q))
         if province:
             opzioni = "".join(f'<option value="{e(v)}"{" selected" if scelto == "provincia_vista" and v == z["valore"] else ""}>'
                               f'{e(v)}</option>' for v in province)
@@ -701,13 +732,65 @@ class App:
 <h2>🔎 Dove cercare · {e(self.bot.nome(p))}</h2>
 <p class="nota">Ricetta non ancora prenotata: scegli dove cercare il primo appuntamento.{"" if luoghi else
   " Dopo il primo controllo qui compaiono anche le sedi e le province trovate."}</p>
-<form hx-post="/ui/r/{p['id']}/dove" hx-target="#ricette" hx-swap="innerMorph" class="scelte">
+<form id="dove-{p['id']}" hx-post="/ui/r/{p['id']}/dove" hx-target="#ricette" hx-swap="innerMorph" class="scelte">
   {"".join(parti)}
   <datalist id="comuni-{p['id']}">{lista}</datalist>
-  <p class="nota">Comune e provincia allargano la ricerca a tutto il Piemonte: il controllo è più lento
+  <p class="nota">Comuni e provincia allargano la ricerca a tutto il Piemonte: il controllo è più lento
     ma vede anche le altre aziende sanitarie.</p>
   <button class="primario">Salva</button>
 </form>"""
+
+    def voci_comuni(self, p, z, scelto, q):
+        """La scelta "Questi comuni": i comuni vicini a un centro, dal piu' vicino, da spuntare (entro VICINI_KM,
+        fino a VICINI_MAX_KM con "Mostra"). Le spunte stanno nel campo nascosto "comuni", che app.js aggiorna a
+        ogni tocco: cosi' restano anche per i comuni nascosti o lontani. Centro: quello scelto con "Centra
+        qui", altrimenti il comune della prenotazione, altrimenti Torino. 🏥: comuni con sedi gia' viste."""
+        att = botmod.attuale_di(p)
+        scritto = " ".join(q.get("centro", "").split())
+        proprio = "" if botmod.da_prenotare(p) else cup_http.comune(att.luogo)
+        centro, tutti = "", []
+        for nome in (scritto, proprio, "TORINO"):
+            tutti = cup_http.vicini(nome, float("inf")) if nome else []
+            if tutti:
+                centro = tutti[0][0]
+                break
+        avviso = (f'<p class="errore">Non trovo «{e(scritto)}» tra i comuni del Piemonte: '
+                  f'centro su {e(botmod.titolo(centro))}.</p>' if scritto and not cup_http.elenco_comuni([scritto])[0]
+                  else "")
+        if "centro" in q:
+            scelti = cup_http.elenco_comuni(q.get("comuni", "").split(","))[0]
+        else:
+            scelti = cup_http.elenco_comuni(z["valore"])[0] if z["tipo"] == "comuni" else []
+        viste = set(cup_http.elenco_comuni([l["comune"] for l in p.get("luoghi", []) if l.get("comune")])[0])
+        righe = [(n, d) for n, d in tutti if d <= VICINI_MAX_KM or n in scelti]
+        nascosti = 0
+        voci = []
+        for n, d in righe:
+            nascosto = d > VICINI_KM and n not in scelti
+            nascosti += nascosto
+            voci.append(f'<label class="cm"{" hidden" if nascosto else ""}><input type="checkbox" value="{e(n)}"'
+                        f'{" checked" if n in scelti else ""}><span>{"🏥 " if n in viste else ""}'
+                        f'{e(botmod.titolo(n))}</span><small>{"centro" if n == centro else f"{d:.0f} km"}</small></label>')
+        presenti = {n for n, _ in righe}
+        preset = (f'<button type="button" class="cm-preset" data-comuni="{e(",".join(cup_http.CINTURA_TORINO))}">'
+                  f'＋ Torino e prima cintura</button>' if presenti >= set(cup_http.CINTURA_TORINO) else "")
+        altri = (f'<button type="button" class="cm-altri">Mostra fino a {VICINI_MAX_KM} km</button>'
+                 if nascosti else "")
+        tutti_nomi = "".join(f'<option value="{e(botmod.titolo(n))}">' for n in sorted(cup_http.NOMI_COMUNI.values()))
+        legenda = " 🏥 = sedi già viste nei controlli." if viste else ""
+        return f"""
+  <label class="scelta"><input type="radio" name="tipo" value="comuni"{" checked" if scelto == "comuni" else ""}>
+    <span>Questi comuni<small>Spunta i comuni in cui cercare, al massimo {cup_http.COMUNI_MAX}.{legenda}</small></span></label>
+  <div class="comuni-scelta">
+    <input type="hidden" name="comuni" value="{e(",".join(scelti))}">
+    <div class="cm-centro"><input type="text" name="centro" value="{e(botmod.titolo(centro))}" list="tutti-{p['id']}"
+      autocomplete="off" maxlength="40" aria-label="Comune al centro dell'elenco" enterkeyhint="go">
+      <button type="button" hx-get="/ui/r/{p['id']}/dove" hx-include="#dove-{p['id']}" hx-target="#foglio">Centra qui</button></div>
+    {avviso}{preset}
+    <div class="cm-elenco">{"".join(voci)}</div>
+    {altri}
+  </div>
+  <datalist id="tutti-{p['id']}">{tutti_nomi}</datalist>"""
 
     def foglio_auto(self, p):
         attiva = bool(p.get("auto"))
@@ -1143,7 +1226,7 @@ class _Gestore(BaseHTTPRequestHandler):
         intestazioni = {k.lower(): v for k, v in self.headers.items()}
         try:
             corpo = self.rfile.read(lunghezza) if lunghezza else b""
-            stato, h, testo = self.app.gestisci(metodo, self.path.split("?")[0], intestazioni, corpo)
+            stato, h, testo = self.app.gestisci(metodo, self.path, intestazioni, corpo)
         except Exception as ex:
             log.error("webapp: errore imprevisto %s", type(ex).__name__)
             stato, h, testo = 500, {"Content-Type": "text/plain; charset=utf-8"}, b"Errore interno"

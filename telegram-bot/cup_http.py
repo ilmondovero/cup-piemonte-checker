@@ -20,6 +20,7 @@ trovato da un controllo continua nella stessa sessione, e i controlli non vanno 
 """
 import collections
 import html
+import math
 import re
 import time
 import unicodedata
@@ -549,7 +550,8 @@ class CupSession:
 
 
 # --- API usata dal bot ------------------------------------------------------------------
-ZONE = ("sede", "comune", "provincia", "tutte")  # dove l'utente accetta una data nuova
+ZONE = ("sede", "comune", "comuni", "provincia", "tutte")  # dove l'utente accetta una data nuova
+COMUNI_MAX = 30  # comuni al massimo in una zona "comuni"
 # Ricetta mai prenotata con piu' prestazioni: dal vivo (2026-09-25) con una data di "Altre disponibilita'"
 # il bot non e' arrivato al Riepilogo, mentre accettare la proposta del portale ("Avanti") ha prenotato tutto.
 SOLO_PROPOSTA = ("Con piu' prestazioni prenoto solo la data proposta dal portale per tutte insieme: "
@@ -564,11 +566,32 @@ def _chiave_comune(nome):
 
 # comune -> sigla della provincia (ISTAT): per le sedi il cui indirizzo non riporta la provincia.
 # Dal vivo (2026-09-28): "CORSO INGHILTERRA - ()" per PRESIDIO - SUSA, scartata da "provincia di Torino"
-COMUNI_PIEMONTE = {
-    _chiave_comune(nome): sigla
-    for nome, sigla in (r.split(";") for r in (Path(__file__).with_name("comuni_piemonte.txt")
-                                               .read_text(encoding="utf-8").splitlines())
-                        if r and not r.startswith("#"))}
+_RIGHE_COMUNI = [r.split(";") for r in Path(__file__).with_name("comuni_piemonte.txt").read_text(encoding="utf-8")
+                 .splitlines() if r and not r.startswith("#")]
+COMUNI_PIEMONTE = {_chiave_comune(nome): sigla for nome, sigla, _, _ in _RIGHE_COMUNI}
+NOMI_COMUNI = {_chiave_comune(nome): nome.upper() for nome, *_ in _RIGHE_COMUNI}  # chiave -> "MONDOVÌ"
+COORD = {_chiave_comune(nome): (float(lat), float(lon)) for nome, _, lat, lon in _RIGHE_COMUNI}  # centro del comune
+
+
+def vicini(nome, km):
+    """[(nome ISTAT, km)] dei comuni entro km dal centro di nome (lui compreso, a 0 km), dal piu' vicino.
+    Distanza in linea d'aria (haversine). Comune sconosciuto: []."""
+    centro = COORD.get(_chiave_comune(nome))
+    if not centro:
+        return []
+    lat1, lon1 = map(math.radians, centro)
+    trovati = []
+    for k, (lat, lon) in COORD.items():
+        lat2, lon2 = math.radians(lat), math.radians(lon)
+        a = math.sin((lat2 - lat1) / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2
+        d = 2 * 6371 * math.asin(math.sqrt(a))
+        if d <= km:
+            trovati.append((NOMI_COMUNI[k], d))
+    return sorted(trovati, key=lambda x: (x[1], x[0]))
+
+# preset della zona "comuni": Torino e i comuni confinanti della prima cintura
+CINTURA_TORINO = ("TORINO", "BEINASCO", "BORGARO TORINESE", "COLLEGNO", "GRUGLIASCO", "MONCALIERI", "NICHELINO",
+                  "ORBASSANO", "RIVOLI", "SAN MAURO TORINESE", "SETTIMO TORINESE", "VENARIA REALE")
 
 
 COMUNI_CORTI = {"SUSA", "BRA", "ASTI", "ALBA", "CEVA", "GAVI"}
@@ -584,9 +607,12 @@ def provincia(luogo):
 
 
 def comune(luogo):
-    m = re.search(r"-\s*([^-()]+?)\s*\([A-Z]{2}\)\s*$", luogo.indirizzo.upper())
-    if m:
-        return m.group(1).strip()
+    m = re.search(r"([^()]*?)\s*\([A-Z]{2}\)\s*$", luogo.indirizzo.upper())  # dopo l'ultima parentesi
+    pezzi = [x.strip() for x in m.group(1).split("-")] if m else []
+    if len(pezzi) >= 3 and _chiave_comune("-".join(pezzi[-2:])) in COMUNI_PIEMONTE:
+        return "-".join(pezzi[-2:])  # comune col trattino nel nome: "... - BEURA-CARDEZZA (VB)"
+    if len(pezzi) >= 2:
+        return pezzi[-1]
     # indirizzo senza provincia: il comune scritto come pezzo intero del nome della sede ("PRESIDIO - SUSA").
     # I nomi corti sono spesso anche parole ("SALE", "ALTO", "NONE"): solo quelli con un ospedale o un presidio
     for pezzo in re.split(r"\s*-\s*", luogo.sede.upper()):
@@ -596,19 +622,44 @@ def comune(luogo):
     return ""
 
 
+def elenco_comuni(nomi):
+    """Nomi scritti dall'utente -> (nomi ISTAT maiuscoli senza doppioni, nomi non riconosciuti)."""
+    ok, ignoti = [], []
+    for nome in nomi:
+        k = _chiave_comune(nome)
+        if k in NOMI_COMUNI:
+            if NOMI_COMUNI[k] not in ok:
+                ok.append(NOMI_COMUNI[k])
+        elif k:
+            ignoti.append(" ".join(nome.split()))
+    return ok, ignoti
+
+
+def e_cintura(elenco):
+    return {_chiave_comune(x) for x in elenco} == {_chiave_comune(x) for x in CINTURA_TORINO}
+
+
 def zona_norm(zona):
-    """{"tipo": sede|comune|provincia|tutte, "valore": ...}. Accetta anche i formati precedenti
-    (True/False = stessa sede si'/no, oppure solo il tipo come stringa)."""
+    """{"tipo": sede|comune|comuni|provincia|tutte, "valore": ...}: per "comuni" una lista di nomi, per gli
+    altri una stringa. Accetta anche i formati precedenti (True/False = stessa sede si'/no, oppure solo il
+    tipo come stringa)."""
     if isinstance(zona, dict) and zona.get("tipo") in ZONE:
-        return {"tipo": zona["tipo"], "valore": zona.get("valore") or ""}
-    zona = {True: "sede", False: "tutte"}.get(zona, zona)
+        v = zona.get("valore") or ""
+        if zona["tipo"] == "comuni":
+            v = [x for x in v if isinstance(x, str) and x] if isinstance(v, list) else []
+        elif not isinstance(v, str):
+            v = ""
+        return {"tipo": zona["tipo"], "valore": v}
+    if isinstance(zona, dict):
+        zona = zona.get("tipo")
+    zona = {True: "sede", False: "tutte"}.get(zona, zona) if isinstance(zona, (bool, str, type(None))) else None
     return {"tipo": zona if zona in ZONE else "sede", "valore": ""}
 
 
 def estensioni(zona):
-    """Per comune e provincia serve estendere l'area: le sedi fuori dall'azienda della prenotazione
+    """Per comune, comuni e provincia serve estendere l'area: le sedi fuori dall'azienda della prenotazione
     compaiono solo cosi'. "sede" e "tutte" restano nell'area proposta dal CUP."""
-    return ESTENDI_MAX if zona_norm(zona)["tipo"] in ("comune", "provincia") else 0
+    return ESTENDI_MAX if zona_norm(zona)["tipo"] in ("comune", "comuni", "provincia") else 0
 
 
 def ammesso(slot, attuale, zona="sede"):
@@ -623,7 +674,10 @@ def ammesso(slot, attuale, zona="sede"):
         return bool(rif) and _norm(slot.luogo.sede) == _norm(rif)
     if tipo == "comune":
         rif = rif or (comune(attuale.luogo) if attuale else "")
-        return bool(rif) and _norm(comune(slot.luogo)) == _norm(rif)
+        return bool(rif) and _chiave_comune(comune(slot.luogo)) == _chiave_comune(rif)
+    if tipo == "comuni":
+        k = _chiave_comune(comune(slot.luogo))
+        return bool(k) and k in {_chiave_comune(x) for x in rif}
     if tipo == "provincia":
         rif = rif or (provincia(attuale.luogo) if attuale else "")
         return bool(rif) and provincia(slot.luogo) == rif.upper()

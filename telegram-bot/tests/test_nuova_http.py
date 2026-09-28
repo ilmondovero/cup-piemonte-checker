@@ -581,3 +581,19 @@ def test_provincia_dal_comune_se_l_indirizzo_non_la_riporta():
     assert c.provincia(mondovi) == ""  # nessun pezzo intero che sia un comune: meglio non indovinare
     assert c.provincia(c.Luogo("X", "Y", "Via Po 1 - TORINO (TO)")) == "TO"  # l'indirizzo vale per primo
     assert len(c.COMUNI_PIEMONTE) == 1180
+
+
+def test_comuni_col_trattino_e_accenti():
+    beura = c.Luogo("OSPEDALE", "AMB", "VIA ROMA 1 - BEURA-CARDEZZA (VB)")
+    assert c.comune(beura) == "BEURA-CARDEZZA" and c.provincia(beura) == "VB"
+    assert c.comune(c.Luogo("X", "Y", "VIA A-B - MONCALIERI (TO)")) == "MONCALIERI"
+    assert c.comune(c.Luogo("X", "Y", "Largo Turati 62 - TORINO (TO)")) == "TORINO"
+    assert c.comune(c.Luogo("X", "Y", "- MONCALIERI (TO)")) == "MONCALIERI"
+    assert c.comune(c.Luogo("OSP - RIVOLI", "Y", "VIA X (ANGOLO Y) - TORINO (TO)")) == "TORINO"  # parentesi nella via
+    mondovi = c.Slot(datetime(2027, 1, 5, 9, 0), c.Luogo("OSP", "AMB", "VIA X 1 - MONDOVI' (CN)"), "s")
+    assert c.ammesso(mondovi, None, {"tipo": "comune", "valore": "MONDOVÌ"})
+    assert c.ammesso(mondovi, None, {"tipo": "comuni", "valore": ["Mondovì"]})
+    assert c.zona_norm({"tipo": "boh"}) == {"tipo": "sede", "valore": ""}
+    assert c.zona_norm([1]) == {"tipo": "sede", "valore": ""}
+    samone = c.COORD[c._chiave_comune("Samone")]
+    assert 45 < samone[0] < 46 and 7 < samone[1] < 8  # Samone (TO), non quello del Trentino

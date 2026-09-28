@@ -244,6 +244,46 @@
     scriviCal(f, s);
   }, true);
 
+  // --- "Questi comuni" nel foglio "Dove cerco": le spunte stanno nel campo nascosto "comuni" (anche quelle
+  // dei comuni nascosti o fuori elenco), che il server legge al Salva e a "Centra qui"
+  const spunte = (box, cambia) => {
+    const campo = box.querySelector('input[name="comuni"]');
+    const s = new Set(campo.value.split(",").filter(Boolean));
+    cambia(s);
+    campo.value = [...s].join(",");
+    const scelta = box.closest("form").querySelector('input[name="tipo"][value="comuni"]');
+    if (scelta) scelta.checked = true;
+  };
+  document.addEventListener("change", (e) => {
+    const c = e.target;
+    if (!c.matches || !c.matches('.comuni-scelta .cm input[type="checkbox"]')) return;
+    spunte(c.closest(".comuni-scelta"), (s) => (c.checked ? s.add(c.value) : s.delete(c.value)));
+  });
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest && e.target.closest(".cm-preset, .cm-altri");
+    if (!b) return;
+    const box = b.closest(".comuni-scelta");
+    if (b.classList.contains("cm-altri")) {
+      for (const r of box.querySelectorAll(".cm[hidden]")) r.hidden = false;
+      b.hidden = true;
+      return;
+    }
+    const preset = b.dataset.comuni.split(",");
+    spunte(box, (s) => preset.forEach((n) => s.add(n)));
+    for (const c of box.querySelectorAll(".cm input")) {
+      if (!preset.includes(c.value)) continue;
+      c.checked = true;
+      c.closest(".cm").hidden = false;
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    // Invio nel campo del centro ricarica l'elenco ("Centra qui") invece di salvare il foglio
+    const t = e.target;
+    if (e.key !== "Enter" || !t.matches || !t.matches(".cm-centro input")) return;
+    e.preventDefault();
+    t.closest(".cm-centro").querySelector("button").click();
+  });
+
   // prenotazione: conferma nativa di Telegram, poi invio e aggiornamento delle schede
   document.addEventListener("submit", (e) => {
     const f = e.target;

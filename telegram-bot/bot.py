@@ -374,9 +374,22 @@ def zona_di(p):
     return cup_http.zona_norm(z)
 
 
+def nomi_comuni(elenco, massimo=4):
+    """Zona "comuni": "Torino e prima cintura" per il preset, altrimenti "Torino, Moncalieri e altri 2"."""
+    if cup_http.e_cintura(elenco):
+        return "Torino e prima cintura"
+    nomi = [titolo(x) for x in elenco]
+    resto = len(nomi) - massimo
+    if resto <= 0:
+        return ", ".join(nomi)
+    return ", ".join(nomi[:massimo]) + (" e un altro" if resto == 1 else f" e altri {resto}")
+
+
 def descr_zona(zona, att):
     z = cup_http.zona_norm(zona)
     tipo, v = z["tipo"], z["valore"]
+    if tipo == "comuni":
+        return f"a {nomi_comuni(v)}" if v else "in nessun comune"
     if tipo == "sede":
         if v and att and att.luogo.sede and v != att.luogo.sede or v and not (att and att.luogo.sede):
             return f"solo nella sede {titolo(v)}"
@@ -393,6 +406,8 @@ def area_breve(zona, att):
     z = cup_http.zona_norm(zona)
     if z["tipo"] == "comune":
         return f"a {titolo(z['valore'] or (cup_http.comune(att.luogo) if att else ''))}"
+    if z["tipo"] == "comuni":
+        return f"a {nomi_comuni(z['valore'])}" if z["valore"] else ""
     if z["tipo"] == "provincia":
         return f"in provincia ({z['valore'] or (cup_http.provincia(att.luogo) if att else '')})"
     return ""
@@ -1059,6 +1074,7 @@ class Bot:
                          "del portale: il controllo e' piu' lento ma vede anche le altre aziende sanitarie. \"Dove "
                          "propone il CUP\" guarda le sedi che il portale propone per questa ricetta.)",
                       [[{"text": "Un comune…", "callback_data": f"sede:{pv}:altro"}],
+                       [{"text": "Torino e prima cintura", "callback_data": f"sede:{pv}:cintura"}],
                        [{"text": "Dove propone il CUP", "callback_data": f"sede:{pv}:tutte"}]])
             return
         righe = [[{"text": f"Solo {att.luogo.sede}", "callback_data": f"sede:{pv}:sede"}]]
@@ -1067,6 +1083,7 @@ class Bot:
         if cup_http.provincia(att.luogo):
             righe.append([{"text": f"Solo la provincia ({cup_http.provincia(att.luogo)})", "callback_data": f"sede:{pv}:provincia"}])
         righe.append([{"text": "Un altro comune…", "callback_data": f"sede:{pv}:altro"}])
+        righe.append([{"text": "Torino e prima cintura", "callback_data": f"sede:{pv}:cintura"}])
         righe.append([{"text": "Qualsiasi sede proposta dal CUP", "callback_data": f"sede:{pv}:tutte"}])
         self.dire(p, "Dove cerco le date?\n(Comune e provincia allargano la ricerca con \"Estendi area\" del "
                      "portale: il controllo e' piu' lento ma vede anche le altre aziende sanitarie.)", righe)
@@ -1552,7 +1569,7 @@ class Bot:
                           ("" if resto else " Non seguo piu' nessuna ricetta: per ricominciare scrivi /start."))
                 self.aggiorna_pannello(chat)
         elif kind == "sede" and len(parts) == 3 and p.get("attuale") and \
-                p["stato"] in ("sede", "attivo", "pausa") and parts[2] in ("sede", "comune", "provincia", "tutte", "altro"):
+                p["stato"] in ("sede", "attivo", "pausa") and parts[2] in ("sede", "comune", "provincia", "tutte", "altro", "cintura"):
             togli_pulsanti()
             att = attuale_di(p)
             if parts[2] == "altro":
@@ -1562,6 +1579,9 @@ class Bot:
                     p["attende_comune"] = time.time()  # ricetta gia' attiva: cambia solo l'area, lo stato resta
                 self.salva(p, "stato", "attende_comune")
                 self.dire(p, "Scrivi il comune in cui cercare, per esempio: Torino.")
+                return
+            if parts[2] == "cintura":
+                self.imposta_zona(p, {"tipo": "comuni", "valore": list(cup_http.CINTURA_TORINO)})
                 return
             valore = {"sede": att.luogo.sede, "comune": cup_http.comune(att.luogo),
                       "provincia": cup_http.provincia(att.luogo), "tutte": ""}[parts[2]]
@@ -1679,7 +1699,7 @@ class Bot:
                         # la zona era "quella della prenotazione": con la ricetta nuova vale quella di prima
                         z["valore"] = {"sede": vecchia.luogo.sede, "comune": cup_http.comune(vecchia.luogo),
                                        "provincia": cup_http.provincia(vecchia.luogo)}[z["tipo"]]
-                    if not att and z["tipo"] != "tutte" and not z["valore"]:
+                    if not att and z["tipo"] not in ("tutte", "comuni") and not z["valore"]:
                         z = {"tipo": "tutte", "valore": ""}  # senza prenotazione non c'e' una sede da cui ricavarla
                     f.update(nuovi, zona=z)
                     for k in ("libera", "viste", "storico", "riassunto", "ultimo", "luoghi"):

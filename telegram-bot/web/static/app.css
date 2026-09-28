@@ -108,6 +108,25 @@ button.secondario { background: transparent; color: var(--tenue); width: 100%; }
   background: var(--sfondo); cursor: pointer;
 }
 .scelta input[type="radio"] { margin-top: 3px; accent-color: var(--bottone); }
+.scelta small { display: block; color: var(--tenue); font-size: 13px; margin-top: 4px; }
+/* "Questi comuni": i comuni vicini al centro, da spuntare */
+.comuni-scelta { display: grid; gap: 8px; padding: 0 0 4px 34px; }
+.cm-centro { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.cm-centro input {
+  min-width: 0; font: inherit; padding: 8px 10px; border-radius: 8px;
+  border: 1px solid var(--separatore); background: var(--scheda); color: var(--testo);
+}
+.cm-centro button, .cm-preset, .cm-altri { padding: 8px 12px; }
+.cm-elenco {
+  display: grid; max-height: 45vh; overflow-y: auto; border-radius: 12px; background: var(--sfondo);
+  overscroll-behavior: contain;
+}
+.cm { display: flex; gap: 10px; align-items: center; padding: 10px 12px; cursor: pointer; }
+.cm + .cm { border-top: 1px solid var(--separatore); }
+.cm[hidden] { display: none; }
+.cm input { margin: 0; width: 18px; height: 18px; flex: none; accent-color: var(--bottone); }
+.cm span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.cm small { color: var(--tenue); font-size: 13px; white-space: nowrap; }
 .scelta input[type="text"], .scelta input[type="date"] {
   display: block; width: 100%; margin-top: 8px; font: inherit; padding: 8px 10px; border-radius: 8px;
   border: 1px solid var(--separatore); background: var(--scheda); color: var(--testo);
