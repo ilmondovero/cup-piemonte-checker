@@ -32,7 +32,7 @@ log = logging.getLogger("cupbot.web")
 
 STATIC = Path(__file__).resolve().parent / "web" / "static"
 MAX_TESTO_COMUNI = 2000  # campo nascosto "comuni": COMUNI_MAX nomi lunghi con le virgole ci stanno
-VICINI_KM, VICINI_MAX_KM = 20, 40  # "Questi comuni": i comuni vicini al centro, poi "Mostra fino a 40 km"
+VICINI_KM = VICINI_MAX_KM = 25  # "Questi comuni": solo i comuni vicini al centro (di piu' e' mezza provincia)
 FILE_STATICI = {"htmx.min.js": "text/javascript; charset=utf-8", "app.js": "text/javascript; charset=utf-8",
                 "app.css": "text/css; charset=utf-8"}
 MAX_ETA_INITDATA = 24 * 3600  # secondi: oltre, Telegram deve rifirmare (basta riaprire l'app)

@@ -138,7 +138,7 @@ vecchia. Cosa si fa dall'app:
   delle sedi trovate nei controlli. I comuni trovati compaiono come suggerimenti. Con **"Questi comuni"**
   si spuntano i comuni vicini, ordinati per distanza dal centro: il comune della prenotazione, oppure
   Torino per una ricetta mai prenotata; "Centra qui" cambia il centro senza perdere le spunte. Si vedono
-  quelli entro 20 km, "Mostra fino a 40 km" allarga l'elenco. "＋ Torino e prima cintura" spunta il
+  quelli entro 25 km. "＋ Torino e prima cintura" spunta il
   preset, 🏥 segna i comuni dove i controlli hanno già visto sedi.
 - **Prenoto da solo** (si tocca la riga sulla scheda). La conferma automatica: sì o no.
 - **Calendario** (si tocca la riga "📅 Calendario" sulla scheda). Un mese alla volta, da quello

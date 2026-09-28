@@ -744,8 +744,8 @@ def test_foglio_dove_comuni_vicini_da_spuntare(app):
     t = get(app, f"/ui/r/{pid}/dove")[2].decode()
     assert 'value="comuni">' in t and 'name="comuni" value=""' in t and 'name="centro" value="Torino"' in t
     assert "<small>centro</small>" in riga_comune(t, "TORINO") and "<small>8 km</small>" in riga_comune(t, "MONCALIERI")
-    assert " hidden>" in riga_comune(t, "FIANO") and "Mostra fino a 40 km" in t  # 23 km: nascosto
-    assert riga_comune(t, "PINEROLO") and not riga_comune(t, "SUSA")  # 34 km si', 50 km no
+    assert riga_comune(t, "FIANO") and " hidden>" not in riga_comune(t, "FIANO")  # 23 km: c'e'
+    assert not riga_comune(t, "PINEROLO") and not riga_comune(t, "SUSA") and "Mostra fino" not in t  # oltre 25 km no
     assert 'class="cm-preset"' in t and 'value="Torino"' in t  # preset e datalist di tutti i comuni
     assert t.index('value="MONCALIERI"') < t.index('value="RIVOLI"')  # dal piu' vicino
     post(app, f"/ui/r/{pid}/dove", {"tipo": "comuni", "comuni": "SUSA,FIANO,MONCALIERI"})
@@ -761,7 +761,8 @@ def test_foglio_dove_centra_qui_tiene_le_spunte(app):
     fam = pratica(b, 1, 1)  # prenotazione ad Asti, sedi viste anche ad Alba
     b.controlla(fam)
     t = get(app, f"/ui/r/{fam['id']}/dove")[2].decode()
-    assert 'name="centro" value="Asti"' in t and "🏥 Alba" in riga_comune(t, "ALBA") and "🏥 = sedi già viste" in t
+    assert 'name="centro" value="Asti"' in t and "🏥 = sedi già viste" in t
+    assert not riga_comune(t, "ALBA")  # 26 km da Asti: oltre il limite, anche se ci sono sedi viste
     assert 'class="cm-preset"' not in t  # Torino e la cintura non sono vicine ad Asti
     t = get(app, f"/ui/r/{fam['id']}/dove?centro=torino&comuni=ALBA%2CRIVOLI&tipo=sede")[2].decode()
     assert 'name="centro" value="Torino"' in t and 'value="comuni" checked' in t
