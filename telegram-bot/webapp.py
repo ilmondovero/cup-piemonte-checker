@@ -35,25 +35,27 @@ FILE_STATICI = {"htmx.min.js": "text/javascript; charset=utf-8", "app.js": "text
                 "app.css": "text/css; charset=utf-8"}
 MAX_ETA_INITDATA = 24 * 3600  # secondi: oltre, Telegram deve rifirmare (basta riaprire l'app)
 AUTO_SPOSTA = ("Quando trovo una data prima della prenotazione la prenoto subito, senza aspettare il tuo tocco: "
-               "le date buone spariscono in pochi minuti. La data vecchia si perde; se poi non si può andare bisogna "
-               "disdire almeno 2 giorni lavorativi prima, altrimenti si paga la prestazione.")
+               "le date buone spariscono in pochi minuti. Prenoto solo nei giorni sì del calendario e mai per oggi. "
+               "La data vecchia si perde; se poi non si può andare bisogna disdire almeno 2 giorni lavorativi prima, "
+               "altrimenti si paga la prestazione.")
 AUTO_NUOVA = ("La ricetta non è ancora prenotata: la prima data libera dove cerchi la prenoto subito, senza aspettare "
-              "il tuo tocco, poi continuo a cercare date prima. Se poi non si può andare bisogna disdire almeno 2 "
-              "giorni lavorativi prima, altrimenti si paga la prestazione.")
+              "il tuo tocco, poi continuo a cercare date prima. Prenoto solo nei giorni sì del calendario e mai per "
+              "oggi. Se poi non si può andare bisogna disdire almeno 2 giorni lavorativi prima, altrimenti si paga "
+              "la prestazione.")
 MAX_ETA_PRENOTA = 2 * 3600  # per spostare o cancellare dati la firma dev'essere recente
-MAX_CORPO = 4096
+MAX_CORPO = 8192  # il calendario puo' mandare fino a MAX_NO_CAL date
 PAUSA_AZIONI = 1.5  # secondi minimi tra due azioni della stessa chat
 TELEGRAM_JS = "https://telegram.org/js/telegram-web-app.js"
 CSP = (f"default-src 'self'; script-src 'self' {TELEGRAM_JS}; style-src 'self' 'unsafe-inline'; "
        "img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'; "
        "frame-ancestors https://web.telegram.org https://*.telegram.org")
 ATTIVE = ("attivo", "pausa")
-AZIONI_POST = ("dove", "auto", "giorni", "pausa", "riprendi", "controlla", "offerta", "vista", "nome", "cancella", "modifica")
-FOGLI_GET = ("dove", "auto", "giorni", "date", "storico", "altro")
+AZIONI_POST = ("dove", "auto", "calendario", "pausa", "riprendi", "controlla", "offerta", "vista", "nome", "cancella", "modifica")
+FOGLI_GET = ("dove", "auto", "calendario", "date", "storico", "altro")
 AZIONI_SENSIBILI = ("offerta", "vista", "cancella", "modifica")  # vogliono una firma recente
-MAX_DATE_GIORNI = 20  # date precise al massimo nel foglio "Giorni"
-FASCE = (("", "Tutto il giorno"), ("mattina", "Solo di mattina (prima delle 13)"),
-         ("pomeriggio", "Solo di pomeriggio (dalle 13)"))
+MAX_NO_CAL = 400  # date segnate no al massimo nel calendario
+GIORNI_CAL = 400  # il calendario arriva fino a tanti giorni da oggi
+MESI_CAL = 12  # mesi dopo quello corrente sfogliabili nel calendario
 e = html.escape
 
 
@@ -270,68 +272,59 @@ class App:
         return gia_attiva or self.store.chat_count() < self.bot.max_utenti
 
     def azione_auto(self, chat, p, dati):
-        giorni = dati.get("giorni", "")
-        if giorni == "data":  # da un giorno preciso, non "fra N giorni"
-            try:
-                dal = date.fromisoformat(dati.get("dal", ""))
-            except ValueError:
-                raise Richiesta(400, "Scegli il giorno da cui prenotare.") from None
-            oggi = botmod.adesso().date()
-            if not oggi < dal <= oggi + timedelta(days=366):
-                raise Richiesta(400, "Scegli un giorno da domani in poi.")
-            auto = {"dal": dal.isoformat()}
-        elif giorni in {"0", *map(str, botmod.ANTICIPI_AUTO)}:
-            auto = {"giorni": int(giorni)} if int(giorni) else None
-        else:
+        if dati.get("on") not in ("0", "1"):
             raise Richiesta(400, "Scelta non valida.")
-        self._modifica(chat, p, lambda f: f.update(auto=auto))
-        return f"{self.bot.nome(p)}: " + ("conferma automatica attiva." if auto else "conferma automatica spenta.")
+        attiva = dati["on"] == "1"
 
-    def azione_giorni(self, chat, p, dati):
-        """Giorni della settimana (g0..g6), date precise ("gg/mm" o "gg/mm/aaaa"), fascia ed "entro"
-        (anche piu' tardi della prenotazione, fino a quel giorno). togli o niente scelto: qualsiasi giorno."""
+        def imposta(f):
+            botmod.fissa_calendario(f)  # i giorni minimi di prima restano nel calendario
+            f["auto"] = {"on": True} if attiva else None
+        self._modifica(chat, p, imposta)
+        return f"{self.bot.nome(p)}: " + ("conferma automatica attiva." if attiva else "conferma automatica spenta.")
+
+    def azione_calendario(self, chat, p, dati):
+        """Il calendario dei giorni si'/no (vedi cup_http.giorno_si), tutto insieme dal foglio: no (date iso
+        separate da virgole), no_settimana (0..6, lun=0), no_fino e si_fino (iso o vuoti). Le date passate si
+        tolgono; quelle gia' no per il giorno della settimana, per no_fino o per si_fino anche."""
         oggi = botmod.adesso().date()
-        ultimo = oggi + timedelta(days=366)
-        settimana = [i for i in range(7) if dati.get(f"g{i}")]
-        precise = set()
-        for pezzo in re.split(r"[\s,;]+", dati.get("date", "").strip()):
-            if not pezzo:
-                continue
-            m = re.fullmatch(r"(\d{1,2})/(\d{1,2})(?:/(\d{4}))?", pezzo)
-            if not m:
-                raise Richiesta(400, f"Non capisco la data «{pezzo[:12]}»: scrivila come 15/10 o 15/10/2026.")
-            d = None
-            for anno in [int(m.group(3))] if m.group(3) else [oggi.year, oggi.year + 1]:
-                try:  # senza anno: la prossima volta che quel giorno arriva
-                    d = date(anno, int(m.group(2)), int(m.group(1)))
-                except ValueError:
-                    continue
-                if d > oggi:
-                    break
-            if not d or not oggi < d <= ultimo:
-                raise Richiesta(400, f"La data {pezzo} non va bene: scegli un giorno da domani a un anno da oggi.")
-            precise.add(d.isoformat())
-        if len(precise) > MAX_DATE_GIORNI:
-            raise Richiesta(400, f"Al massimo {MAX_DATE_GIORNI} date precise.")
-        fascia = dati.get("fascia", "")
-        if fascia not in {f for f, _ in FASCE}:
-            raise Richiesta(400, "Scelta non valida.")
-        entro = ""
-        if dati.get("entro") and not botmod.da_prenotare(p):  # senza prenotazione non c'e' un "piu' tardi"
+        ultimo = oggi + timedelta(days=GIORNI_CAL)
+
+        def giorno(testo):
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", testo):
+                raise Richiesta(400, f"Data non valida: «{testo[:12]}».")
             try:
-                fine = date.fromisoformat(dati["entro"])
+                d = date.fromisoformat(testo)
             except ValueError:
-                raise Richiesta(400, "Scegli il giorno fino a cui accetti una data più tardi.") from None
-            if not oggi < fine <= ultimo:
-                raise Richiesta(400, "Il limite per le date più tardi va da domani a un anno da oggi.")
-            if not (settimana or precise or fascia):
-                raise Richiesta(400, "Per accettare date più tardi scegli prima i giorni o la fascia che vanno bene.")
-            entro = fine.isoformat()
-        giorni = None
-        if not dati.get("togli") and (settimana or precise or fascia):
-            giorni = {"settimana": settimana, "date": sorted(precise), "fascia": fascia, "entro": entro}
-        self._modifica(chat, p, lambda f: f.update(giorni_ok=giorni))
-        return f"{self.bot.nome(p)}: giorni che vanno bene: " + botmod.descr_giorni({**p, "giorni_ok": giorni}) + "."
+                raise Richiesta(400, f"Data non valida: «{testo[:12]}».") from None
+            if d > ultimo:
+                raise Richiesta(400, f"Il calendario arriva fino al {ultimo:%d/%m/%Y}.")
+            return d
+        no = [x for x in dati.get("no", "").split(",") if x]
+        if len(no) > MAX_NO_CAL:
+            raise Richiesta(400, f"Troppi giorni segnati no (al massimo {MAX_NO_CAL}): usa «No fino al» o i giorni "
+                                 "della settimana.")
+        no = {d for d in map(giorno, no) if d >= oggi}
+        sett = [x for x in dati.get("no_settimana", "").split(",") if x]
+        if any(x not in "0123456" or len(x) != 1 for x in sett):
+            raise Richiesta(400, "Giorno della settimana non valido.")
+        sett = sorted({int(x) for x in sett})
+        no_fino = giorno(dati["no_fino"]) if dati.get("no_fino") else None
+        no_fino = no_fino.isoformat() if no_fino and no_fino >= oggi else ""
+        si_fino = giorno(dati["si_fino"]) if dati.get("si_fino") else None
+        si_fino = max(si_fino, oggi - timedelta(days=1)).isoformat() if si_fino else ""
+        cal = {"no": [], "no_settimana": sett, "no_fino": no_fino, "si_fino": si_fino}
+        cal["no"] = sorted(d.isoformat() for d in no if cup_http.giorno_si(d, cal))
+        cal = cal if any(cal.values()) else {}
+
+        def imposta(f):
+            botmod.fissa_calendario(f)  # toglie le regole di prima: da qui vale solo il calendario
+            prima = dict(f["calendario"] or {})
+            # Salva senza cambiare niente non toglie "solo anticipare" a un calendario delle regole di prima
+            f["calendario"] = ({**cal, "solo_prima": True} if prima.pop("solo_prima", False) and prima == cal
+                               else cal)
+        self._modifica(chat, p, imposta)
+        descr = botmod.descr_calendario({"calendario": cal})
+        return f"{self.bot.nome(p)}: " + (f"giorni {descr}." if descr.startswith("no:") else "tutti i giorni sì.")
 
     def azione_pausa(self, chat, p, dati):
         self._modifica(chat, p, lambda f: f.update(stato="pausa", pausa_da=time.time()))
@@ -569,8 +562,8 @@ class App:
       <span class="nome">🔎 Dove cerco</span><span class="valore">{e(botmod.descr_zona(zona, att))}{estesa}</span></button>
     <button type="button" class="regola" hx-get="/ui/r/{pid}/auto" hx-target="#foglio" aria-label="Cambia prenotazione automatica">
       <span class="nome">⚡ Prenoto da solo</span><span class="valore">{e(botmod.auto_descr(p))}</span></button>
-    <button type="button" class="regola" hx-get="/ui/r/{pid}/giorni" hx-target="#foglio" aria-label="Cambia i giorni che vanno bene">
-      <span class="nome">📅 Giorni</span><span class="valore">{e(botmod.descr_giorni(p))}</span></button>
+    <button type="button" class="regola" hx-get="/ui/r/{pid}/calendario" hx-target="#foglio" aria-label="Cambia i giorni che vanno bene">
+      <span class="nome">📅 Calendario</span><span class="valore">{e(botmod.descr_calendario(p))}</span></button>
     <div class="regola"><span class="nome">⏱ Ultimo controllo</span>
       <span class="valore">{e(riassunto.split(' ', 1)[1] if ' ' in riassunto else riassunto)}</span></div>
     <div class="regola"><span class="nome">⏭ Prossimo controllo</span><span class="valore">{e(self.prossimo(p))}</span></div>
@@ -607,7 +600,7 @@ class App:
         scade = botmod.orario(o["ts"] + botmod.TTL_OFFERTA)
         voci, nuova = [], botmod.da_prenotare(p)
         att = botmod.attuale_di(p)
-        piu_tardi = not nuova and any(x.quando > att.quando for x in o["slots"])  # entro il limite dei giorni
+        piu_tardi = not nuova and any(x.quando > att.quando for x in o["slots"])  # prenotazione in un giorno no
         for i, x in enumerate(o["slots"]):
             conferma = (f"Prenoto {self.bot.nome(p)} il {botmod.fmt(x.quando)}, {botmod.titolo(x.luogo.sede)}? "
                         "Se poi non si può andare, va disdetta almeno 2 giorni lavorativi prima." if nuova else
@@ -717,61 +710,102 @@ class App:
 </form>"""
 
     def foglio_auto(self, p):
-        a = p.get("auto") or {}
-        attivo = "data" if a.get("dal") else str(a.get("giorni", 0))
-        oggi = botmod.adesso().date()
-        domani = oggi + botmod.timedelta(days=1)
-        voci = [("0", "No, chiedimi prima di prenotare")] + [
-            (str(g), f"Sì, date da {botmod.GIORNI[(oggi + botmod.timedelta(days=g)).weekday()]} "
-                     f"{oggi + botmod.timedelta(days=g):%d/%m} in poi") for g in botmod.ANTICIPI_AUTO]
+        attiva = bool(p.get("auto"))
+        voci = [("1", "Sì, prenoto da solo nei giorni sì del calendario"), ("0", "No, chiedimi prima di prenotare")]
         scelte = "".join(
-            f'<label class="scelta"><input type="radio" name="giorni" value="{v}"{" checked" if v == attivo else ""}>'
+            f'<label class="scelta"><input type="radio" name="on" value="{v}"{" checked" if (v == "1") == attiva else ""}>'
             f'<span>{e(t)}</span></label>' for v, t in voci)
-        scelte += (f'<label class="scelta"><input type="radio" name="giorni" value="data"'
-                   f'{" checked" if attivo == "data" else ""}><span>Sì, date da un giorno preciso in poi'
-                   f'<input type="date" name="dal" value="{e(a.get("dal") or "")}" min="{domani.isoformat()}" '
-                   f'max="{(oggi + botmod.timedelta(days=366)).isoformat()}"></span></label>')
         return f"""
 <h2>⚡ Prenoto da solo · {e(self.bot.nome(p))}</h2>
 <p class="nota">{e(AUTO_NUOVA if botmod.da_prenotare(p) else AUTO_SPOSTA)}</p>
 <form hx-post="/ui/r/{p['id']}/auto" hx-target="#ricette" hx-swap="innerMorph" class="scelte">
   {scelte}
+  <p class="nota">Calendario: {e(botmod.descr_calendario(p))}.</p>
   <button class="primario">Salva</button>
 </form>"""
 
-    def foglio_giorni(self, p):
-        g = p.get("giorni_ok") or {}
+    def foglio_calendario(self, p):
+        """Griglia dei mesi (da quello corrente a MESI_CAL dopo) con i giorni si'/no. Lo stato sta nei campi
+        nascosti del form e lo cambia app.js a ogni tocco (senza una richiesta per tocco): si salva con Salva.
+        Le classi dei giorni qui sono gia' giuste, app.js le ricalcola dopo ogni tocco."""
+        cal = botmod.calendario_di(p) or {}
         oggi = botmod.adesso().date()
+        ultimo = oggi + timedelta(days=GIORNI_CAL)
         nuova = botmod.da_prenotare(p)
-        caselle = "".join(
-            f'<label class="scelta"><input type="checkbox" name="g{i}" value="1"'
-            f'{" checked" if i in (g.get("settimana") or []) else ""}><span>{e(nome)}</span></label>'
-            for i, nome in enumerate(botmod.GIORNI))
-        precise = ", ".join(f"{date.fromisoformat(d):%d/%m/%Y}" for d in g.get("date") or []
-                            if date.fromisoformat(d) > oggi)  # quelle passate non servono piu'
-        fasce = "".join(
-            f'<label class="scelta"><input type="radio" name="fascia" value="{v}"'
-            f'{" checked" if v == (g.get("fascia") or "") else ""}><span>{e(t)}</span></label>' for v, t in FASCE)
-        entro = "" if nuova else (
-            f'<label class="scelta"><span>Anche più tardi, fino al (facoltativo): solo se la tua prenotazione non è '
-            f'già in uno di questi giorni<input type="date" name="entro" value="{e(g.get("entro") or "")}" '
-            f'min="{(oggi + timedelta(days=1)).isoformat()}" max="{(oggi + timedelta(days=366)).isoformat()}"></span></label>')
-        spiega = ("Ricetta non ancora prenotata: prenoto solo una data in questi giorni." if nuova else
-                  "Sposto la prenotazione solo su una data in questi giorni, prima della tua; altrimenti tengo la tua.")
+        att = None if nuova else botmod.attuale_di(p)
+        viste = {}
+        for v in p.get("viste") or []:
+            q = v["q"][:10]
+            viste[q] = viste.get(q) or bool(v.get("ok"))
+        # solo i giorni da oggi in poi: le date passate non servono piu'
+        no = [d for d in cal.get("no") or [] if d >= oggi.isoformat()]
+        sett = sorted(cal.get("no_settimana") or [])
+        mesi_nomi = list(cup_http.MESI)
+        mesi = []
+        for i in range(MESI_CAL + 1):
+            anno, mese = oggi.year + (oggi.month - 1 + i) // 12, (oggi.month - 1 + i) % 12 + 1
+            primo = date(anno, mese, 1)
+            dopo = date(anno + mese // 12, mese % 12 + 1, 1)
+            celle = [f'<button type="button" class="cal-sett{" no" if w in sett else ""}" data-w="{w}" '
+                     f'aria-pressed="{"true" if w in sett else "false"}" aria-label="Tutti i {nome}: sì o no">{nome}</button>'
+                     for w, nome in enumerate(botmod.GIORNI)]
+            # nel mese corrente le settimane gia' passate del tutto non si mostrano
+            d = max(primo, oggi - timedelta(days=oggi.weekday())) if i == 0 else primo
+            celle += ['<span class="cal-vuoto"></span>'] * d.weekday()
+            while d < dopo:
+                segni = ""
+                if att and d == att.quando.date():
+                    segni += '<i class="pin" aria-hidden="true">📌</i>'
+                if d.isoformat() in viste:
+                    segni += f'<i class="vista{" buona" if viste[d.isoformat()] else ""}" aria-hidden="true"></i>'
+                extra = " (la tua prenotazione)" if att and d == att.quando.date() else ""
+                extra += " (data trovata)" if d.isoformat() in viste else ""
+                if d < oggi or d > ultimo:
+                    celle.append(f'<span class="g passato" aria-label="{d:%d/%m}{extra}">{d.day}{segni}</span>')
+                else:
+                    si = cup_http.giorno_si(d, {**cal, "no": no})
+                    fisso = si == cup_http.giorno_si(d, {**cal, "no": []})  # no per settimana, "fino al"...: non il singolo
+                    classi = "g " + ("si" if si else "no") + ("" if si or not fisso else " fisso") + \
+                        (" oggi" if d == oggi else "")
+                    celle.append(f'<button type="button" class="{classi}" data-d="{d.isoformat()}" data-w="{d.weekday()}" '
+                                 f'aria-pressed="{"false" if si else "true"}" '
+                                 f'aria-label="{botmod.GIORNI[d.weekday()]} {d:%d/%m}: {"sì" if si else "no"}{extra}">'
+                                 f'{d.day}{segni}</button>')
+                d += timedelta(days=1)
+            mesi.append(f"""
+    <section class="cal-mese" data-i="{i}"{"" if i == 0 else " hidden"}>
+      <header class="cal-testa">
+        <button type="button" class="cal-prec" aria-label="Mese prima"{" disabled" if i == 0 else ""}>◀</button>
+        <h3>{mesi_nomi[mese - 1].capitalize()} {anno}</h3>
+        <button type="button" class="cal-succ" aria-label="Mese dopo"{" disabled" if i == MESI_CAL else ""}>▶</button>
+      </header>
+      <div class="cal-griglia">{"".join(celle)}</div>
+    </section>""")
+        spiega = ("Ricetta non ancora prenotata: prenoto solo in un giorno sì." if nuova else
+                  "Sposto la prenotazione solo su un giorno sì, prima della tua. Se la tua è in un giorno no, "
+                  "va bene anche un giorno sì più tardi.")
         return f"""
-<h2>📅 Giorni · {e(self.bot.nome(p))}</h2>
-<p class="nota">{e(spiega)} Se non scegli niente, va bene qualsiasi giorno.</p>
-<form hx-post="/ui/r/{p['id']}/giorni" hx-target="#ricette" hx-swap="innerMorph" class="scelte">
-  {caselle}
-  <label class="scelta"><span>Date precise, per esempio 15/10, 22/10/2026
-    <input type="text" name="date" value="{e(precise)}" placeholder="gg/mm, gg/mm" autocomplete="off" maxlength="300"></span></label>
-  {fasce}{entro}
-  <p class="nota">Il CUP mostra solo la prima data libera di ogni sede: un giorno preciso lo trovo solo se è la
-    prima data libera di una sede.</p>
+<h2>📅 Calendario · {e(self.bot.nome(p))}</h2>
+<p class="nota">{e(spiega)} La prenotazione automatica non prenota mai per oggi.</p>
+<form hx-post="/ui/r/{p['id']}/calendario" hx-target="#ricette" hx-swap="innerMorph" class="calendario"
+  data-oggi="{oggi.isoformat()}" data-ultimo="{ultimo.isoformat()}">
+  <input type="hidden" name="no" value="{e(",".join(no))}">
+  <input type="hidden" name="no_settimana" value="{e(",".join(map(str, sett)))}">
+  <input type="hidden" name="no_fino" value="{e(cal.get("no_fino") or "")}">
+  <input type="hidden" name="si_fino" value="{e(cal.get("si_fino") or "")}">
+  <div class="cal-strumenti">
+    <button type="button" class="cal-tutti">Tutti sì</button>
+    <button type="button" class="cal-fino" aria-pressed="false">No fino al giorno…</button>
+  </div>
+  <p class="nota cal-aiuto" aria-live="polite">Tocca un giorno per passarlo da sì a no e ritorno; tocca il nome
+    del giorno in alto per tutti quei giorni.</p>
+  {"".join(mesi)}
+  <p class="nota cal-legenda"><span class="cal-campione si">sì</span> <span class="cal-campione no">no</span>
+    {"<span>📌 la tua prenotazione</span>" if att else ""}
+    <span><i class="vista buona" aria-hidden="true"></i> data buona trovata</span>
+    <span><i class="vista" aria-hidden="true"></i> altra data trovata</span></p>
   <button class="primario">Salva</button>
-</form>
-<form hx-post="/ui/r/{p['id']}/giorni" hx-target="#ricette" hx-swap="innerMorph">
-  <input type="hidden" name="togli" value="1"><button class="secondario">Qualsiasi giorno</button></form>"""
+</form>"""
 
     def foglio_date(self, p):
         viste = p.get("viste") or []

@@ -91,26 +91,15 @@ def test_cambia_zona_e_automatica(app):
     stato, _, corpo = post(app, f"/ui/r/{pid}/dove", {"tipo": "altro", "comune": "  alba "})
     assert stato == 200 and app.store.get(pid)["zona"] == {"tipo": "comune", "valore": "ALBA"}
     assert "cerco solo nel comune di Alba" in corpo.decode()
-    post(app, f"/ui/r/{pid}/auto", {"giorni": "3"})
-    assert app.store.get(pid)["auto"] == {"giorni": 3}
-    post(app, f"/ui/r/{pid}/auto", {"giorni": "0"})
-    assert app.store.get(pid)["auto"] is None
-    stato, _, _ = post(app, f"/ui/r/{pid}/auto", {"giorni": "99"})
-    assert stato == 400
-    domani = botmod.adesso().date() + botmod.timedelta(days=1)
-    dal = (domani + botmod.timedelta(days=11)).isoformat()
-    post(app, f"/ui/r/{pid}/auto", {"giorni": "data", "dal": dal})
-    assert app.store.get(pid)["auto"] == {"dal": dal}
-    assert botmod.dal_giorno(app.store.get(pid)).isoformat() == dal
+    post(app, f"/ui/r/{pid}/auto", {"on": "1"})
+    assert app.store.get(pid)["auto"] == {"on": True}
     _, _, corpo = get(app, f"/ui/r/{pid}/auto")
-    assert f'value="{dal}"' in corpo.decode() and 'value="data" checked' in corpo.decode()
-    for cattiva in ("", "10/10/2026", botmod.adesso().date().isoformat()):  # vuota, formato sbagliato, oggi
-        stato, _, _ = post(app, f"/ui/r/{pid}/auto", {"giorni": "data", "dal": cattiva})
+    assert 'value="1" checked' in corpo.decode() and "Calendario: tutti i giorni" in corpo.decode()
+    post(app, f"/ui/r/{pid}/auto", {"on": "0"})
+    assert app.store.get(pid)["auto"] is None
+    for cattiva in ({"on": "2"}, {"giorni": "3"}, {}):
+        stato, _, _ = post(app, f"/ui/r/{pid}/auto", cattiva)
         assert stato == 400
-    assert app.store.get(pid)["auto"] == {"dal": dal}
-    p = app.store.get(pid)
-    p["auto"] = {"dal": "2020-01-01"}  # data fissa gia' passata: vale da domani
-    assert botmod.dal_giorno(p) == domani
     stato, _, _ = post(app, f"/ui/r/{pid}/dove", {"tipo": "altro", "comune": "<script>"})
     assert stato == 400
     assert ("pannello", 1, None) in list(app.bot.coda.queue)  # il pannello in chat si aggiorna
@@ -161,9 +150,9 @@ def test_la_coda_ricontrolla_il_proprietario(app):
 def test_modifica_dall_app_non_si_perde_dopo_un_controllo(app):
     b = app.bot
     p = pratica(b, 1)  # il bot ha in mano questa copia durante un controllo lungo...
-    post(app, f"/ui/r/{p['id']}/auto", {"giorni": "7"})  # ...intanto l'utente attiva l'automatica
+    post(app, f"/ui/r/{p['id']}/auto", {"on": "1"})  # ...intanto l'utente attiva l'automatica
     b.salva(p, "errori", "ultimo")
-    assert b.store.get(p["id"])["auto"] == {"giorni": 7}
+    assert b.store.get(p["id"])["auto"] == {"on": True}
 
 
 def test_intestazioni_di_sicurezza_e_file_statici(app):
@@ -577,55 +566,147 @@ def test_ricetta_mai_prenotata_date_dove_e_andamento(app):
     assert 'class="riferimento"' not in t
 
 
-def test_foglio_giorni_salva_e_toglie(app):
-    pid = pratica(app.bot, 1)["id"]
-    stato, _, corpo = get(app, f"/ui/r/{pid}/giorni")
+def giorni_da_oggi(*n):
+    oggi = botmod.adesso().date()
+    return [(oggi + botmod.timedelta(days=i)).isoformat() for i in n]
+
+
+def test_foglio_calendario_mesi_segni_e_passati(app):
+    b = app.bot
+    p = pratica(b, 1)
+    oggi = botmod.adesso().date()
+    trovata, altra = giorni_da_oggi(3, 5)
+    p["viste"] = [{"q": trovata + "T09:00:00", "ok": True}, {"q": altra + "T10:00:00", "ok": False}]
+    b.store.save(p)
+    stato, _, corpo = get(app, f"/ui/r/{p['id']}/calendario")
     t = corpo.decode()
-    assert stato == 200 and 'name="g0"' in t and 'name="entro"' in t and "prima data libera di ogni sede" in t
-    oggi = botmod.adesso().date()
-    domani = oggi + botmod.timedelta(days=1)
-    entro = (oggi + botmod.timedelta(days=30)).isoformat()
-    stato, _, corpo = post(app, f"/ui/r/{pid}/giorni", {"g0": "1", "g4": "1", "fascia": "mattina", "entro": entro,
-                                                        "date": f"{domani:%d/%m}, {domani:%d/%m/%Y}  {oggi:%d/%m}"})
-    g = app.store.get(pid)["giorni_ok"]
-    assert stato == 200 and g["settimana"] == [0, 4] and g["fascia"] == "mattina" and g["entro"] == entro
-    # senza anno: la prossima volta che arriva (oggi e' gia' passato: l'anno prossimo); doppioni tolti
-    assert g["date"] == sorted({domani.isoformat(), oggi.replace(year=oggi.year + 1).isoformat()})
-    assert "solo lun, ven" in corpo.decode() and "anche più tardi fino al" in corpo.decode()
+    assert stato == 200 and t.count('class="cal-mese"') == webapp.MESI_CAL + 1
+    assert t.count(" hidden>") == webapp.MESI_CAL  # si vede solo il mese corrente
+    assert t.count('class="cal-sett"') == 7 * (webapp.MESI_CAL + 1) and ">lun</button>" in t
+    assert f'data-oggi="{oggi.isoformat()}"' in t and f'data-d="{oggi.isoformat()}"' in t
+    assert f'class="g si oggi" data-d="{oggi.isoformat()}"' in t
+    lunedi = oggi - botmod.timedelta(days=oggi.weekday())
+    if lunedi.month == oggi.month and lunedi < oggi:  # i giorni passati della settimana non si toccano
+        assert f'<span class="g passato" aria-label="{lunedi:%d/%m}' in t
+    prima = lunedi - botmod.timedelta(days=1)
+    if prima.month == oggi.month:  # le settimane gia' passate del tutto non si mostrano
+        assert f'aria-label="{prima:%d/%m}' not in t
+    att = botmod.attuale_di(p).quando.date()
+    assert f'data-d="{att.isoformat()}"' in t and "📌" in t  # la prenotazione, a 200 giorni: nei 12 mesi
+    assert f'data-d="{trovata}"' in t and 'class="vista buona"' in t and 'class="vista"' in t
+    assert 'name="no" value=""' in t and 'name="no_settimana" value=""' in t and "Tutti sì" in t
     _, _, corpo = get(app, "/ui/ricette")
-    assert "📅 Giorni" in corpo.decode() and "mattina" in corpo.decode()
-    _, _, corpo = get(app, f"/ui/r/{pid}/giorni")
-    assert 'name="g4" value="1" checked' in corpo.decode() and f'value="{entro}"' in corpo.decode()
-    post(app, f"/ui/r/{pid}/giorni", {"togli": "1", "g0": "1"})
-    assert app.store.get(pid)["giorni_ok"] is None and botmod.descr_giorni(app.store.get(pid)) == "qualsiasi giorno"
-    post(app, f"/ui/r/{pid}/giorni", {"fascia": ""})  # niente scelto: qualsiasi giorno
-    assert app.store.get(pid)["giorni_ok"] is None
+    assert "📅 Calendario" in corpo.decode() and "tutti i giorni" in corpo.decode()
 
 
-def test_foglio_giorni_validazione(app):
+def test_foglio_calendario_salva_giorni_settimana_no_fino_e_tutti_si(app):
     pid = pratica(app.bot, 1)["id"]
     oggi = botmod.adesso().date()
-    troppe = " ".join(f"{oggi + botmod.timedelta(days=i):%d/%m/%Y}" for i in range(1, 23))
-    for cattivi in ({"g1": "1", "date": "31/02"}, {"date": "domani"}, {"date": f"{oggi:%d/%m/%Y}"},
-                    {"date": f"{oggi + botmod.timedelta(days=400):%d/%m/%Y}"}, {"date": troppe},
-                    {"g1": "1", "fascia": "sera"}, {"g1": "1", "entro": "2020-01-01"}, {"g1": "1", "entro": "x"},
-                    {"entro": (oggi + botmod.timedelta(days=5)).isoformat()}):  # entro senza giorni ne' fascia
-        stato, _, corpo = post(app, f"/ui/r/{pid}/giorni", cattivi)
+    d1, d2, d3, fino = giorni_da_oggi(20, 21, 22, 9)
+    ieri = (oggi - botmod.timedelta(days=1)).isoformat()
+    sabato = next(d for d in giorni_da_oggi(*range(30, 37)) if botmod.date.fromisoformat(d).weekday() == 5)
+    presto = giorni_da_oggi(4)[0]
+    # un tocco su tre giorni di fila, sabati e domeniche no, no fino al nono giorno: si salva tutto insieme
+    stato, _, corpo = post(app, f"/ui/r/{pid}/calendario",
+                           {"no": ",".join([d3, d1, d2, ieri, sabato, presto, d1]), "no_settimana": "6,5",
+                            "no_fino": fino, "si_fino": ""})
+    k = app.store.get(pid)["calendario"]
+    assert stato == 200 and k["no_settimana"] == [5, 6] and k["no_fino"] == fino and k["si_fino"] == ""
+    # tolti: il giorno passato, il sabato (gia' no), quello entro "no fino al" e il doppione
+    assert k["no"] == sorted({d for d in (d1, d2, d3) if botmod.date.fromisoformat(d).weekday() < 5})
+    t = corpo.decode()
+    assert "giorni no: sab, dom, fino al" in t
+    assert botmod.descr_calendario(app.store.get(pid)).startswith("no: sab, dom, fino al")
+    _, _, corpo = get(app, f"/ui/r/{pid}/calendario")
+    t = corpo.decode()
+    assert 'name="no_settimana" value="5,6"' in t and f'name="no_fino" value="{fino}"' in t
+    assert f'class="g no" data-d="{k["no"][0]}"' in t and 'class="cal-sett no"' in t
+    assert f'class="g no fisso" data-d="{fino}"' in t  # no per "no fino al": non si cambia da solo
+    # tutti si'
+    stato, _, corpo = post(app, f"/ui/r/{pid}/calendario", {"no": "", "no_settimana": "", "no_fino": "", "si_fino": ""})
+    assert stato == 200 and app.store.get(pid)["calendario"] == {} and "tutti i giorni sì" in corpo.decode()
+    assert botmod.calendario_di(app.store.get(pid)) is None
+
+
+def test_foglio_calendario_prende_il_posto_delle_regole_di_prima(app):
+    b = app.bot
+    p = pratica(b, 1)
+    p["auto"] = {"giorni": 3}
+    p["giorni_ok"] = {"settimana": [0, 1, 2, 3, 4], "date": [], "fascia": "mattina", "entro": ""}
+    b.store.save(p)
+    fino = giorni_da_oggi(2)[0]
+    _, _, corpo = get(app, f"/ui/r/{p['id']}/calendario")
+    t = corpo.decode()
+    assert 'name="no_settimana" value="5,6"' in t and f'name="no_fino" value="{fino}"' in t
+    _, _, corpo = get(app, "/ui/ricette")
+    assert "no: sab, dom, fino al" in corpo.decode() and "sì, nei giorni sì del calendario" in corpo.decode()
+    post(app, f"/ui/r/{p['id']}/calendario", {"no": "", "no_settimana": "5,6", "no_fino": fino, "si_fino": ""})
+    q = app.store.get(p["id"])
+    assert "giorni_ok" not in q and q["auto"] == {"on": True}
+    # salvato com'era: resta "solo anticipare" delle regole di prima
+    assert q["calendario"] == {"no": [], "no_settimana": [5, 6], "no_fino": fino, "si_fino": "", "solo_prima": True}
+
+
+def test_automatica_dall_app_tiene_i_giorni_di_prima(app):
+    b = app.bot
+    p = pratica(b, 1)
+    p["auto"] = {"dal": giorni_da_oggi(10)[0]}
+    b.store.save(p)
+    post(app, f"/ui/r/{p['id']}/auto", {"on": "0"})
+    q = app.store.get(p["id"])
+    assert q["auto"] is None and q["calendario"]["no_fino"] == giorni_da_oggi(9)[0]
+
+
+def test_foglio_calendario_validazione(app):
+    pid = pratica(app.bot, 1)["id"]
+    lontano = giorni_da_oggi(webapp.GIORNI_CAL + 1)[0]
+    troppe = ",".join(giorni_da_oggi(*range(1, webapp.MAX_NO_CAL + 2)))
+    for cattivi in ({"no": "2026-13-01"}, {"no": "20261001"}, {"no": "domani"}, {"no": "2026-10-01T09:00"},
+                    {"no": lontano}, {"no": troppe}, {"no_settimana": "7"}, {"no_settimana": "56"},
+                    {"no_settimana": "x"}, {"no_fino": lontano}, {"no_fino": "31/12/2026"}, {"si_fino": "x"}):
+        stato, _, corpo = post(app, f"/ui/r/{pid}/calendario", cattivi)
         assert stato == 400 and 'class="errore"' in corpo.decode(), cattivi
-    assert not app.store.get(pid).get("giorni_ok")
-    stato, _, _ = post(app, f"/ui/r/{pid}/giorni", {"g1": "1"}, chat=2)  # ricetta di un altro
+    assert "calendario" not in app.store.get(pid)
+    stato, _, _ = post(app, f"/ui/r/{pid}/calendario", {"no_settimana": "1"}, chat=2)  # ricetta di un altro
+    assert stato == 404 and "calendario" not in app.store.get(pid)
+    stato, _, _ = get(app, f"/ui/r/{pid}/calendario", chat=2)
     assert stato == 404
+    assert post(app, f"/ui/r/{pid}/giorni", {"g1": "1"})[0] == 404  # il foglio di prima non c'e' piu'
+    # la dimensione massima ci sta nel limite del corpo
+    tutte = ",".join(giorni_da_oggi(*range(1, webapp.MAX_NO_CAL + 1)))
+    assert len(urlencode({"no": tutte, "no_settimana": "0,1,2,3,4,5,6", "no_fino": "", "si_fino": ""})) < webapp.MAX_CORPO
 
 
-def test_foglio_giorni_ricetta_mai_prenotata(b, monkeypatch):
+def test_foglio_calendario_escaping(app):
+    b = app.bot
+    p = pratica(b, 1)
+    post(app, f"/ui/r/{p['id']}/nome", {"nome": '<b>"x"</b>'})
+    t = get(app, f"/ui/r/{p['id']}/calendario")[2].decode()
+    assert "<b>" not in t and "&lt;b&gt;&quot;x&quot;&lt;/b&gt;" in t
+
+
+def test_foglio_calendario_ricetta_mai_prenotata(b, monkeypatch):
     from test_bot import registra_nuova
     monkeypatch.setattr(webapp, "PAUSA_AZIONI", 0)
     b.token = TOKEN
     registra_nuova(b)
     app = webapp.App(b, b.store)
     pid = pratica(b)["id"]
-    _, _, corpo = get(app, f"/ui/r/{pid}/giorni")
-    assert 'name="entro"' not in corpo.decode() and "non ancora prenotata" in corpo.decode()
-    entro = (botmod.adesso().date() + botmod.timedelta(days=9)).isoformat()
-    post(app, f"/ui/r/{pid}/giorni", {"g2": "1", "entro": entro})
-    assert app.store.get(pid)["giorni_ok"] == {"settimana": [2], "date": [], "fascia": "", "entro": ""}
+    t = get(app, f"/ui/r/{pid}/calendario")[2].decode()
+    assert "non ancora prenotata" in t and "📌" not in t and "2100" not in t
+    post(app, f"/ui/r/{pid}/calendario", {"no_settimana": "2"})
+    assert app.store.get(pid)["calendario"] == {"no": [], "no_settimana": [2], "no_fino": "", "si_fino": ""}
+
+
+def test_calendario_salvato_uguale_resta_solo_anticipo(app):
+    pid = pratica(app.bot, 1)["id"]
+    p = app.store.get(pid)
+    oggi = botmod.adesso().date()
+    p["auto"] = {"dal": (oggi + botmod.timedelta(days=5)).isoformat()}  # regola di prima: anticipa soltanto
+    app.store.save(p)
+    fino = (oggi + botmod.timedelta(days=4)).isoformat()
+    post(app, f"/ui/r/{pid}/calendario", {"no": "", "no_settimana": "", "no_fino": fino, "si_fino": ""})
+    assert app.store.get(pid)["calendario"] == {"no": [], "no_settimana": [], "no_fino": fino, "si_fino": "",
+                                                "solo_prima": True}
+    post(app, f"/ui/r/{pid}/calendario", {"no": "", "no_settimana": "6", "no_fino": fino, "si_fino": ""})
+    assert "solo_prima" not in app.store.get(pid)["calendario"]  # cambiato dall'utente: regola nuova

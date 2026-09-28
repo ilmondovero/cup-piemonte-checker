@@ -52,7 +52,6 @@ MAX_RICERCHE_FALLITE = 5  # ricerche CF+NRE fallite per chat al giorno
 MAX_RICERCHE_APP = 10  # ricerche dalla Mini App per chat al giorno, riuscite o no: ognuna e' una sessione sul portale
 AZIONI_PER_GIRO = 20  # azioni della Mini App eseguite prima di tornare a Telegram e ai controlli
 PAUSA_MESSAGGI = 1.5  # secondi minimi tra due messaggi della stessa chat
-ANTICIPI_AUTO = (1, 3, 7)  # giorni minimi da oggi per la conferma automatica, a scelta dell'utente
 GIORNI = ["lun", "mar", "mer", "gio", "ven", "sab", "dom"]
 COMUNE_RE = re.compile(r"^[A-ZÀ-Ý][A-ZÀ-Ý' .-]{1,39}$")
 STORICO_GIORNI = 7  # quanto indietro si tiene l'andamento delle date trovate
@@ -148,9 +147,9 @@ AUTO_TESTO = (
     "• la prenotazione attuale viene sostituita: la data vecchia si perde;\n"
     "• se poi non si puo' andare, bisogna disdire o spostare almeno 2 giorni lavorativi prima, altrimenti si "
     "paga l'intera prestazione;\n"
-    "• rispetto dove cercare (/sede) e l'anticipo minimo che scegli qui sotto;\n"
+    "• rispetto dove cercare (/sede) e i giorni no del calendario (📅 nell'app), e non prenoto mai per oggi;\n"
     "• ti scrivo subito data, ora e luogo della nuova prenotazione.\n\n"
-    "Da quando accetti una data nuova?")
+    "La attivo?")
 AUTO_TESTO_NUOVA = (
     "⚡ Conferma automatica\n\n"
     "Questa ricetta non e' ancora prenotata. Se la attivi, la prima data libera dove cerchi la prenoto subito, "
@@ -158,9 +157,9 @@ AUTO_TESTO_NUOVA = (
     "Da sapere:\n"
     "• se poi non si puo' andare, bisogna disdire o spostare almeno 2 giorni lavorativi prima, altrimenti si "
     "paga l'intera prestazione;\n"
-    "• rispetto dove cercare (/sede) e l'anticipo minimo che scegli qui sotto;\n"
+    "• rispetto dove cercare (/sede) e i giorni no del calendario (📅 nell'app), e non prenoto mai per oggi;\n"
     "• ti scrivo subito data, ora e luogo della prenotazione.\n\n"
-    "Da quando accetti una data?")
+    "La attivo?")
 
 
 def env_int(name, default):
@@ -262,56 +261,103 @@ def prestazione(cosa, massimo=45):
     return testo if len(testo) <= massimo else testo[:massimo + 1].rsplit(" ", 1)[0].rstrip(",") + "…"
 
 
-def dal_giorno(p):
-    """Primo giorno che la conferma automatica prenota: fra N giorni da oggi (scorre con i giorni) o da
-    una data fissa scelta nella Mini App, mai prima di domani."""
-    a = p.get("auto")
-    if not a:
-        return None
-    if a.get("dal"):
-        return max(date.fromisoformat(a["dal"]), adesso().date() + timedelta(days=1))
-    return adesso().date() + timedelta(days=a["giorni"])
-
-
 def auto_descr(p):
-    d = dal_giorno(p)
-    if not d:
+    if not p.get("auto"):
         return "no, ti chiedo prima di prenotare"
-    return f"sì, date da {GIORNI[d.weekday()]} {d:%d/%m} in poi"
+    return "sì, nei giorni sì del calendario, mai per oggi" if calendario_di(p) else "sì, date da domani in poi"
 
 
-def descr_giorni(p):
-    """"solo lun, ven · mattina · anche più tardi fino al 28/02" (p["giorni_ok"], vedi cup_http.giorno_ok)."""
-    g = p.get("giorni_ok")
-    if not g:
-        return "qualsiasi giorno"
+def calendario_di(p):
+    """Il calendario dei giorni si'/no della ricetta (vedi cup_http.giorno_si); None: tutti si'.
+    Senza p["calendario"] lo si ricava dalle regole di prima, a ogni lettura: conferma automatica da un
+    giorno ({"dal": iso}) o fra N giorni ({"giorni": N}) -> no fino al giorno prima; giorni_ok: giorni della
+    settimana scelti -> gli altri no; date precise (quelle future) -> le sole si'. Fascia ed "entro" si perdono.
+    Con "solo_prima" il bot anticipa soltanto, come faceva con quelle regole: una finestra "fra N giorni" che
+    scorre ogni giorno, senza, rimanderebbe la prenotazione all'infinito."""
+    if "calendario" in p:
+        return p["calendario"] or None
+    oggi = adesso().date()
+    no, no_sett, fino, si_fino = [], [], None, ""
+    a = p.get("auto") if isinstance(p.get("auto"), dict) else {}
+    if a.get("dal"):
+        fino = date.fromisoformat(a["dal"]) - timedelta(days=1)
+    elif a.get("giorni"):
+        fino = oggi + timedelta(days=int(a["giorni"]) - 1)
+    g = p.get("giorni_ok") or {}
+    tutte = sorted(g.get("date") or [])
+    precise = [d for d in tutte if d >= oggi.isoformat()]
+    if precise:
+        prima, ultima = date.fromisoformat(precise[0]), date.fromisoformat(precise[-1])
+        fino = max(fino, prima - timedelta(days=1)) if fino else prima - timedelta(days=1)
+        no = [(prima + timedelta(days=i)).isoformat() for i in range((ultima - prima).days + 1)]
+        no = [d for d in no if d not in precise]
+        si_fino = ultima.isoformat()
+    elif g.get("settimana"):
+        no_sett = [i for i in range(7) if i not in g["settimana"]]
+    elif tutte:
+        si_fino = tutte[-1]  # c'erano solo date precise, tutte passate: nessun giorno va bene
+    cal = {"no": no, "no_settimana": no_sett, "no_fino": fino.isoformat() if fino and fino >= oggi else "",
+           "si_fino": si_fino}
+    return {**cal, "solo_prima": True} if any(cal.values()) else None
+
+
+def fissa_calendario(f):
+    """Prima di cambiare automatica o calendario: il calendario ricavato dalle regole di prima diventa quello
+    della ricetta (cosi' spegnere o riaccendere l'automatica non lo perde). Toglie le regole vecchie."""
+    if "calendario" not in f:
+        f["calendario"] = calendario_di(f) or {}
+    f.pop("giorni_ok", None)
+    if f.get("auto"):
+        f["auto"] = {"on": True}
+
+
+def _giorni_brevi(giorni):
+    """["2026-10-21", ..., "2026-10-25", "2026-11-02"] -> ["21–25/10", "02/11"]: giorni consecutivi insieme."""
+    pezzi, inizio, prec = [], None, None
+    for d in sorted(date.fromisoformat(x) for x in giorni) + [None]:
+        if inizio and (d is None or d != prec + timedelta(days=1)):
+            if inizio == prec:
+                pezzi.append(f"{inizio:%d/%m}")
+            elif inizio.month == prec.month:
+                pezzi.append(f"{inizio:%d}–{prec:%d/%m}")
+            else:
+                pezzi.append(f"{inizio:%d/%m}–{prec:%d/%m}")
+            inizio = None
+        if d and not inizio:
+            inizio = d
+        prec = d
+    return pezzi
+
+
+def descr_calendario(p, massimo=8):
+    """"no: sab, dom, fino al 09/10, 21–25/10, dopo il 30/11" (solo i giorni da oggi in poi); "tutti i giorni"."""
+    cal = calendario_di(p) or {}
     oggi = adesso().date().isoformat()
-    future = [d for d in sorted(g.get("date") or []) if d >= oggi]
-    giorni = [GIORNI[i] for i in sorted(g.get("settimana") or [])]
-    giorni += [f"{date.fromisoformat(d):%d/%m}" for d in future]
-    if g.get("date") and not giorni:  # restavano solo date precise, tutte passate: nessuna data va bene
-        return "le date scelte sono passate: scegline altre"
-    pezzi = ["solo " + ", ".join(giorni) if giorni else "ogni giorno"]
-    if g.get("fascia"):
-        pezzi.append(g["fascia"])
-    if g.get("entro") and not da_prenotare(p):
-        pezzi.append(f"anche più tardi fino al {date.fromisoformat(g['entro']):%d/%m}")
-    return " · ".join(pezzi)
+    pezzi = [GIORNI[i] for i in sorted(cal.get("no_settimana") or [])]
+    if (cal.get("no_fino") or "") >= oggi:
+        pezzi.append(f"fino al {date.fromisoformat(cal['no_fino']):%d/%m}")
+    singoli = [d for d in cal.get("no") or [] if d >= oggi and cup_http.giorno_si(
+        date.fromisoformat(d), {**cal, "no": []})]  # quelli gia' no per settimana o "fino al" non si ripetono
+    brevi = _giorni_brevi(singoli)
+    pezzi += brevi[:massimo] + (["…"] if len(brevi) > massimo else [])
+    if cal.get("si_fino"):
+        pezzi.append("tutti" if cal["si_fino"] < oggi else f"dopo il {date.fromisoformat(cal['si_fino']):%d/%m}")
+    return "no: " + ", ".join(pezzi) if pezzi else "tutti i giorni"
 
 
 def migliori(p, res):
-    """Le date da proporre e da prenotare da soli. Senza giorni scelti quelle del client; con i giorni la
+    """Le date da proporre e da prenotare da soli. Senza calendario quelle del client; con il calendario la
     stessa regola (cup_http.candidata) rifatta sulle date trovate, che puo' prenderne anche di piu' tarde."""
-    g = p.get("giorni_ok")
-    if not g:
+    cal = calendario_di(p)
+    if not cal:
         return res["migliori"]
     att = None if da_prenotare(p) else res["attuale"]
-    return [x for x in res["slots"] if cup_http.candidata(x, att, zona_di(p), g, res.get("solo_proposta"))]
+    return [x for x in res["slots"] if cup_http.candidata(x, att, zona_di(p), cal, res.get("solo_proposta"))]
 
 
 def gruppi_date(p, viste):
     """Le date viste divise per la chat (/date) e la Mini App: prima quelle buone, poi le altre."""
-    if p.get("giorni_ok"):
+    if calendario_di(p):
         ok, dopo = "✅ Nei giorni che vuoi, dove cerchi", "Dove cerchi, ma non nei giorni che vuoi o più tardi"
     else:
         ok = "✅ Dove cerchi" if da_prenotare(p) else "✅ Prima della tua prenotazione, dove cerchi"
@@ -646,17 +692,18 @@ class Bot:
         ignorati = set(p.get("ignorati", []))
         self.salva(p, "errori", "attuale", "ultimo", "riassunto", "viste", "luoghi", "storico",
                    *(("prossimo",) if ripresa else ()))
+        self.chiudi_incerta(p, att)
         auto = p.get("auto")  # appena riletta: se nel frattempo l'hanno spenta dall'app, niente prenotazione da solo
         if auto:
             # un solo tentativo automatico per data; le date gia' offerte col pulsante valgono comunque
             tentati = set(p.get("tentati_auto", []))
-            dal = dal_giorno(p)
-            candidati = [x for x in res["migliori"] if x.luogo.sede and x.quando.date() >= dal and x.key() not in tentati]
+            oggi = adesso().date()  # mai per oggi: il giorno minimo lo decide il calendario
+            candidati = [x for x in res["migliori"] if x.luogo.sede and x.quando.date() > oggi and x.key() not in tentati]
             if candidati:
                 slot = candidati[0]  # la piu' vicina tra quelle ammesse
                 p["tentati_auto"] = sorted(tentati | {slot.key()})
                 self.salva(p, "tentati_auto")
-                piu_tardi = not nuova and slot.quando > att.quando  # nei giorni scelti, entro il limite
+                piu_tardi = not nuova and slot.quando > att.quando  # la prenotazione e' in un giorno no
                 self.dire(p, f"⚡ Conferma automatica: ho trovato una data"
                              f"{'' if nuova else ' nei giorni che vuoi' if piu_tardi else ' prima'}.\n\n" + descrivi(res) +
                           "\n\n" + self.regola(p))
@@ -731,7 +778,7 @@ class Bot:
         nuova = da_prenotare(p)
         insieme = ("\n\nLa ricetta ha piu' prestazioni: le prenoto tutte nello stesso appuntamento. Se il portale le "
                    "mette in date diverse non confermo e te lo dico." if nuova and " + " in (res.get("cosa") or "") else "")
-        piu_tardi = not nuova and any(x.quando > res["attuale"].quando for x in slots)  # entro il limite dei giorni
+        piu_tardi = not nuova and any(x.quando > res["attuale"].quando for x in slots)  # prenotazione in un giorno no
         ok = self.dire(p, ("🎉 C'e' una data libera!" if nuova else "🎉 C'e' una data nei giorni che vuoi!" if piu_tardi
                            else "🎉 C'e' una data PRIMA!") + "\n\n" + descrivi(res) +
                        "\n\n" + self.regola(p) + insieme + f"\n\nTocca per {'prenotare' if nuova else 'spostare la prenotazione'} "
@@ -774,12 +821,12 @@ class Bot:
         if automatica and (not attuale_db.get("auto") or attuale_db["stato"] != "attivo"):
             self.dire(p, "Nel frattempo hai spento la conferma automatica o messo in pausa: non prenoto da solo.")
             return "fallita"
-        # giorni scelti appena riletti: un'offerta aperta prima di cambiarli non li scavalca
-        giorni = None if libera else attuale_db.get("giorni_ok")
+        # calendario appena riletto: un'offerta aperta prima di cambiarlo non lo scavalca
+        calendario = None if libera else calendario_di(attuale_db)
         try:
             esito = self.portale(cup_http.prenota, p["cf"], p["nre"], slot, sessione=sessione,
                                  zona=zona_di(p), dry_run=self.prova, libera=libera, nuova=nuova,
-                                 giorni=giorni, pid=p["id"], paziente=True)
+                                 calendario=calendario, pid=p["id"], paziente=True)
         except cup_http.GiaPrenotata as e:
             self.dire(p, f"❌ Non prenotata: {e}.")
             try:
@@ -805,6 +852,9 @@ class Bot:
             if urgente:
                 self.alert_admin(f"Esito incerto dopo la conferma per {uid(chat)}")
                 self.sospendi_auto(p)
+                # il prossimo controllo che legge la prenotazione dice com'e' andata
+                p["incerta"] = {"quando": slot.quando.isoformat(), "luogo": slot.luogo.key()}
+                self.salva(p, "incerta")
             # il motivo (date, sedi, passi del portale) serve a capire i flussi nuovi: mai CF e NRE nel log
             motivo = str(e)
             for dato in (p.get("cf"), p.get("nre")):
@@ -834,7 +884,8 @@ class Bot:
                         "ambulatorio": slot.luogo.ambulatorio, "indirizzo": slot.luogo.indirizzo}
         p["prossimo"] = time.time() + self.intervallo_di(chat) * 60
         p.pop("da_prenotare", None)  # da qui e' una prenotazione come le altre: si cercano date prima
-        self.salva(p, "notificati", "ignorati", "tentati_auto", "attuale", "prossimo", "da_prenotare")
+        p.pop("incerta", None)  # un esito incerto di prima non vale piu': ora la prenotazione e' questa
+        self.salva(p, "notificati", "ignorati", "tentati_auto", "attuale", "prossimo", "da_prenotare", "incerta")
         self.dire(p, f"✅ Prenotazione {'fatta' if nuova else 'spostata'}{' (conferma automatica)' if automatica else ''}!\n"
                      f"📅 {fmt(slot.quando)}\n📍 {slot.luogo}\n\n"
                      "Arriveranno SMS/email dal CUP con il nuovo promemoria; controlla anche il codice di "
@@ -850,6 +901,14 @@ class Bot:
             att = self.portale(cup_http.cerca, p["cf"], p["nre"])
         except (cup_http.NonTrovata, cup_http.NonAttiva) as e:
             raise cup_http.CupError(f"la ricetta risulta gia' prenotata, ma non trovo la prenotazione attiva ({e})")
+        if self.chiudi_incerta(p, att):  # era la prenotazione del bot con esito incerto: gia' detto tutto
+            p["attuale"] = pren_to_dict(att)
+            p.pop("da_prenotare", None)
+            p.update(notificati={}, ignorati=[], tentati_auto=[])
+            self.scarta(p["id"])
+            self.salva(p, "attuale", "da_prenotare", "notificati", "ignorati", "tentati_auto")
+            self.aggiorna_pannello(p["chat_id"])
+            return
         auto = bool(p.get("auto"))
         p["attuale"] = pren_to_dict(att)
         p.pop("da_prenotare", None)
@@ -862,6 +921,25 @@ class Bot:
                   ("\nHo spento la conferma automatica: se vuoi, riattivala con /auto." if auto else "") +
                   "\n\n" + self.regola(p))
         self.aggiorna_pannello(p["chat_id"])
+
+    def chiudi_incerta(self, p, att):
+        """Dopo un esito incerto, la prima prenotazione letta dal portale dice com'e' andata: all'utente
+        data, ora e luogo. True se era proprio la data tentata."""
+        inc = p.get("incerta")
+        if not inc:
+            return False
+        p.pop("incerta")
+        self.salva(p, "incerta")
+        fatta = att.quando.isoformat() == inc["quando"] and att.luogo.key() == inc["luogo"]
+        if fatta:
+            self.dire(p, descrivi_prenotazione(att, "✅ Verificato: la conferma di prima e' andata a buon fine") +
+                      "\n\nArriveranno SMS/email dal CUP con il promemoria. La conferma automatica resta spenta: "
+                      "riattivala con /auto se vuoi.")
+        else:
+            self.dire(p, "ℹ️ Verificato: la conferma di prima non e' andata a buon fine.\n\n" +
+                      descrivi_prenotazione(att, "La prenotazione resta"))
+        log.info("esito incerto %s/%s verificato: %s", uid(p["chat_id"]), p["id"], "fatta" if fatta else "non fatta")
+        return fatta
 
     def sospendi_auto(self, p):
         """Dopo un esito incerto niente altri tentativi automatici: decide l'utente."""
@@ -877,6 +955,7 @@ class Bot:
         p.pop("attende_comune", None)
         p.pop("viste", None)  # le date e le sedi trovate erano della ricetta vecchia
         p.pop("luoghi", None)
+        p.pop("incerta", None)  # l'esito incerto era della ricetta vecchia
         self.scarta(p["id"])
         p.pop("libera", None)
         p.update(stato="cf", creato=time.time(), auto=None, notificati={}, ignorati=[], tentati_auto=[])
@@ -1024,9 +1103,8 @@ class Bot:
 
     def chiedi_auto(self, p):
         pv = f"{p['id']}:{versione(p)}"
-        righe = [[{"text": "Da domani" if g == 1 else f"Da tra {g} giorni", "callback_data": f"auto:{pv}:{g}"}
-                  for g in ANTICIPI_AUTO]]
-        righe.append([{"text": "Disattiva" if p.get("auto") else "Lascia disattivata", "callback_data": f"auto:{pv}:0"}])
+        righe = [[{"text": "✅ Attiva", "callback_data": f"auto:{pv}:1"},
+                  {"text": "Disattiva" if p.get("auto") else "Lascia disattivata", "callback_data": f"auto:{pv}:0"}]]
         self.dire(p, (AUTO_TESTO_NUOVA if da_prenotare(p) else AUTO_TESTO) + f"\n\nStato attuale: {auto_descr(p)}.", righe)
 
     def privacy(self):
@@ -1181,10 +1259,8 @@ class Bot:
         """La regola con cui il bot sta cercando, ripetuta in ogni avviso."""
         att = attuale_di(p)
         z = descr_zona(zona_di(p), att)
-        d = dal_giorno(p)
-        return (f"🔎 {z[0].upper()}{z[1:]} · ⚡ " +
-                (f"prenoto da solo date da {GIORNI[d.weekday()]} {d:%d/%m} in poi" if d else "decidi tu") +
-                (f" · 📅 {descr_giorni(p)}" if p.get("giorni_ok") else ""))
+        return (f"🔎 {z[0].upper()}{z[1:]} · ⚡ " + ("prenoto da solo" if p.get("auto") else "decidi tu") +
+                (f" · 📅 {descr_calendario(p)}" if calendario_di(p) else ""))
 
     def riassunto(self, p):
         r = p.get("riassunto")
@@ -1202,11 +1278,11 @@ class Bot:
         if da_prenotare(p):
             pezzi.append(f"✅ {r['migliori']} prenotabili dove cerchi" if r["migliori"] else "nessuna dove cerchi")
         elif r["migliori"]:
-            pezzi.append(f"✅ {r['migliori']} " + ("nei giorni che vuoi" if p.get("giorni_ok") else "prima della tua"))
+            pezzi.append(f"✅ {r['migliori']} " + ("nei giorni che vuoi" if calendario_di(p) else "prima della tua"))
         elif r.get("prima_area") and area_breve(zona, att):
             pezzi.append(f"la prima {area_breve(zona, att)} e' {r['prima_area']}, dopo la tua")
         else:
-            pezzi.append("nessuna nei giorni che vuoi" if p.get("giorni_ok") else "nessuna prima della tua")
+            pezzi.append("nessuna nei giorni che vuoi" if calendario_di(p) else "nessuna prima della tua")
         return f"⏱ {ora} · " + ", ".join(pezzi)
 
     def scheda(self, p):
@@ -1225,8 +1301,8 @@ class Bot:
         if cup_http.estensioni(zona_di(p)):
             righe.append("     (allargo la ricerca a tutto il Piemonte, poi filtro)")
         righe.append(f"⚡ Prenoto da solo: {auto_descr(p)}")
-        if p.get("giorni_ok"):
-            righe.append(f"📅 Giorni: {descr_giorni(p)}")
+        if calendario_di(p):
+            righe.append(f"📅 Giorni {descr_calendario(p)}")
         righe.append(self.riassunto(p))
         return "\n".join(righe)
 
@@ -1495,12 +1571,14 @@ class Bot:
                 return
             self.imposta_zona(p, {"tipo": parts[2], "valore": valore})
         elif kind == "auto" and len(parts) == 3 and p["stato"] in ("attivo", "pausa") and \
-                parts[2] in {"0", *map(str, ANTICIPI_AUTO)}:
+                parts[2].isdecimal() and len(parts[2]) <= 2:
             togli_pulsanti()
-            giorni = int(parts[2])
-            p["auto"] = {"giorni": giorni} if giorni else None
-            self.salva(p, "auto")
-            if giorni:
+            # 1 = attiva; i messaggi di prima avevano 1, 3 o 7 giorni: accendono anche quelli, 0 spegne
+            attiva = int(parts[2]) > 0
+            fissa_calendario(p)
+            p["auto"] = {"on": True} if attiva else None
+            self.salva(p, "auto", "calendario", "giorni_ok")
+            if attiva:
                 self.dire(p, ("⚡ Conferma automatica attiva: prenoto da solo la prima data libera dove cerchi.\n"
                               if da_prenotare(p) else
                               "⚡ Conferma automatica attiva: prenoto da solo la prima data prima di quella attuale.\n")

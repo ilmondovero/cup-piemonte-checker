@@ -131,6 +131,119 @@
     if (ctx && ctx.sourceElement === formDelFoglio) formDelFoglio = null;
   });
 
+  // --- calendario dei giorni sì/no: lo stato sta nei campi nascosti del form, ogni tocco lo cambia qui
+  // (niente richiesta per tocco: il server accetta un'azione ogni 1,5 s) e "Salva" lo manda tutto insieme.
+  // Stessa regola di cup_http.giorno_si: no se entro "no fino al", dopo "si_fino", giorno della settimana no
+  // o giorno segnato no.
+  const piuGiorni = (iso, n) => {
+    const t = new Date(iso + "T00:00:00Z");
+    t.setUTCDate(t.getUTCDate() + n);
+    return t.toISOString().slice(0, 10);
+  };
+  const statoCal = (f) => {
+    const lista = (nome) => f.elements[nome].value.split(",").filter(Boolean);
+    return { no: new Set(lista("no")), sett: new Set(lista("no_settimana")),
+             fino: f.elements.no_fino.value, siFino: f.elements.si_fino.value };
+  };
+  const siFisso = (s, d, w) => !(s.fino && d <= s.fino) && !(s.siFino && d > s.siFino) && !s.sett.has(w);
+  const scriviCal = (f, s) => {
+    f.elements.no.value = [...s.no].sort().join(",");
+    f.elements.no_settimana.value = [...s.sett].sort().join(",");
+    f.elements.no_fino.value = s.fino;
+    f.elements.si_fino.value = s.siFino;
+    for (const b of f.querySelectorAll(".cal-sett")) {
+      const no = s.sett.has(b.dataset.w);
+      b.classList.toggle("no", no);
+      b.setAttribute("aria-pressed", String(no));
+    }
+    for (const b of f.querySelectorAll("button.g")) {
+      const fisso = siFisso(s, b.dataset.d, b.dataset.w);
+      const si = fisso && !s.no.has(b.dataset.d);
+      b.classList.toggle("si", si);
+      b.classList.toggle("no", !si);
+      b.classList.toggle("fisso", !fisso);
+      b.setAttribute("aria-pressed", String(!si));
+      b.setAttribute("aria-label", b.getAttribute("aria-label").replace(/: (sì|no)/, si ? ": sì" : ": no"));
+    }
+  };
+  const aiutoCal = (f, testo) => {
+    const p = f.querySelector(".cal-aiuto");
+    if (!p.dataset.base) p.dataset.base = p.textContent;
+    p.textContent = testo || p.dataset.base;
+  };
+  const modoFino = (f, acceso) => {
+    f.classList.toggle("modo-fino", acceso);
+    f.querySelector(".cal-fino").setAttribute("aria-pressed", String(acceso));
+    aiutoCal(f, acceso ? "Tocca l’ultimo giorno no: tutti i giorni fino a quello compreso diventano no." : "");
+  };
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest && e.target.closest(".calendario button");
+    if (!b || b.type === "submit") return;
+    const f = b.closest("form");
+    const s = statoCal(f);
+    const oggi = f.dataset.oggi;
+    if (b.classList.contains("cal-prec") || b.classList.contains("cal-succ")) {
+      const mese = b.closest(".cal-mese");
+      const altro = b.classList.contains("cal-prec") ? mese.previousElementSibling : mese.nextElementSibling;
+      if (altro && altro.classList.contains("cal-mese")) {
+        mese.hidden = true;
+        altro.hidden = false;
+      }
+      return;
+    }
+    if (b.classList.contains("cal-fino")) {
+      modoFino(f, !f.classList.contains("modo-fino"));
+      return;
+    }
+    if (b.classList.contains("cal-tutti")) {
+      modoFino(f, false);
+      scriviCal(f, { no: new Set(), sett: new Set(), fino: "", siFino: "" });
+      aiutoCal(f, "Tutti i giorni sono sì: premi Salva per tenerli così.");
+      return;
+    }
+    if (b.classList.contains("cal-sett")) {
+      const w = b.dataset.w;
+      if (s.sett.has(w)) s.sett.delete(w);
+      else s.sett.add(w);
+      aiutoCal(f, "");
+      scriviCal(f, s);
+      return;
+    }
+    const d = b.dataset.d;
+    if (!d) return;
+    aiutoCal(f, "");
+    if (f.classList.contains("modo-fino")) {
+      s.fino = d;
+      modoFino(f, false);
+    } else if (s.fino && d <= s.fino) {
+      // dentro "no fino al": il giorno toccato torna sì, e con lui quelli dopo
+      s.fino = piuGiorni(d, -1) < oggi ? "" : piuGiorni(d, -1);
+    } else if (s.siFino && d > s.siFino) {
+      // dopo l'ultimo giorno sì: il periodo si allunga fino a qui, i giorni in mezzo restano no
+      for (let x = piuGiorni(s.siFino, 1); x < d; x = piuGiorni(x, 1)) s.no.add(x);
+      s.siFino = d;
+      s.no.delete(d);
+    } else if (s.sett.has(b.dataset.w)) {
+      const nome = f.querySelector(`.cal-sett[data-w="${b.dataset.w}"]`).textContent;
+      aiutoCal(f, `Tutti i ${nome} sono no: tocca «${nome}» in alto per cambiarli.`);
+      return;
+    } else if (s.no.has(d)) s.no.delete(d);
+    else s.no.add(d);
+    scriviCal(f, s);
+  });
+  document.addEventListener("submit", (e) => {
+    // prima dell'invio si tolgono i giorni passati e quelli gia' no per altre regole: il server li
+    // toglierebbe comunque, ma contano per il limite di date
+    const f = e.target;
+    if (!f.classList || !f.classList.contains("calendario")) return;
+    const s = statoCal(f);
+    for (const d of [...s.no]) {
+      const w = String((new Date(d + "T00:00:00Z").getUTCDay() + 6) % 7);
+      if (d < f.dataset.oggi || !siFisso(s, d, w)) s.no.delete(d);
+    }
+    scriviCal(f, s);
+  }, true);
+
   // prenotazione: conferma nativa di Telegram, poi invio e aggiornamento delle schede
   document.addEventListener("submit", (e) => {
     const f = e.target;

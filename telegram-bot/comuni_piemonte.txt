@@ -1,0 +1,1181 @@
+# Comuni del Piemonte e sigla della provincia (ISTAT, Elenco comuni italiani, settembre 2026)
+Acceglio;CN
+Acqui Terme;AL
+Agliano Terme;AT
+Agliè;TO
+Agrate Conturbia;NO
+Ailoche;BI
+Airasca;TO
+Aisone;CN
+Ala di Stura;TO
+Alagna Valsesia;VC
+Alba;CN
+Albano Vercellese;VC
+Albaretto della Torre;CN
+Albera Ligure;AL
+Albiano d'Ivrea;TO
+Albugnano;AT
+Alessandria;AL
+Alfiano Natta;AL
+Alice Bel Colle;AL
+Alice Castello;VC
+Alluvioni Piovera;AL
+Almese;TO
+Alpette;TO
+Alpignano;TO
+Altavilla Monferrato;AL
+Alto;CN
+Alto Sermenza;VC
+Alzano Scrivia;AL
+Ameno;NO
+Andezeno;TO
+Andorno Micca;BI
+Andrate;TO
+Angrogna;TO
+Antignano;AT
+Antrona Schieranco;VB
+Anzola d'Ossola;VB
+Aramengo;AT
+Arborio;VC
+Argentera;CN
+Arguello;CN
+Arignano;TO
+Arizzano;VB
+Armeno;NO
+Arola;VB
+Arona;NO
+Arquata Scrivia;AL
+Asigliano Vercellese;VC
+Asti;AT
+Aurano;VB
+Avigliana;TO
+Avolasca;AL
+Azeglio;TO
+Azzano d'Asti;AT
+Baceno;VB
+Bagnasco;CN
+Bagnolo Piemonte;CN
+Bairo;TO
+Balangero;TO
+Baldichieri d'Asti;AT
+Baldissero Canavese;TO
+Baldissero Torinese;TO
+Baldissero d'Alba;CN
+Balme;TO
+Balmuccia;VC
+Balocco;VC
+Balzola;AL
+Banchette;TO
+Bannio Anzino;VB
+Barbania;TO
+Barbaresco;CN
+Bardonecchia;TO
+Barengo;NO
+Barge;CN
+Barolo;CN
+Barone Canavese;TO
+Basaluzzo;AL
+Bassignana;AL
+Bastia Mondovì;CN
+Battifollo;CN
+Baveno;VB
+Bee;VB
+Beinasco;TO
+Beinette;CN
+Belforte Monferrato;AL
+Belgirate;VB
+Bellino;CN
+Bellinzago Novarese;NO
+Belvedere Langhe;CN
+Belveglio;AT
+Bene Vagienna;CN
+Benevello;CN
+Benna;BI
+Bergamasco;AL
+Bergolo;CN
+Bernezzo;CN
+Berzano di San Pietro;AT
+Berzano di Tortona;AL
+Beura-Cardezza;VB
+Biandrate;NO
+Bianzè;VC
+Bibiana;TO
+Biella;BI
+Bioglio;BI
+Bistagno;AL
+Bobbio Pellice;TO
+Boca;NO
+Boccioleto;VC
+Bognanco;VB
+Bogogno;NO
+Bollengo;TO
+Bolzano Novarese;NO
+Bonvicino;CN
+Borgaro Torinese;TO
+Borghetto di Borbera;AL
+Borgiallo;TO
+Borgo San Dalmazzo;CN
+Borgo San Martino;AL
+Borgo Ticino;NO
+Borgo Vercelli;VC
+Borgo d'Ale;VC
+Borgofranco d'Ivrea;TO
+Borgolavezzaro;NO
+Borgomale;CN
+Borgomanero;NO
+Borgomasino;TO
+Borgomezzavalle;VB
+Borgone Susa;TO
+Borgoratto Alessandrino;AL
+Borgosesia;VC
+Borriana;BI
+Bosco Marengo;AL
+Bosconero;TO
+Bosia;CN
+Bosio;AL
+Bossolasco;CN
+Boves;CN
+Bozzole;AL
+Bra;CN
+Brandizzo;TO
+Briaglia;CN
+Bricherasio;TO
+Briga Alta;CN
+Briga Novarese;NO
+Brignano-Frascata;AL
+Briona;NO
+Brondello;CN
+Brossasco;CN
+Brosso;TO
+Brovello-Carpugnino;VB
+Brozolo;TO
+Bruino;TO
+Bruno;AT
+Brusasco;TO
+Brusnengo;BI
+Bruzolo;TO
+Bubbio;AT
+Buriasco;TO
+Burolo;TO
+Buronzo;VC
+Busano;TO
+Busca;CN
+Bussoleno;TO
+Buttigliera Alta;TO
+Buttigliera d'Asti;AT
+Cabella Ligure;AL
+Cafasse;TO
+Calamandrana;AT
+Calasca-Castiglione;VB
+Callabiana;BI
+Calliano Monferrato;AT
+Calosso;AT
+Caltignaga;NO
+Caluso;TO
+Camagna Monferrato;AL
+Camandona;BI
+Cambiano;TO
+Cambiasca;VB
+Camburzano;BI
+Camerana;CN
+Camerano Casasco;AT
+Cameri;NO
+Camino;AL
+Campertogno;VC
+Campiglia Cervo;BI
+Campiglione Fenile;TO
+Canale;CN
+Candelo;BI
+Candia Canavese;TO
+Candiolo;TO
+Canelli;AT
+Canischio;TO
+Cannero Riviera;VB
+Cannobio;VB
+Canosio;CN
+Cantalupa;TO
+Cantalupo Ligure;AL
+Cantarana;AT
+Cantoira;TO
+Caprauna;CN
+Caprezzo;VB
+Capriata d'Orba;AL
+Caprie;TO
+Capriglio;AT
+Caprile;BI
+Caraglio;CN
+Caramagna Piemonte;CN
+Caravino;TO
+Carbonara Scrivia;AL
+Carcoforo;VC
+Cardè;CN
+Carema;TO
+Carentino;AL
+Caresana;VC
+Caresanablot;VC
+Carezzano;AL
+Carignano;TO
+Carisio;VC
+Carmagnola;TO
+Carpeneto;AL
+Carpignano Sesia;NO
+Carrega Ligure;AL
+Carrosio;AL
+Carrù;CN
+Cartignano;CN
+Cartosio;AL
+Casal Cermelli;AL
+Casalbeltrame;NO
+Casalborgone;TO
+Casale Corte Cerro;VB
+Casale Monferrato;AL
+Casaleggio Boiro;AL
+Casaleggio Novara;NO
+Casalgrasso;CN
+Casalino;NO
+Casalnoceto;AL
+Casalvolone;NO
+Casanova Elvo;VC
+Casapinta;BI
+Casasco;AL
+Cascinette d'Ivrea;TO
+Caselette;TO
+Caselle Torinese;TO
+Casorzo Monferrato;AT
+Cassano Spinola;AL
+Cassinasco;AT
+Cassine;AL
+Cassinelle;AL
+Castagneto Po;TO
+Castagnito;CN
+Castagnole Monferrato;AT
+Castagnole Piemonte;TO
+Castagnole delle Lanze;AT
+Castel Boglione;AT
+Castel Rocchero;AT
+Casteldelfino;CN
+Castell'Alfero;AT
+Castellamonte;TO
+Castellania Coppi;AL
+Castellar Guidobono;AL
+Castellazzo Bormida;AL
+Castellazzo Novarese;NO
+Castellero;AT
+Castelletto Cervo;BI
+Castelletto Merli;AL
+Castelletto Molina;AT
+Castelletto Monferrato;AL
+Castelletto Stura;CN
+Castelletto Uzzone;CN
+Castelletto d'Erro;AL
+Castelletto d'Orba;AL
+Castelletto sopra Ticino;NO
+Castellinaldo d'Alba;CN
+Castellino Tanaro;CN
+Castello di Annone;AT
+Castelmagno;CN
+Castelnuovo Belbo;AT
+Castelnuovo Bormida;AL
+Castelnuovo Calcea;AT
+Castelnuovo Don Bosco;AT
+Castelnuovo Nigra;TO
+Castelnuovo Scrivia;AL
+Castelnuovo di Ceva;CN
+Castelspina;AL
+Castiglione Falletto;CN
+Castiglione Tinella;CN
+Castiglione Torinese;TO
+Castino;CN
+Cavaglietto;NO
+Cavaglio d'Agogna;NO
+Cavaglià;BI
+Cavagnolo;TO
+Cavallerleone;CN
+Cavallermaggiore;CN
+Cavallirio;NO
+Cavatore;AL
+Cavour;TO
+Cella Monte;AL
+Cellarengo;AT
+Celle Enomondo;AT
+Celle di Macra;CN
+Cellio con Breia;VC
+Centallo;CN
+Ceppo Morelli;VB
+Cerano;NO
+Cercenasco;TO
+Ceres;TO
+Cereseto;AL
+Ceresole Alba;CN
+Ceresole Reale;TO
+Cerreto Grue;AL
+Cerreto d'Asti;AT
+Cerretto Langhe;CN
+Cerrina Monferrato;AL
+Cerrione;BI
+Cerro Tanaro;AT
+Cervasca;CN
+Cervatto;VC
+Cervere;CN
+Cesana Torinese;TO
+Cesara;VB
+Cessole;AT
+Ceva;CN
+Cherasco;CN
+Chialamberto;TO
+Chianocco;TO
+Chiaverano;TO
+Chieri;TO
+Chiesanuova;TO
+Chiomonte;TO
+Chiusa di Pesio;CN
+Chiusa di San Michele;TO
+Chiusano d'Asti;AT
+Chivasso;TO
+Ciconio;TO
+Cigliano;VC
+Cigliè;CN
+Cinaglio;AT
+Cintano;TO
+Cinzano;TO
+Ciriè;TO
+Cissone;CN
+Cisterna d'Asti;AT
+Civiasco;VC
+Clavesana;CN
+Claviere;TO
+Coassolo Torinese;TO
+Coazze;TO
+Coazzolo;AT
+Cocconato;AT
+Coggiola;BI
+Colazza;NO
+Collegno;TO
+Colleretto Castelnuovo;TO
+Colleretto Giacosa;TO
+Collobiano;VC
+Comignago;NO
+Condove;TO
+Coniolo;AL
+Conzano;AL
+Corio;TO
+Corneliano d'Alba;CN
+Corsione;AT
+Cortandone;AT
+Cortanze;AT
+Cortazzone;AT
+Cortemilia;CN
+Cortiglione;AT
+Cossano Belbo;CN
+Cossano Canavese;TO
+Cossato;BI
+Cossogno;VB
+Cossombrato;AT
+Costa Vescovato;AL
+Costanzana;VC
+Costigliole Saluzzo;CN
+Costigliole d'Asti;AT
+Cravagliana;VC
+Cravanzana;CN
+Craveggia;VB
+Cremolino;AL
+Crescentino;VC
+Cressa;NO
+Crevacuore;BI
+Crevoladossola;VB
+Crissolo;CN
+Crodo;VB
+Crova;VC
+Cuceglio;TO
+Cumiana;TO
+Cuneo;CN
+Cunico;AT
+Cuorgnè;TO
+Cureggio;NO
+Curino;BI
+Demonte;CN
+Denice;AL
+Dernice;AL
+Desana;VC
+Diano d'Alba;CN
+Divignano;NO
+Dogliani;CN
+Domodossola;VB
+Donato;BI
+Dormelletto;NO
+Dorzano;BI
+Dronero;CN
+Druento;TO
+Druogno;VB
+Dusino San Michele;AT
+Elva;CN
+Entracque;CN
+Envie;CN
+Exilles;TO
+Fabbrica Curone;AL
+Fara Novarese;NO
+Farigliano;CN
+Faule;CN
+Favria;TO
+Feisoglio;CN
+Feletto;TO
+Felizzano;AL
+Fenestrelle;TO
+Ferrere;AT
+Fiano;TO
+Fiorano Canavese;TO
+Fobello;VC
+Foglizzo;TO
+Fontaneto d'Agogna;NO
+Fontanetto Po;VC
+Fontanile;AT
+Formazza;VB
+Formigliana;VC
+Forno Canavese;TO
+Fossano;CN
+Frabosa Soprana;CN
+Frabosa Sottana;CN
+Fraconalto;AL
+Francavilla Bisio;AL
+Frascaro;AL
+Frassinello Monferrato;AL
+Frassineto Po;AL
+Frassinetto;TO
+Frassino;CN
+Fresonara;AL
+Frinco;AT
+Front;TO
+Frossasco;TO
+Frugarolo;AL
+Fubine Monferrato;AL
+Gabiano;AL
+Gaglianico;BI
+Gaiola;CN
+Galliate;NO
+Gamalero;AL
+Gambasca;CN
+Garbagna;AL
+Garbagna Novarese;NO
+Garessio;CN
+Gargallo;NO
+Garzigliana;TO
+Gassino Torinese;TO
+Gattico-Veruno;NO
+Gattinara;VC
+Gavi;AL
+Genola;CN
+Germagnano;TO
+Germagno;VB
+Ghemme;NO
+Ghiffa;VB
+Ghislarengo;VC
+Giaglione;TO
+Giarole;AL
+Giaveno;TO
+Gifflenga;BI
+Gignese;VB
+Givoletto;TO
+Gorzegno;CN
+Gottasecca;CN
+Govone;CN
+Gozzano;NO
+Graglia;BI
+Grana Monferrato;AT
+Granozzo con Monticello;NO
+Gravellona Toce;VB
+Gravere;TO
+Grazzano Badoglio;AT
+Greggio;VC
+Gremiasco;AL
+Grignasco;NO
+Grinzane Cavour;CN
+Grognardo;AL
+Grondona;AL
+Groscavallo;TO
+Grosso;TO
+Grugliasco;TO
+Guardabosone;VC
+Guarene;CN
+Guazzora;AL
+Gurro;VB
+Igliano;CN
+Incisa Scapaccino;AT
+Ingria;TO
+Intragna;VB
+Inverso Pinasca;TO
+Invorio;NO
+Isasca;CN
+Isola Sant'Antonio;AL
+Isola d'Asti;AT
+Isolabella;TO
+Issiglio;TO
+Ivrea;TO
+La Cassa;TO
+La Loggia;TO
+La Morra;CN
+Lagnasco;CN
+Lamporo;VC
+Landiona;NO
+Lanzo Torinese;TO
+Lauriano;TO
+Leini;TO
+Lemie;TO
+Lenta;VC
+Lequio Berria;CN
+Lequio Tanaro;CN
+Lerma;AL
+Lesa;NO
+Lesegno;CN
+Lessolo;TO
+Lessona;BI
+Levice;CN
+Levone;TO
+Lignana;VC
+Limone Piemonte;CN
+Lisio;CN
+Livorno Ferraris;VC
+Loazzolo;AT
+Locana;TO
+Lombardore;TO
+Lombriasco;TO
+Loranzè;TO
+Loreglia;VB
+Lozzolo;VC
+Lu e Cuccaro Monferrato;AL
+Luserna San Giovanni;TO
+Lusernetta;TO
+Lusigliè;TO
+Macello;TO
+Macra;CN
+Macugnaga;VB
+Madonna del Sasso;VB
+Maggiora;NO
+Magliano Alfieri;CN
+Magliano Alpi;CN
+Maglione;TO
+Magnano;BI
+Malesco;VB
+Malvicino;AL
+Mandello Vitta;NO
+Mango;CN
+Manta;CN
+Mappano;TO
+Marano Ticino;NO
+Maranzana;AT
+Marene;CN
+Marentino;TO
+Maretto;AT
+Margarita;CN
+Marmora;CN
+Marsaglia;CN
+Martiniana Po;CN
+Masera;VB
+Masio;AL
+Massazza;BI
+Massello;TO
+Masserano;BI
+Massino Visconti;NO
+Massiola;VB
+Mathi;TO
+Mattie;TO
+Mazzè;TO
+Meana di Susa;TO
+Meina;NO
+Melazzo;AL
+Melle;CN
+Merana;AL
+Mercenasco;TO
+Mergozzo;VB
+Mezzana Mortigliengo;BI
+Mezzenile;TO
+Mezzomerico;NO
+Miagliano;BI
+Miasino;NO
+Miazzina;VB
+Mirabello Monferrato;AL
+Moasca;AT
+Moiola;CN
+Molare;AL
+Molino dei Torti;AL
+Mollia;VC
+Mombaldone;AT
+Mombarcaro;CN
+Mombaruzzo;AT
+Mombasiglio;CN
+Mombello Monferrato;AL
+Mombello di Torino;TO
+Mombercelli;AT
+Momo;NO
+Mompantero;TO
+Momperone;AL
+Monale;AT
+Monastero Bormida;AT
+Monastero di Lanzo;TO
+Monastero di Vasco;CN
+Monasterolo Casotto;CN
+Monasterolo di Savigliano;CN
+Moncalieri;TO
+Moncalvo;AT
+Moncenisio;TO
+Moncestino;AL
+Monchiero;CN
+Moncrivello;VC
+Moncucco Torinese;AT
+Mondovì;CN
+Monesiglio;CN
+Monforte d'Alba;CN
+Mongardino;AT
+Mongiardino Ligure;AL
+Mongrando;BI
+Monleale;AL
+Montabone;AT
+Montacuto;AL
+Montafia;AT
+Montaldeo;AL
+Montaldo Bormida;AL
+Montaldo Roero;CN
+Montaldo Scarampi;AT
+Montaldo Torinese;TO
+Montaldo di Mondovì;CN
+Montalenghe;TO
+Montalto Dora;TO
+Montanaro;TO
+Montanera;CN
+Montecastello;AL
+Montechiaro d'Acqui;AL
+Montechiaro d'Asti;AT
+Montecrestese;VB
+Montegioco;AL
+Montegrosso d'Asti;AT
+Montelupo Albese;CN
+Montemagno Monferrato;AT
+Montemale di Cuneo;CN
+Montemarzino;AL
+Monterosso Grana;CN
+Montescheno;VB
+Monteu Roero;CN
+Monteu da Po;TO
+Montezemolo;CN
+Monticello d'Alba;CN
+Montiglio Monferrato;AT
+Montà;CN
+Morano sul Po;AL
+Moransengo-Tonengo;AT
+Morbello;AL
+Moretta;CN
+Moriondo Torinese;TO
+Mornese;AL
+Morozzo;CN
+Morsasco;AL
+Motta de' Conti;VC
+Mottalciata;BI
+Murazzano;CN
+Murello;CN
+Murisengo;AL
+Muzzano;BI
+Narzole;CN
+Nebbiuno;NO
+Neive;CN
+Netro;BI
+Neviglie;CN
+Nibbiola;NO
+Nichelino;TO
+Niella Belbo;CN
+Niella Tanaro;CN
+Nizza Monferrato;AT
+Noasca;TO
+Nole;TO
+Nomaglio;TO
+None;TO
+Nonio;VB
+Novalesa;TO
+Novara;NO
+Novello;CN
+Novi Ligure;AL
+Nucetto;CN
+Occhieppo Inferiore;BI
+Occhieppo Superiore;BI
+Occimiano;AL
+Odalengo Grande;AL
+Odalengo Piccolo;AL
+Oggebbio;VB
+Oglianico;TO
+Olcenengo;VC
+Oldenico;VC
+Oleggio;NO
+Oleggio Castello;NO
+Olivola;AL
+Olmo Gentile;AT
+Omegna;VB
+Oncino;CN
+Orbassano;TO
+Orio Canavese;TO
+Ormea;CN
+Ornavasso;VB
+Orsara Bormida;AL
+Orta San Giulio;NO
+Osasco;TO
+Osasio;TO
+Ostana;CN
+Ottiglio;AL
+Oulx;TO
+Ovada;AL
+Oviglio;AL
+Ozegna;TO
+Ozzano Monferrato;AL
+Paderna;AL
+Paesana;CN
+Pagno;CN
+Palazzo Canavese;TO
+Palazzolo Vercellese;VC
+Pallanzeno;VB
+Pamparato;CN
+Pancalieri;TO
+Parella;TO
+Pareto;AL
+Parodi Ligure;AL
+Paroldo;CN
+Paruzzaro;NO
+Passerano Marmorito;AT
+Pasturana;AL
+Pavarolo;TO
+Pavone Canavese;TO
+Pecetto Torinese;TO
+Pecetto di Valenza;AL
+Pella;NO
+Penango;AT
+Perletto;CN
+Perlo;CN
+Perosa Argentina;TO
+Perosa Canavese;TO
+Perrero;TO
+Pertengo;VC
+Pertusio;TO
+Pessinetto;TO
+Pettenasco;NO
+Pettinengo;BI
+Peveragno;CN
+Pezzana;VC
+Pezzolo Valle Uzzone;CN
+Pianezza;TO
+Pianfei;CN
+Piasco;CN
+Piatto;BI
+Piea;AT
+Piedicavallo;BI
+Piedimulera;VB
+Pietra Marazzi;AL
+Pietraporzio;CN
+Pieve Vergonte;VB
+Pila;VC
+Pinasca;TO
+Pinerolo;TO
+Pino Torinese;TO
+Pino d'Asti;AT
+Piobesi Torinese;TO
+Piobesi d'Alba;CN
+Piode;VC
+Piossasco;TO
+Piovà Massaia;AT
+Piozzo;CN
+Pisano;NO
+Piscina;TO
+Piverone;TO
+Pocapaglia;CN
+Pogno;NO
+Poirino;TO
+Pollone;BI
+Polonghera;CN
+Pomaretto;TO
+Pomaro Monferrato;AL
+Pombia;NO
+Ponderano;BI
+Pont Canavese;TO
+Pontechianale;CN
+Pontecurone;AL
+Pontestura;AL
+Ponti;AL
+Ponzano Monferrato;AL
+Ponzone;AL
+Portacomaro;AT
+Porte;TO
+Portula;BI
+Postua;VC
+Pozzol Groppo;AL
+Pozzolo Formigaro;AL
+Pradleves;CN
+Pragelato;TO
+Prali;TO
+Pralormo;TO
+Pralungo;BI
+Pramollo;TO
+Prarolo;VC
+Prarostino;TO
+Prasco;AL
+Prascorsano;TO
+Pratiglione;TO
+Prato Sesia;NO
+Pray;BI
+Prazzo;CN
+Predosa;AL
+Premeno;VB
+Premia;VB
+Premosello-Chiovenda;VB
+Priero;CN
+Priocca;CN
+Priola;CN
+Prunetto;CN
+Quagliuzzo;TO
+Quaranti;AT
+Quaregna Cerreto;BI
+Quargnento;AL
+Quarna Sopra;VB
+Quarna Sotto;VB
+Quarona;VC
+Quassolo;TO
+Quattordio;AL
+Quincinetto;TO
+Quinto Vercellese;VC
+Racconigi;CN
+Rassa;VC
+Re;VB
+Reano;TO
+Recetto;NO
+Refrancore;AT
+Revello;CN
+Revigliasco d'Asti;AT
+Ribordone;TO
+Ricaldone;AL
+Rifreddo;CN
+Rimella;VC
+Rittana;CN
+Riva presso Chieri;TO
+Rivalba;TO
+Rivalta Bormida;AL
+Rivalta di Torino;TO
+Rivara;TO
+Rivarolo Canavese;TO
+Rivarone;AL
+Rivarossa;TO
+Rive;VC
+Rivoli;TO
+Roaschia;CN
+Roascio;CN
+Roasio;VC
+Roatto;AT
+Robassomero;TO
+Robella;AT
+Robilante;CN
+Roburent;CN
+Rocca Canavese;TO
+Rocca Cigliè;CN
+Rocca Grimalda;AL
+Rocca d'Arazzo;AT
+Rocca de' Baldi;CN
+Roccabruna;CN
+Roccaforte Ligure;AL
+Roccaforte Mondovì;CN
+Roccasparvera;CN
+Roccaverano;AT
+Roccavione;CN
+Rocchetta Belbo;CN
+Rocchetta Ligure;AL
+Rocchetta Palafea;AT
+Rocchetta Tanaro;AT
+Roddi;CN
+Roddino;CN
+Rodello;CN
+Roletto;TO
+Romagnano Sesia;NO
+Romano Canavese;TO
+Romentino;NO
+Ronco Biellese;BI
+Ronco Canavese;TO
+Rondissone;TO
+Ronsecco;VC
+Roppolo;BI
+Rorà;TO
+Rosazza;BI
+Rosignano Monferrato;AL
+Rossa;VC
+Rossana;CN
+Rosta;TO
+Roure;TO
+Rovasenda;VC
+Rubiana;TO
+Rueglio;TO
+Ruffia;CN
+Sagliano Micca;BI
+Sala Biellese;BI
+Sala Monferrato;AL
+Salasco;VC
+Salassa;TO
+Salbertrand;TO
+Sale;AL
+Sale San Giovanni;CN
+Sale delle Langhe;CN
+Salerano Canavese;TO
+Sali Vercellese;VC
+Saliceto;CN
+Salmour;CN
+Saluggia;VC
+Salussola;BI
+Saluzzo;CN
+Salza di Pinerolo;TO
+Sambuco;CN
+Samone;TO
+Sampeyre;CN
+San Benedetto Belbo;CN
+San Benigno Canavese;TO
+San Bernardino Verbano;VB
+San Carlo Canavese;TO
+San Colombano Belmonte;TO
+San Cristoforo;AL
+San Damiano Macra;CN
+San Damiano d'Asti;AT
+San Didero;TO
+San Francesco al Campo;TO
+San Germano Chisone;TO
+San Germano Vercellese;VC
+San Giacomo Vercellese;VC
+San Gillio;TO
+San Giorgio Canavese;TO
+San Giorgio Monferrato;AL
+San Giorgio Scarampi;AT
+San Giorio di Susa;TO
+San Giusto Canavese;TO
+San Martino Alfieri;AT
+San Martino Canavese;TO
+San Marzano Oliveto;AT
+San Maurizio Canavese;TO
+San Maurizio d'Opaglio;NO
+San Mauro Torinese;TO
+San Michele Mondovì;CN
+San Nazzaro Sesia;NO
+San Paolo Solbrito;AT
+San Pietro Mosezzo;NO
+San Pietro Val Lemina;TO
+San Ponso;TO
+San Raffaele Cimena;TO
+San Salvatore Monferrato;AL
+San Sebastiano Curone;AL
+San Sebastiano da Po;TO
+San Secondo di Pinerolo;TO
+Sandigliano;BI
+Sanfront;CN
+Sanfrè;CN
+Sangano;TO
+Sant'Agata Fossili;AL
+Sant'Albano Stura;CN
+Sant'Ambrogio di Torino;TO
+Sant'Antonino di Susa;TO
+Santa Maria Maggiore;VB
+Santa Vittoria d'Alba;CN
+Santena;TO
+Santhià;VC
+Santo Stefano Belbo;CN
+Santo Stefano Roero;CN
+Sardigliano;AL
+Sarezzano;AL
+Sauze d'Oulx;TO
+Sauze di Cesana;TO
+Savigliano;CN
+Scagnello;CN
+Scalenghe;TO
+Scarmagno;TO
+Scarnafigi;CN
+Sciolze;TO
+Scopa;VC
+Scopello;VC
+Scurzolengo;AT
+Serole;AT
+Serralunga d'Alba;CN
+Serralunga di Crea;AL
+Serravalle Langhe;CN
+Serravalle Scrivia;AL
+Serravalle Sesia;VC
+Sessame;AT
+Sestriere;TO
+Settime;AT
+Settimo Rottaro;TO
+Settimo Torinese;TO
+Settimo Vittone;TO
+Sezzadio;AL
+Sillavengo;NO
+Silvano d'Orba;AL
+Sinio;CN
+Sizzano;NO
+Soglio;AT
+Solero;AL
+Solonghello;AL
+Somano;CN
+Sommariva Perno;CN
+Sommariva del Bosco;CN
+Sordevolo;BI
+Soriso;NO
+Sostegno;BI
+Sozzago;NO
+Sparone;TO
+Spigno Monferrato;AL
+Spineto Scrivia;AL
+Stazzano;AL
+Strambinello;TO
+Strambino;TO
+Stresa;VB
+Strevi;AL
+Strona;BI
+Stroppiana;VC
+Stroppo;CN
+Suno;NO
+Susa;TO
+Tagliolo Monferrato;AL
+Tarantasca;CN
+Tassarolo;AL
+Tavagnasco;TO
+Tavigliano;BI
+Terdobbiate;NO
+Ternengo;BI
+Terruggia;AL
+Terzo;AL
+Ticineto;AL
+Tigliole;AT
+Toceno;VB
+Tollegno;BI
+Tonco;AT
+Torino;TO
+Tornaco;NO
+Torrazza Piemonte;TO
+Torrazzo;BI
+Torre Bormida;CN
+Torre Canavese;TO
+Torre Mondovì;CN
+Torre Pellice;TO
+Torre San Giorgio;CN
+Torresina;CN
+Tortona;AL
+Trana;TO
+Trarego Viggiona;VB
+Trasquera;VB
+Traversella;TO
+Traves;TO
+Trecate;NO
+Treiso;CN
+Treville;AL
+Trezzo Tinella;CN
+Tricerro;VC
+Trinità;CN
+Trino;VC
+Trisobbio;AL
+Trofarello;TO
+Trontano;VB
+Tronzano Vercellese;VC
+Usseaux;TO
+Usseglio;TO
+Vaglio Serra;AT
+Vaie;TO
+Val della Torre;TO
+Val di Chy;TO
+Valchiusa;TO
+Valdengo;BI
+Valdieri;CN
+Valdilana;BI
+Valduggia;VC
+Valenza;AL
+Valfenera;AT
+Valgioie;TO
+Valgrana;CN
+Vallanzengo;BI
+Valle Cannobina;VB
+Valle San Nicolao;BI
+Vallo Torinese;TO
+Valloriate;CN
+Valmacca;AL
+Valperga;TO
+Valprato Soana;TO
+Valstrona;VB
+Vanzone con San Carlo;VB
+Vaprio d'Agogna;NO
+Varallo;VC
+Varallo Pombia;NO
+Varisella;TO
+Varzo;VB
+Vauda Canavese;TO
+Veglio;BI
+Venaria Reale;TO
+Venasca;CN
+Venaus;TO
+Verbania;VB
+Vercelli;VC
+Verduno;CN
+Vernante;CN
+Verolengo;TO
+Verrone;BI
+Verrua Savoia;TO
+Verzuolo;CN
+Vesime;AT
+Vespolate;NO
+Vestignè;TO
+Vezza d'Alba;CN
+Viale;AT
+Vialfrè;TO
+Viarigi;AT
+Vicoforte;CN
+Vicolungo;NO
+Vidracco;TO
+Vigliano Biellese;BI
+Vigliano d'Asti;AT
+Vignale Monferrato;AL
+Vignole Borbera;AL
+Vignolo;CN
+Vignone;VB
+Vigone;TO
+Viguzzolo;AL
+Villa San Secondo;AT
+Villa del Bosco;BI
+Villadeati;AL
+Villadossola;VB
+Villafalletto;CN
+Villafranca Piemonte;TO
+Villafranca d'Asti;AT
+Villalvernia;AL
+Villamiroglio;AL
+Villanova Biellese;BI
+Villanova Canavese;TO
+Villanova Mondovì;CN
+Villanova Monferrato;AL
+Villanova Solaro;CN
+Villanova d'Asti;AT
+Villar Dora;TO
+Villar Focchiardo;TO
+Villar Pellice;TO
+Villar Perosa;TO
+Villar San Costanzo;CN
+Villarbasse;TO
+Villarboit;VC
+Villareggia;TO
+Villaromagnano;AL
+Villastellone;TO
+Villata;VC
+Villette;VB
+Vinadio;CN
+Vinchio;AT
+Vinovo;TO
+Vinzaglio;NO
+Viola;CN
+Virle Piemonte;TO
+Vische;TO
+Visone;AL
+Vistrorio;TO
+Viverone;BI
+Viù;TO
+Vocca;VC
+Vogogna;VB
+Volpedo;AL
+Volpeglino;AL
+Volpiano;TO
+Voltaggio;AL
+Volvera;TO
+Vottignasco;CN
+Zimone;BI
+Zubiena;BI
+Zumaglia;BI

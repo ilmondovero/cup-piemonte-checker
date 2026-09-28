@@ -39,9 +39,12 @@ piccolo, senza Chromium.
    center (800 000 500).
 5. **Conferma automatica (facoltativa, `/auto`).** Le date buone spariscono in pochi minuti. Chi la
    attiva lascia che il bot prenoti da solo la prima data migliore, senza aspettare il tocco.
-   - Rispetta le sedi scelte e un anticipo minimo scelto dall'utente: da domani, tra 3 giorni o tra
-     7 giorni, oppure (dalla Mini App) da un giorno preciso.
-   - Rispetta anche i giorni scelti (vedi "Giorni" sotto).
+   - È solo accesa o spenta. Rispetta le sedi scelte e il calendario dei giorni sì/no (vedi
+     "Calendario" sotto), e non prenota mai per oggi: il primo giorno buono lo decide il calendario.
+   - I pulsanti "Da domani / tra 3 / tra 7 giorni" dei messaggi vecchi accendono ancora l'automatica.
+     Le ricette salvate con le regole di prima (anticipo minimo, giorni scelti) vengono lette come
+     calendario: l'anticipo diventa "no fino al giorno prima", i giorni della settimana scelti lasciano
+     no gli altri, le date precise diventano i soli giorni sì. Fascia oraria ed "entro" non ci sono più.
    - Fa un solo tentativo per ogni data.
    - Dopo un esito incerto si disattiva da sola e avvisa l'utente.
    - Prima di attivarla il bot ricorda due cose: la data vecchia si perde, e se poi non si può andare
@@ -114,12 +117,23 @@ vecchia. Cosa si fa dall'app:
   anche "cancella tutti i miei dati". La ricerca sul portale la fa il bot e l'app aspetta il risultato.
 - **Dove cerco** (si tocca la riga sulla scheda). Stessa sede, comune, provincia, ovunque, oppure una
   delle sedi trovate nei controlli. I comuni trovati compaiono come suggerimenti.
-- **Prenoto da solo** (si tocca la riga sulla scheda). La conferma automatica e l'anticipo minimo (1, 3 o 7 giorni, oppure da un giorno preciso).
-- **Giorni** (si tocca la riga "📅 Giorni" sulla scheda). Giorni della settimana, date precise e fascia
-  (mattina prima delle 13, pomeriggio dalle 13) in cui la data va bene; le altre non si propongono né si
-  prenotano. Con "anche più tardi, fino al…" il bot sposta anche su una data più lontana, ma solo finché
-  la prenotazione non è già in un giorno scelto: da lì anticipa soltanto, niente spostamenti a catena.
-  Il CUP mostra solo la prima data libera di ogni sede: un giorno preciso si trova se è quella.
+- **Prenoto da solo** (si tocca la riga sulla scheda). La conferma automatica: sì o no.
+- **Calendario** (si tocca la riga "📅 Calendario" sulla scheda). Un mese alla volta, da quello
+  corrente fino a 12 mesi dopo (◀ ▶). Ogni giorno è sì o no: un tocco lo cambia. Un tocco sul nome del
+  giorno in alto (lun…dom) rende no (o di nuovo sì) tutti quei giorni. "No fino al giorno…" e poi un
+  tocco su un giorno: tutti i giorni fino a quello compreso diventano no. "Tutti sì" azzera. Le modifiche
+  restano sul telefono finché non si tocca "Salva" (una richiesta sola). Nel calendario ci sono anche la
+  prenotazione attuale (📌) e le date trovate nell'ultimo controllo (puntino); i giorni passati non si
+  toccano. Le regole:
+  - si propone e si prenota solo una data in un giorno sì, dove si cerca e prenotabile;
+  - se la prenotazione è in un giorno sì, solo date prima;
+  - se la prenotazione è in un giorno no, va bene anche un giorno sì più tardi, senza limite (anche con
+    la conferma automatica). Dopo lo spostamento la prenotazione è in un giorno sì: da lì si anticipa
+    soltanto, niente spostamenti a catena;
+  - per una ricetta mai prenotata, qualunque giorno sì.
+  Al momento di prenotare il bot rilegge il calendario e la prenotazione dal portale: una data più tardi
+  passa solo se la prenotazione è davvero in un giorno no. Il CUP mostra solo la prima data libera di ogni
+  sede: un giorno preciso si trova se è quella.
 - **Date disponibili** (dalla riga "📅 3 date disponibili · la prima: …" sulla scheda). Tutte le date
   dell'ultimo controllo, divise in "prima della tua prenotazione, dove cerchi", "dove cerchi, ma dopo la
   tua prenotazione" e "in altre zone". Finché la sessione del controllo è valida (20 minuti) ogni data

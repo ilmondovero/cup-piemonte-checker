@@ -200,12 +200,12 @@ def b(tmp_path, monkeypatch):
 
     bot.libere = []
 
-    bot.giorni = []
+    bot.calendari = []
 
-    def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=False, nuova=False, giorni=None):
+    def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=False, nuova=False, calendario=None):
         bot.chiamate.append((cf, slot.key(), sessione, dry_run))
         bot.libere.append(libera)
-        bot.giorni.append(giorni)
+        bot.calendari.append(calendario)
         assert nuova == (cf == CF3 and cf not in bot.nuove)  # il bot dice sempre al client se e' la prima
         if nuova and bot.prenotata_a_mano:  # qualcuno l'ha prenotata sul portale un attimo prima
             bot.nuove[cf] = c.Prenotazione(NUOVA_TO.quando, NUOVA_TO.luogo, COSA3)
@@ -453,9 +453,10 @@ def test_offerta_scaduta_e_riproposta(b):
 
 
 def attiva_auto(b, chat=1, giorni=1, n=0):
+    """giorni: il numero nel pulsante; quelli dei messaggi di prima (3, 7) accendono l'automatica come 1."""
     p = pratica(b, chat, n)
     b.on_callback(cq(chat, f"auto:{p['id']}:{botmod.versione(p)}:{giorni}"))
-    assert b.store.get(p["id"])["auto"] == {"giorni": giorni}
+    assert b.store.get(p["id"])["auto"] == {"on": True}
 
 
 def test_auto_prenota_senza_tocco_nella_stessa_sessione(b):
@@ -465,15 +466,6 @@ def test_auto_prenota_senza_tocco_nella_stessa_sessione(b):
     assert b.chiamate == [(CF, MEGLIO.key(), f"S-{CF}", False)]
     assert not b.offerte
     assert any("conferma automatica" in t and "📅" in t and "OSPEDALE A" in t for t in inviati(b))
-
-
-def test_auto_rispetta_anticipo_minimo(b, monkeypatch):
-    registra(b)
-    attiva_auto(b, giorni=7)
-    domani = c.Slot(datetime.now() + timedelta(days=1), c.Luogo("OSPEDALE A", "AMB 2", "Via Roma, 1 - TORINO (TO)"), "d")
-    monkeypatch.setattr(c, "check", lambda *a: {"attuale": ATT, "slots": [domani], "migliori": [domani], "sessione": "S"})
-    b.controlla(pratica(b))
-    assert not b.chiamate and pratica(b)["id"] in b.offerte  # troppo presto: solo offerta manuale
 
 
 def test_auto_un_solo_tentativo_per_data(b, monkeypatch):
@@ -513,7 +505,7 @@ def test_auto_per_pratica(b):
     aggiungi_familiare(b)
     attiva_auto(b, n=1)
     io, papa = b.store.della_chat(1)
-    assert io.get("auto") is None and papa["auto"] == {"giorni": 1}
+    assert io.get("auto") is None and papa["auto"] == {"on": True}
 
 
 def test_cambio_area_di_una_ricetta_attiva(b):
@@ -1437,86 +1429,99 @@ def test_area_estesa_a_meta_allunga_la_pazienza(b, monkeypatch):
     assert b.metriche[-1][2] and b.metriche[-1][4]  # riuscita, ma conta come scaduta per imparare l'attesa
 
 
-# --- giorni che vanno bene (p["giorni_ok"]) ----------------------------------------------------
+# --- calendario dei giorni si'/no (p["calendario"]) ---------------------------------------------
 LUN = datetime(2030, 1, 7, 9, 0)  # lunedi'
 SEDE = c.Luogo("OSP A", "AMB", "Via Roma, 1 - TORINO (TO)")
 
 
-def gg(**g):
-    return {"settimana": [], "date": [], "fascia": "", "entro": "", **g}
+def cal(**k):
+    return {"no": [], "no_settimana": [], "no_fino": "", "si_fino": "", **k}
 
 
 def sl(quando, sid="s"):
     return c.Slot(quando, SEDE, sid)
 
 
-def test_giorno_accettato_fascia_e_data_precisa():
-    assert c.giorno_ok(LUN, None) and c.giorno_ok(LUN, gg())
-    assert c.giorno_ok(LUN, gg(settimana=[0])) and not c.giorno_ok(LUN + timedelta(days=1), gg(settimana=[0]))
-    marte = LUN + timedelta(days=8)  # martedi' 15/01
-    assert c.giorno_ok(marte, gg(settimana=[0], date=["2030-01-15"]))  # tra le date precise
-    assert not c.giorno_ok(marte + timedelta(days=7), gg(date=["2030-01-15"]))
-    assert c.giorno_ok(LUN.replace(hour=12, minute=59), gg(fascia="mattina"))
-    assert not c.giorno_ok(LUN.replace(hour=13), gg(fascia="mattina"))
-    assert c.giorno_ok(LUN.replace(hour=13), gg(fascia="pomeriggio")) and not c.giorno_ok(LUN, gg(fascia="pomeriggio"))
-    assert not c.giorno_ok(LUN.replace(hour=15), gg(settimana=[0], fascia="mattina"))  # giorno si', ora no
+def iso(d):
+    return d.date().isoformat() if isinstance(d, datetime) else d.isoformat()
 
 
-def test_candidata_piu_tardi_solo_entro_il_limite():
-    att = c.Prenotazione(LUN + timedelta(days=2), SEDE, "VISITA")  # mercoledi': non e' un giorno scelto
-    g = gg(settimana=[0], entro="2030-01-21")
-    assert c.candidata(sl(LUN), att, "tutte", g)  # lunedi' prima
-    assert not c.candidata(sl(LUN + timedelta(days=1)), att, "tutte", g)  # martedi' prima: giorno sbagliato
-    assert c.candidata(sl(LUN + timedelta(days=14)), att, "tutte", g)  # lunedi' 21, piu' tardi ma entro
-    assert not c.candidata(sl(LUN + timedelta(days=21)), att, "tutte", g)  # lunedi' 28: oltre il limite
-    assert not c.candidata(sl(LUN + timedelta(days=14)), att, "tutte", gg(settimana=[0]))  # senza entro: solo prima
+def test_giorno_si():
+    assert c.giorno_si(LUN, None) and c.giorno_si(LUN, {}) and c.giorno_si(LUN, cal())
+    assert not c.giorno_si(LUN, cal(no_settimana=[0])) and c.giorno_si(LUN + timedelta(days=1), cal(no_settimana=[0]))
+    assert not c.giorno_si(LUN, cal(no=["2030-01-07"])) and not c.giorno_si(LUN.date(), cal(no=["2030-01-07"]))
+    assert not c.giorno_si(LUN, cal(no_fino="2030-01-07")) and c.giorno_si(LUN, cal(no_fino="2030-01-06"))
+    assert c.giorno_si(LUN, cal(si_fino="2030-01-07")) and not c.giorno_si(LUN, cal(si_fino="2030-01-06"))
+    assert c.giorno_si(LUN.replace(hour=23), cal(no=["2030-01-08"]))  # conta il giorno, non l'ora
+
+
+def test_candidata_solo_giorni_si_zona_e_prenotabile():
+    att = c.Prenotazione(LUN + timedelta(days=30), SEDE, "VISITA")  # 06/02, giorno si'
+    k = cal(no_settimana=[1], no=["2030-01-09"])  # no i martedi' e mercoledi' 09/01
+    assert c.candidata(sl(LUN), att, "tutte", k)
+    assert not c.candidata(sl(LUN + timedelta(days=1)), att, "tutte", k)  # martedi'
+    assert not c.candidata(sl(LUN + timedelta(days=2)), att, "tutte", k)  # 09/01
+    assert not c.candidata(c.Slot(LUN, SEDE, None), att, "tutte", k)  # senza Seleziona ne' proposta
+    fuori = c.Slot(LUN, c.Luogo("OSP B", "AMB", "Via Po, 1 - CUNEO (CN)"), "b")
+    assert not c.candidata(fuori, att, "sede", k) and c.candidata(fuori, att, "tutte", k)
+
+
+def test_candidata_prenotazione_in_giorno_si_solo_prima():
+    att = c.Prenotazione(LUN + timedelta(days=7), SEDE, "VISITA")
+    assert c.candidata(sl(LUN), att, "tutte", cal(no_settimana=[2]))
+    assert not c.candidata(sl(LUN + timedelta(days=14)), att, "tutte", cal(no_settimana=[2]))
+    assert not c.candidata(sl(LUN + timedelta(days=14)), att, "tutte", None)
+
+
+def test_candidata_prenotazione_in_giorno_no_anche_piu_tardi_senza_limite():
+    att = c.Prenotazione(LUN + timedelta(days=2), SEDE, "VISITA")  # mercoledi' 09/01, segnato no
+    k = cal(no=["2030-01-09"])
+    assert c.candidata(sl(LUN + timedelta(days=14)), att, "tutte", k)
+    assert c.candidata(sl(LUN + timedelta(days=300)), att, "tutte", k)  # nessun limite
+    assert not c.candidata(sl(LUN + timedelta(days=16)), att, "tutte", cal(no=["2030-01-09"], no_settimana=[2]))
     fuori = c.Slot(LUN + timedelta(days=14), c.Luogo("OSP B", "AMB", "Via Po, 1 - CUNEO (CN)"), "b")
-    assert not c.candidata(fuori, att, "sede", g)  # la zona conta anche per le date piu' tarde
-    assert c.entro_di(att, g).isoformat() == "2030-01-21" and c.entro_di(att, gg(settimana=[0])) is None
-
-
-def test_candidata_niente_spostamenti_a_catena():
-    att = c.Prenotazione(LUN + timedelta(days=7), SEDE, "VISITA")  # gia' di lunedi'
-    g = gg(settimana=[0], entro="2030-02-28")
-    assert c.entro_di(att, g) is None
-    assert c.candidata(sl(LUN), att, "tutte", g)  # si anticipa, sempre di lunedi'
-    assert not c.candidata(sl(LUN + timedelta(days=14)), att, "tutte", g)  # piu' tardi no, anche se entro
-    assert not c.candidata(sl(LUN + timedelta(days=1)), att, "tutte", g)
+    assert not c.candidata(fuori, att, "sede", k)  # la zona conta anche per le date piu' tarde
+    # dopo lo spostamento la prenotazione e' in un giorno si': da li' solo prima, niente catena
+    spostata = c.Prenotazione(LUN + timedelta(days=14), SEDE, "VISITA")
+    assert not c.candidata(sl(LUN + timedelta(days=21)), spostata, "tutte", k)
+    assert c.candidata(sl(LUN + timedelta(days=7)), spostata, "tutte", k)
 
 
 def test_candidata_ricetta_mai_prenotata():
-    g = gg(settimana=[0], entro="2030-01-08")  # entro non conta senza prenotazione
-    assert c.candidata(sl(LUN + timedelta(days=28)), None, "tutte", g)
-    assert not c.candidata(sl(LUN + timedelta(days=1)), None, "tutte", g)
+    k = cal(no_settimana=[1, 2, 3, 4, 5, 6])  # solo i lunedi'
+    assert c.candidata(sl(LUN + timedelta(days=28)), None, "tutte", k)
+    assert not c.candidata(sl(LUN + timedelta(days=1)), None, "tutte", k)
     proposta, altra = c.Slot(LUN, SEDE, None, proposta=True), sl(LUN + timedelta(days=7))
-    assert c.candidata(proposta, None, "tutte", g, solo_proposta=True)
-    assert not c.candidata(altra, None, "tutte", g, solo_proposta=True)  # piu' prestazioni: solo la proposta
+    assert c.candidata(proposta, None, "tutte", k, solo_proposta=True)
+    assert not c.candidata(altra, None, "tutte", k, solo_proposta=True)  # piu' prestazioni: solo la proposta
 
 
-def test_prenota_piu_tardi_solo_entro_il_limite(monkeypatch):
-    att = c.Prenotazione(LUN + timedelta(days=2), SEDE, "VISITA")
+def test_prenota_guardia_del_calendario(monkeypatch):
+    att = [c.Prenotazione(LUN + timedelta(days=2), SEDE, "VISITA")]  # mercoledi' 09/01
 
     def init(self, cf, nre):
-        self.prenotate, self.n_prenotate = [att], 1
+        self.prenotate, self.n_prenotate = att[:], 1
     monkeypatch.setattr(c.CupSession, "__init__", init)
-    monkeypatch.setattr(c.CupSession, "attuale", lambda self: att)
+    monkeypatch.setattr(c.CupSession, "attuale", lambda self: att[0])
     dopo = c.Slot(LUN + timedelta(days=14), SEDE, None, proposta=False)  # senza pulsante: si ferma dopo la guardia
-    with pytest.raises(c.CupError, match="non e' prima"):
+    with pytest.raises(c.CupError, match="non e' prima"):  # senza calendario: solo prima
         c.prenota(CF, NRE, dopo, zona="tutte", dry_run=False)
+    with pytest.raises(c.CupError, match="non e' prima"):  # prenotazione in un giorno si'
+        c.prenota(CF, NRE, dopo, zona="tutte", dry_run=False, calendario=cal(no_settimana=[4]))
+    with pytest.raises(c.CupError, match="Seleziona"):  # prenotazione in un giorno no: la guardia lascia passare
+        c.prenota(CF, NRE, dopo, zona="tutte", dry_run=False, calendario=cal(no=["2030-01-09"]))
+    with pytest.raises(c.CupError, match="giorno segnato no"):  # calendario cambiato dopo l'offerta
+        c.prenota(CF, NRE, dopo, zona="tutte", dry_run=False, calendario=cal(no=["2030-01-09"], no_settimana=[0]))
+    with pytest.raises(c.CupError, match="Seleziona"):  # scelta esplicita dall'elenco: niente calendario
+        c.prenota(CF, NRE, dopo, zona="tutte", dry_run=False, libera=True, calendario=cal(no_settimana=[0]))
+    # la guardia rilegge l'attuale dal portale: se nel frattempo e' in un giorno si', niente catena
+    att[0] = c.Prenotazione(LUN + timedelta(days=7), SEDE, "VISITA")
     with pytest.raises(c.CupError, match="non e' prima"):
-        c.prenota(CF, NRE, dopo, zona="tutte", dry_run=False, giorni=gg(settimana=[0], entro=(LUN + timedelta(days=13)).date().isoformat()))
-    with pytest.raises(c.CupError, match="Seleziona"):  # entro il limite: la guardia lo lascia passare
-        c.prenota(CF, NRE, dopo, zona="tutte", dry_run=False, giorni=gg(settimana=[0], entro=(LUN + timedelta(days=14)).date().isoformat()))
-    with pytest.raises(c.CupError, match="nei giorni"):  # giorni cambiati dopo l'offerta: lunedi' non va piu'
-        c.prenota(CF, NRE, dopo, zona="tutte", dry_run=False, giorni=gg(settimana=[1], entro=(LUN + timedelta(days=14)).date().isoformat()))
-    att_ok = c.Prenotazione(LUN + timedelta(days=7), SEDE, "VISITA")  # lunedi': la prenotazione va gia' bene
-    monkeypatch.setattr(c.CupSession, "attuale", lambda self: att_ok)
-    with pytest.raises(c.CupError, match="non e' prima"):  # niente catena: la guardia rilegge l'attuale
-        c.prenota(CF, NRE, dopo, zona="tutte", dry_run=False, giorni=gg(settimana=[0], entro=(LUN + timedelta(days=14)).date().isoformat()))
+        c.prenota(CF, NRE, dopo, zona="tutte", dry_run=False, calendario=cal(no=["2030-01-09"]))
 
 
 def fra(giorni, ora=9):
-    """Fra `giorni` giorni all'ora data: giorno della settimana e fascia sotto controllo."""
+    """Fra `giorni` giorni all'ora data."""
     return (datetime.now() + timedelta(days=giorni)).replace(hour=ora, minute=0, second=0, microsecond=0)
 
 
@@ -1529,78 +1534,218 @@ def con_date(monkeypatch, att_quando, *quando):
     return slots
 
 
-def scegli_giorni(b, **g):
+def scegli_calendario(b, **k):
     p = pratica(b)
-    p["giorni_ok"] = gg(**g)
+    p["calendario"] = cal(**k)
     b.store.save(p)
+    return p["calendario"]
 
 
-def test_giorni_solo_le_date_nei_giorni_scelti(b, monkeypatch):
+def solo(*giorni):
+    """no_settimana con tutti i giorni tranne quelli delle date date."""
+    return [i for i in range(7) if i not in {g.weekday() for g in giorni}]
+
+
+def test_calendario_solo_le_date_nei_giorni_si(b, monkeypatch):
     registra(b)
     prima, giusta = con_date(monkeypatch, fra(60), fra(10), fra(20))
-    scegli_giorni(b, settimana=[giusta.quando.weekday()])
+    scegli_calendario(b, no=[iso(prima.quando)])
     b.controlla(pratica(b))
     p = pratica(b)
     assert b.offerte[p["id"]]["slots"] == [giusta]
     assert [v["ok"] for v in p["viste"]] == [False, True] and p["riassunto"]["migliori"] == 1
-    assert f"📅 solo {botmod.GIORNI[giusta.quando.weekday()]}" in inviati(b)[-1]
+    assert f"📅 no: {prima.quando:%d/%m}" in inviati(b)[-1]
     assert "nei giorni che vuoi" in b.riassunto(p)
     b.mostra_date(p)
     assert "Nei giorni che vuoi" in inviati(b)[-1]
 
 
-def test_giorni_fascia_pomeriggio(b, monkeypatch):
+def test_auto_mai_per_oggi_e_giorno_minimo_dal_calendario(b, monkeypatch):
     registra(b)
-    mattina, pomeriggio = con_date(monkeypatch, fra(60), fra(10, 9), fra(11, 15))
-    scegli_giorni(b, fascia="pomeriggio")
+    attiva_auto(b, giorni=7)  # pulsante di un messaggio di prima: accende e basta
+    oggi = datetime.now().replace(hour=23, minute=59, second=0, microsecond=0)
+    [stasera] = con_date(monkeypatch, fra(60), oggi)
     b.controlla(pratica(b))
-    assert b.offerte[pratica(b)["id"]]["slots"] == [pomeriggio]
+    assert not b.chiamate and b.offerte[pratica(b)["id"]]["slots"] == [stasera]  # oggi: solo col pulsante
+    b.offerte.clear()
+    presto, dopo = con_date(monkeypatch, fra(60), fra(1), fra(4))
+    k = scegli_calendario(b, no_fino=iso(fra(3)))
+    b.controlla(pratica(b))
+    assert b.chiamate == [(CF, dopo.key(), "S", False)] and b.calendari == [k]
 
 
-def test_giorni_auto_anche_piu_tardi_entro_il_limite(b, monkeypatch):
+def test_calendario_auto_piu_tardi_se_la_prenotazione_e_in_un_giorno_no(b, monkeypatch):
     registra(b)
-    attiva_auto(b, giorni=7)
-    # prenotazione fra 30 giorni, in un giorno che non va bene; va bene il giorno di "fra 40 giorni"
-    presto, sbagliata, giusta, troppo = con_date(monkeypatch, fra(30), fra(5), fra(10), fra(40), fra(47))
-    scegli_giorni(b, settimana=[giusta.quando.weekday()], entro=fra(45).date().isoformat())
+    attiva_auto(b)
+    presto, sbagliata, giusta, lontana = con_date(monkeypatch, fra(30), fra(5), fra(10), fra(40), fra(300))
+    k = scegli_calendario(b, no=[iso(fra(30)), iso(fra(5)), iso(fra(10))])
     b.controlla(pratica(b))
-    # fra(5) e' nel giorno giusto ma prima dell'anticipo minimo; fra(47) oltre il limite
-    assert b.chiamate == [(CF, giusta.key(), "S", False)] and b.giorni == [pratica(b)["giorni_ok"]]
+    assert b.chiamate == [(CF, giusta.key(), "S", False)] and b.calendari == [k]
     assert any("Conferma automatica: ho trovato una data nei giorni che vuoi" in t for t in inviati(b))
+    assert botmod.migliori(pratica(b), {"attuale": c.Prenotazione(fra(30), ATT.luogo, ATT.cosa),
+                                        "slots": [presto, sbagliata, giusta, lontana]}) == [giusta, lontana]
 
 
-def test_giorni_niente_catena_se_la_prenotazione_va_gia_bene(b, monkeypatch):
+def test_calendario_niente_catena_se_la_prenotazione_e_in_un_giorno_si(b, monkeypatch):
     registra(b)
     attiva_auto(b)
-    prima, dopo = con_date(monkeypatch, fra(40), fra(33), fra(47))  # tutte nello stesso giorno della settimana
-    scegli_giorni(b, settimana=[fra(40).weekday()], entro=fra(60).date().isoformat())
+    prima, dopo = con_date(monkeypatch, fra(40), fra(33), fra(47))
+    k = scegli_calendario(b, no=[iso(fra(20))])
     b.controlla(pratica(b))
-    assert b.chiamate == [(CF, prima.key(), "S", False)] and b.giorni == [pratica(b)["giorni_ok"]]
+    assert b.chiamate == [(CF, prima.key(), "S", False)] and b.calendari == [k]
+    assert dopo not in botmod.migliori(pratica(b), {"attuale": c.Prenotazione(fra(40), ATT.luogo, ATT.cosa),
+                                                     "slots": [prima, dopo]})
 
 
-def test_giorni_senza_date_buone_tengo_la_mia(b, monkeypatch):
+def test_calendario_senza_date_buone_tengo_la_mia(b, monkeypatch):
     registra(b)
     attiva_auto(b)
-    con_date(monkeypatch, fra(60), fra(10), fra(20))
-    scegli_giorni(b, date=[fra(15).date().isoformat()])
+    a, b2 = con_date(monkeypatch, fra(60), fra(10), fra(20))
+    scegli_calendario(b, no=[iso(a.quando), iso(b2.quando)])
     b.controlla(pratica(b))
     assert not b.chiamate and pratica(b)["id"] not in b.offerte
 
 
-def test_giorni_ricetta_mai_prenotata(b):
+def test_calendario_ricetta_mai_prenotata(b):
     registra_nuova(b)
     p = pratica(b)
-    p["giorni_ok"] = gg(settimana=[NUOVA_TO.quando.weekday()], entro=(botmod.adesso() + timedelta(days=1)).date().isoformat())
+    p["calendario"] = cal(no_settimana=solo(NUOVA_TO.quando))
     b.store.save(p)
     b.controlla(pratica(b))
     assert b.offerte[p["id"]]["slots"] == [NUOVA_TO]  # Cuneo e' prima ma in un altro giorno
-    assert "anche più tardi" not in botmod.descr_giorni(pratica(b))  # senza prenotazione non conta
 
 
-def test_giorni_date_precise_passate(b):
+def test_descrizione_del_calendario(monkeypatch):
+    monkeypatch.setattr(botmod, "adesso", lambda: datetime(2030, 1, 7, 9, 0))
+    assert botmod.descr_calendario({}) == "tutti i giorni"
+    assert botmod.descr_calendario({"calendario": {}}) == "tutti i giorni"
+    k = cal(no_settimana=[6, 5], no_fino="2030-01-09",
+            no=["2030-01-01", "2030-01-21", "2030-01-22", "2030-01-23", "2030-01-31", "2030-02-01", "2030-02-03",
+                "2030-01-19"])  # passato, intervallo, a cavallo del mese, una domenica e un sabato gia' no
+    assert botmod.descr_calendario({"calendario": k}) == "no: sab, dom, fino al 09/01, 21–23/01, 31/01–01/02"
+    assert botmod.descr_calendario({"calendario": cal(no_fino="2030-01-06")}) == "tutti i giorni"  # gia' passato
+    assert botmod.descr_calendario({"calendario": cal(si_fino="2030-03-01")}) == "no: dopo il 01/03"
+
+
+def mig(**k):
+    """Calendario ricavato dalle regole di prima: il bot anticipa soltanto."""
+    return {**cal(**k), "solo_prima": True}
+
+
+def test_regole_di_prima_mai_piu_tardi(monkeypatch):
+    # "da tra 3 giorni" con la prenotazione domani: prima il bot non la toccava, ora non deve rimandarla
+    monkeypatch.setattr(botmod, "adesso", lambda: datetime(2030, 1, 7, 9, 0))
+    k = botmod.calendario_di({"auto": {"giorni": 3}})
+    att = c.Prenotazione(datetime(2030, 1, 8, 9, 0), SEDE, "VISITA")
+    assert not c.giorno_si(att.quando, k) and not c.piu_tardi_ok(att, k)
+    assert not c.candidata(c.Slot(datetime(2030, 1, 20, 9, 0), SEDE, "s"), att, "tutte", k)
+    att2 = c.Prenotazione(datetime(2030, 1, 30, 9, 0), SEDE, "VISITA")
+    assert c.candidata(c.Slot(datetime(2030, 1, 20, 9, 0), SEDE, "s"), att2, "tutte", k)  # anticipare si'
+    nuovo = {k2: v for k2, v in k.items() if k2 != "solo_prima"}  # salvato dalla Mini App: regola nuova
+    assert c.piu_tardi_ok(att, nuovo)
+
+
+def test_migrazione_dalle_regole_di_prima(monkeypatch):
+    monkeypatch.setattr(botmod, "adesso", lambda: datetime(2030, 1, 7, 9, 0))  # lunedi' 07/01
+    di = botmod.calendario_di
+    assert di({}) is None and di({"auto": None, "giorni_ok": None}) is None
+    assert di({"auto": {"on": True}}) is None
+    # conferma automatica "da un giorno" e "fra N giorni": no fino al giorno prima
+    assert di({"auto": {"dal": "2030-01-15"}}) == mig(no_fino="2030-01-14")
+    assert di({"auto": {"giorni": 1}}) == mig(no_fino="2030-01-07")  # da domani: oggi no
+    assert di({"auto": {"giorni": 3}}) == mig(no_fino="2030-01-09")
+    assert di({"auto": {"dal": "2020-01-01"}}) is None  # data passata
+    # giorni della settimana: gli altri no; fascia ed "entro" si perdono
+    assert di({"giorni_ok": {"settimana": [0, 4], "date": [], "fascia": "mattina", "entro": "2030-02-01"}}) == \
+        mig(no_settimana=[1, 2, 3, 5, 6])
+    assert di({"giorni_ok": {"settimana": [], "date": [], "fascia": "pomeriggio", "entro": ""}}) is None
+    # date precise: le sole si'
+    k = di({"giorni_ok": {"settimana": [], "date": ["2030-01-10", "2030-01-14", "2030-01-12"]}})
+    assert k == mig(no_fino="2030-01-09", no=["2030-01-11", "2030-01-13"], si_fino="2030-01-14")
+    si = [d for d in ("2030-01-08", "2030-01-09", "2030-01-10", "2030-01-11", "2030-01-12", "2030-01-13",
+                      "2030-01-14", "2030-01-15") if c.giorno_si(datetime.fromisoformat(d), k)]
+    assert si == ["2030-01-10", "2030-01-12", "2030-01-14"]
+    assert botmod.descr_calendario({"calendario": k}) == "no: fino al 09/01, 11/01, 13/01, dopo il 14/01"
+    # date precise con la conferma automatica che parte dopo la prima: vale il giorno piu' tardi
+    k = di({"auto": {"dal": "2030-01-13"}, "giorni_ok": {"date": ["2030-01-10", "2030-01-14"]}})
+    assert k["no_fino"] == "2030-01-12" and k["si_fino"] == "2030-01-14"
+    # date precise tutte passate: con i giorni della settimana valgono quelli, senza nessun giorno va bene
+    assert di({"giorni_ok": {"settimana": [0], "date": ["2020-01-06"]}}) == mig(no_settimana=[1, 2, 3, 4, 5, 6])
+    assert not c.giorno_si(datetime(2030, 1, 8), di({"giorni_ok": {"settimana": [], "date": ["2020-01-06"]}}))
+    assert botmod.descr_calendario({"giorni_ok": {"date": ["2020-01-06"]}}) == "no: tutti"
+    # il calendario nuovo, se c'e', vale da solo
+    assert di({"calendario": cal(no=["2030-01-08"]), "giorni_ok": {"settimana": [0]}}) == cal(no=["2030-01-08"])
+    assert di({"calendario": {}, "auto": {"giorni": 7}}) is None
+
+
+def test_fissa_calendario(monkeypatch):
+    monkeypatch.setattr(botmod, "adesso", lambda: datetime(2030, 1, 7, 9, 0))
+    f = {"auto": {"giorni": 3}, "giorni_ok": {"settimana": [0, 1, 2, 3, 4]}}
+    botmod.fissa_calendario(f)
+    assert f == {"auto": {"on": True}, "calendario": mig(no_fino="2030-01-09", no_settimana=[5, 6])}
+    f = {"auto": None}
+    botmod.fissa_calendario(f)
+    assert f == {"auto": None, "calendario": {}}
+    f = {"calendario": cal(no=["2030-01-08"]), "giorni_ok": {"settimana": [0]}}
+    botmod.fissa_calendario(f)
+    assert f == {"calendario": cal(no=["2030-01-08"])}
+
+
+def test_auto_pulsanti_attiva_e_disattiva(b):
     registra(b)
     p = pratica(b)
-    p["giorni_ok"] = gg(date=["2020-01-06"])
-    assert botmod.descr_giorni(p) == "le date scelte sono passate: scegline altre"
-    p["giorni_ok"] = gg(settimana=[0], date=["2020-01-06"])
-    assert botmod.descr_giorni(p) == "solo lun"
+    b.esegui("auto", p)
+    pv = f"{p['id']}:{botmod.versione(p)}"
+    assert [x for x in pulsanti(b) if x.startswith("auto:")] == [f"auto:{pv}:1", f"auto:{pv}:0"]
+    assert "calendario" in inviati(b)[-1] and "Da tra" not in str(b.out[-1])
+    for n, acceso in (("3", True), ("0", False), ("1", True), ("0", False), ("7", True)):
+        b.on_callback(cq(1, f"auto:{pv}:{n}"))  # 3 e 7: pulsanti dei messaggi di prima
+        assert bool(pratica(b).get("auto")) == acceso, n
+    assert pratica(b)["auto"] == {"on": True}
+    b.on_callback(cq(1, f"auto:{pv}:x"))  # non valido: niente cambia
+    assert pratica(b)["auto"] == {"on": True}
+
+
+def test_auto_vecchia_resta_accesa_e_tiene_i_giorni(b, monkeypatch):
+    """Una ricetta salvata prima del calendario: {"giorni": 7} vale accesa e con i primi 6 giorni no."""
+    registra(b)
+    p = pratica(b)
+    p["auto"] = {"giorni": 7}
+    b.store.save(p)
+    presto, dopo = con_date(monkeypatch, fra(60), fra(3), fra(8))
+    b.controlla(pratica(b))
+    assert b.chiamate == [(CF, dopo.key(), "S", False)]
+    assert b.calendari[0]["no_fino"] == (botmod.adesso().date() + timedelta(days=6)).isoformat()
+
+
+def test_esito_incerto_verificato_al_controllo_dopo(b, monkeypatch):
+    registra(b)
+    attiva_auto(b)
+    vera = c.prenota
+    monkeypatch.setattr(c, "prenota", lambda *a, **k: (_ for _ in ()).throw(
+        c.CupError("Conferma inviata, esito incerto: la prenotazione risulta non verificabile.")))
+    b.controlla(pratica(b))
+    inc = pratica(b)["incerta"]
+    assert inc["quando"] == MEGLIO.quando.isoformat()
+    # al controllo dopo il portale riporta la prenotazione alla data tentata: la conferma era andata
+    monkeypatch.setattr(c, "prenota", vera)
+    p = pratica(b)
+    p["incerta"] = {"quando": ATT.quando.isoformat(), "luogo": ATT.luogo.key()}
+    b.store.save(p)
+    b.controlla(pratica(b))
+    assert "incerta" not in pratica(b)
+    assert any(t.startswith("✅ Verificato") and fmt_ok(t) for t in inviati(b))
+
+
+def test_esito_incerto_non_andato(b):
+    registra(b)
+    p = pratica(b)
+    p["incerta"] = {"quando": "2030-01-01T09:00:00", "luogo": "ALTRO"}
+    b.store.save(p)
+    b.controlla(pratica(b))
+    assert "incerta" not in pratica(b) and any("non e' andata a buon fine" in t for t in inviati(b))
+
+
+def fmt_ok(testo):
+    """Data, ora e luogo nel messaggio (sempre, per ogni prenotazione)."""
+    return "📅" in testo and " ore " in testo and "📍" in testo

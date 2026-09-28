@@ -554,3 +554,30 @@ def test_estendi_area_lento_tiene_le_date_gia_lette(monkeypatch):
     assert sorted(x.luogo.sede for x in res["slots"]) == ["POLIAMBULATORIO NORD", "POLIAMBULATORIO SUD"]
     assert c.AREA_INCOMPLETA and c.PIU_LENTA == c.LENTO
     assert any(x.startswith("estendi area: timeout al passo 1 di 4") for x in c.DIARIO)
+
+
+def test_conferma_senza_risposta_si_verifica_lo_stesso(monkeypatch):
+    # dal vivo (2026-09-28): la risposta alla Conferma e' scaduta, ma la prenotazione era fatta
+    log = sessioni_finte(monkeypatch, [c.NonTrovata("Non esistono prenotazioni"), FATTA])
+
+    def conferma(self, page):
+        log["conferma"] += 1
+        raise c.requests.ReadTimeout("x")
+    monkeypatch.setattr(c.CupSession, "conferma", conferma)
+    assert prenota_nuova() == "Prenotazione fatta." and log["conferma"] == 1
+
+
+def test_provincia_dal_comune_se_l_indirizzo_non_la_riporta():
+    # dal vivo (2026-09-28): Susa scartata da "provincia di Torino" perche' l'indirizzo era "CORSO INGHILTERRA - ()"
+    susa = c.Luogo("PRESIDIO - SUSA", "10369-SUSA - PRIMA VISITA GASTRO PEDIATRICA", "CORSO INGHILTERRA - ()")
+    assert c.provincia(c.Luogo("POLIAMBULATORIO - SALE", "AMB", "VIA X - ()")) == ""  # parola, non il comune
+    assert c.provincia(c.Luogo("OSPEDALE", "10369-SUSA - VISITA", "VIA X - ()")) == ""  # solo dalla sede
+    assert c.comune(susa) == "SUSA" and c.provincia(susa) == "TO"
+    slot = c.Slot(datetime(2026, 12, 1, 10, 10), susa, "s1")
+    assert c.ammesso(slot, None, {"tipo": "provincia", "valore": "TO"})
+    assert c.ammesso(slot, None, {"tipo": "comune", "valore": "SUSA"})
+    mondovi = c.Luogo("OSPEDALE", "AMB", "VIA ROMA 1 - MONDOVI' ()")
+    assert c.provincia(c.Luogo("OSPEDALE - MONDOVI'", "AMB", "")) == "CN"
+    assert c.provincia(mondovi) == ""  # nessun pezzo intero che sia un comune: meglio non indovinare
+    assert c.provincia(c.Luogo("X", "Y", "Via Po 1 - TORINO (TO)")) == "TO"  # l'indirizzo vale per primo
+    assert len(c.COMUNI_PIEMONTE) == 1180
