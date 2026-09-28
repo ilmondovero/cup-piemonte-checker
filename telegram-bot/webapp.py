@@ -19,7 +19,7 @@ import re
 import secrets
 import threading
 import time
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qsl
@@ -268,10 +268,21 @@ class App:
 
     def azione_auto(self, chat, p, dati):
         giorni = dati.get("giorni", "")
-        if giorni not in {"0", *map(str, botmod.ANTICIPI_AUTO)}:
+        if giorni == "data":  # da un giorno preciso, non "fra N giorni"
+            try:
+                dal = date.fromisoformat(dati.get("dal", ""))
+            except ValueError:
+                raise Richiesta(400, "Scegli il giorno da cui prenotare.") from None
+            oggi = botmod.adesso().date()
+            if not oggi < dal <= oggi + timedelta(days=366):
+                raise Richiesta(400, "Scegli un giorno da domani in poi.")
+            auto = {"dal": dal.isoformat()}
+        elif giorni in {"0", *map(str, botmod.ANTICIPI_AUTO)}:
+            auto = {"giorni": int(giorni)} if int(giorni) else None
+        else:
             raise Richiesta(400, "Scelta non valida.")
-        self._modifica(chat, p, lambda f: f.update(auto={"giorni": int(giorni)} if int(giorni) else None))
-        return f"{self.bot.nome(p)}: " + ("conferma automatica attiva." if int(giorni) else "conferma automatica spenta.")
+        self._modifica(chat, p, lambda f: f.update(auto=auto))
+        return f"{self.bot.nome(p)}: " + ("conferma automatica attiva." if auto else "conferma automatica spenta.")
 
     def azione_pausa(self, chat, p, dati):
         self._modifica(chat, p, lambda f: f.update(stato="pausa", pausa_da=time.time()))
@@ -652,14 +663,20 @@ class App:
 </form>"""
 
     def foglio_auto(self, p):
-        attivo = (p.get("auto") or {}).get("giorni", 0)
+        a = p.get("auto") or {}
+        attivo = "data" if a.get("dal") else str(a.get("giorni", 0))
         oggi = botmod.adesso().date()
+        domani = oggi + botmod.timedelta(days=1)
         voci = [("0", "No, chiedimi prima di prenotare")] + [
             (str(g), f"Sì, date da {botmod.GIORNI[(oggi + botmod.timedelta(days=g)).weekday()]} "
                      f"{oggi + botmod.timedelta(days=g):%d/%m} in poi") for g in botmod.ANTICIPI_AUTO]
         scelte = "".join(
-            f'<label class="scelta"><input type="radio" name="giorni" value="{v}"{" checked" if int(v) == attivo else ""}>'
+            f'<label class="scelta"><input type="radio" name="giorni" value="{v}"{" checked" if v == attivo else ""}>'
             f'<span>{e(t)}</span></label>' for v, t in voci)
+        scelte += (f'<label class="scelta"><input type="radio" name="giorni" value="data"'
+                   f'{" checked" if attivo == "data" else ""}><span>Sì, date da un giorno preciso in poi'
+                   f'<input type="date" name="dal" value="{e(a.get("dal") or "")}" min="{domani.isoformat()}" '
+                   f'max="{(oggi + botmod.timedelta(days=366)).isoformat()}"></span></label>')
         return f"""
 <h2>⚡ Prenoto da solo · {e(self.bot.nome(p))}</h2>
 <p class="nota">{e(AUTO_NUOVA if botmod.da_prenotare(p) else AUTO_SPOSTA)}</p>

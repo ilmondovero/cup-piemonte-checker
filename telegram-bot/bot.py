@@ -32,7 +32,7 @@ import sys
 import time
 import traceback
 import urllib.parse
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import requests
@@ -263,8 +263,14 @@ def prestazione(cosa, massimo=45):
 
 
 def dal_giorno(p):
+    """Primo giorno che la conferma automatica prenota: fra N giorni da oggi (scorre con i giorni) o da
+    una data fissa scelta nella Mini App, mai prima di domani."""
     a = p.get("auto")
-    return adesso().date() + timedelta(days=a["giorni"]) if a else None
+    if not a:
+        return None
+    if a.get("dal"):
+        return max(date.fromisoformat(a["dal"]), adesso().date() + timedelta(days=1))
+    return adesso().date() + timedelta(days=a["giorni"])
 
 
 def auto_descr(p):
@@ -431,13 +437,18 @@ class Bot:
             time.sleep(attesa)
         # un solo thread parla col portale: l'attesa vale per questa sessione
         cup_http.LENTO = pazienza = ATTESA_MAX if paziente else self.attesa(pid)
-        cup_http.PIU_LENTA = 0.0
+        cup_http.PIU_LENTA, cup_http.AREA_INCOMPLETA = 0.0, False
         cup_http.DIARIO.clear()
         inizio, riuscita, lenta, scaduta = time.time(), False, 0.0, False
         try:
             risultato = fn(*args, **kwargs)
             riuscita = True
-            self.meno_paziente(pid)
+            if cup_http.AREA_INCOMPLETA:  # date lette solo in parte: come un timeout per la pazienza
+                scaduta, lenta = True, pazienza
+                if pid is not None and not paziente:
+                    self.pazienza[pid] = min(ATTESA_MAX, round(pazienza * 1.5))
+            else:
+                self.meno_paziente(pid)
             return risultato
         except (cup_http.NonTrovata, cup_http.NonAttiva):
             riuscita = True  # il portale ha risposto: e' la ricetta che non va
@@ -598,7 +609,7 @@ class Bot:
         if auto:
             # un solo tentativo automatico per data; le date gia' offerte col pulsante valgono comunque
             tentati = set(p.get("tentati_auto", []))
-            dal = adesso().date() + timedelta(days=auto["giorni"])
+            dal = dal_giorno(p)
             candidati = [x for x in res["migliori"] if x.luogo.sede and x.quando.date() >= dal and x.key() not in tentati]
             if candidati:
                 slot = candidati[0]  # la piu' vicina tra quelle ammesse

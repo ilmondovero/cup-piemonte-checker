@@ -97,6 +97,20 @@ def test_cambia_zona_e_automatica(app):
     assert app.store.get(pid)["auto"] is None
     stato, _, _ = post(app, f"/ui/r/{pid}/auto", {"giorni": "99"})
     assert stato == 400
+    domani = botmod.adesso().date() + botmod.timedelta(days=1)
+    dal = (domani + botmod.timedelta(days=11)).isoformat()
+    post(app, f"/ui/r/{pid}/auto", {"giorni": "data", "dal": dal})
+    assert app.store.get(pid)["auto"] == {"dal": dal}
+    assert botmod.dal_giorno(app.store.get(pid)).isoformat() == dal
+    _, _, corpo = get(app, f"/ui/r/{pid}/auto")
+    assert f'value="{dal}"' in corpo.decode() and 'value="data" checked' in corpo.decode()
+    for cattiva in ("", "10/10/2026", botmod.adesso().date().isoformat()):  # vuota, formato sbagliato, oggi
+        stato, _, _ = post(app, f"/ui/r/{pid}/auto", {"giorni": "data", "dal": cattiva})
+        assert stato == 400
+    assert app.store.get(pid)["auto"] == {"dal": dal}
+    p = app.store.get(pid)
+    p["auto"] = {"dal": "2020-01-01"}  # data fissa gia' passata: vale da domani
+    assert botmod.dal_giorno(p) == domani
     stato, _, _ = post(app, f"/ui/r/{pid}/dove", {"tipo": "altro", "comune": "<script>"})
     assert stato == 400
     assert ("pannello", 1, None) in list(app.bot.coda.queue)  # il pannello in chat si aggiorna

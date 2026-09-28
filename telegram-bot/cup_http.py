@@ -33,6 +33,7 @@ RICETTA_URL = CUP + "/ricetta-dematerializzata"
 CALL_CENTER = "800 000 500"
 LENTO = 90  # secondi: la ricerca delle disponibilita' (soprattutto estendendo l'area) puo' richiedere un minuto
 PIU_LENTA = 0.0  # secondi: la risposta piu' lenta dall'ultimo azzeramento (il bot la misura per imparare LENTO)
+AREA_INCOMPLETA = False  # "Estendi area" scaduto dall'ultimo azzeramento: le date sono solo quelle lette fin li'
 # passi della sessione in corso nei flussi ancora da osservare (prenotazione nuova, piu' prestazioni): solo
 # conteggi, nomi di sezioni e id di form e pulsanti, mai dati personali. Il bot li scrive nel log e li azzera
 DIARIO = collections.deque(maxlen=50)
@@ -446,12 +447,20 @@ class CupSession:
                 if "Appuntamenti Disponibili" in _text(xml):
                     disp_html = xml[xml.find("Appuntamenti Disponibili"):]
                     break
-        for _ in range(estendi if disp_html else 0):
+        for passo in range(estendi if disp_html else 0):
             area = re.search(r'id="(%s:nextArea)"' % re.escape(A), disp_html)
             if not area:
                 break
-            xml = self.app.post({**GEO, **_event(area.group(1), "activate"),
-                                 "javax.faces.partial.render": f"{A} _ricettaelettronica_WAR_cupprenotazione_:allMsgs"})
+            try:
+                xml = self.app.post({**GEO, **_event(area.group(1), "activate"),
+                                     "javax.faces.partial.render": f"{A} _ricettaelettronica_WAR_cupprenotazione_:allMsgs"})
+            except requests.ReadTimeout:
+                # il portale e' lento proprio ad allargare l'area: valgono le date gia' lette (proposta e aree
+                # precedenti) invece di perdere tutto il controllo; il bot al giro dopo aspetta di piu'
+                global AREA_INCOMPLETA, PIU_LENTA
+                AREA_INCOMPLETA, PIU_LENTA = True, max(PIU_LENTA, LENTO)
+                DIARIO.append(f"estendi area: timeout al passo {passo + 1} di {estendi}, tengo le date lette")
+                break
             if "Appuntamenti Disponibili" not in _text(xml):
                 break
             disp_html = xml[xml.find("Appuntamenti Disponibili"):]

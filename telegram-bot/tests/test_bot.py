@@ -1418,3 +1418,17 @@ def test_la_prenotazione_non_aspetta_la_distanza_dal_portale(b, monkeypatch):
     b.ultimo_portale = time.time()
     b.portale(lambda: "ok")  # controllo: rispetta la distanza
     assert attese and attese[0] > 15
+
+
+def test_area_estesa_a_meta_allunga_la_pazienza(b, monkeypatch):
+    registra(b)
+    pid = pratica(b)["id"]
+    ok = c.check
+
+    def check(*a):
+        c.AREA_INCOMPLETA = True  # le date ci sono, ma "Estendi area" e' scaduto
+        return ok(*a)
+    monkeypatch.setattr(c, "check", check)
+    b.controlla(pratica(b))
+    assert b.pazienza[pid] == 135 and pratica(b)["errori"] == 0
+    assert b.metriche[-1][2] and b.metriche[-1][4]  # riuscita, ma conta come scaduta per imparare l'attesa

@@ -68,7 +68,10 @@ class PortaleFinto:
 
     def post(self, url, data=None, timeout=None, headers=None):
         self.inviati.append(data)
-        return Risposta(self.risposte.pop(0))
+        r = self.risposte.pop(0)
+        if isinstance(r, Exception):
+            raise r
+        return Risposta(r)
 
 
 def con_portale(monkeypatch, pagine, risposte):
@@ -532,3 +535,22 @@ def test_tempi_della_prenotazione_nel_diario(monkeypatch):
     with pytest.raises(c.GiaPrenotata):
         prenota_nuova()
     assert c.DIARIO[-1].startswith("tempi: fine")  # anche quando si ferma prima
+
+
+def test_estendi_area_lento_tiene_le_date_gia_lette(monkeypatch):
+    # dal vivo (2026-09-28): "Estendi area" in provincia di Torino scadeva sempre e il controllo perdeva tutto
+    pagina = ("Appuntamenti Proposti " + carrello("ECOGRAFIA ADDOME COMPLETO") +
+              form(c.A, f"<div>'{c.A}:x:0:app_selector'</div>" +
+                   blocco("Martedì 14 Settembre 2027", "POLIAMBULATORIO NORD", "ECO 1") +
+                   f'<div class="btn btn-default" id="{c.A}:altre">Altre disponibilità</div>'))
+    disp = ("<partial-response>Appuntamenti Disponibili" +
+            blocco("Lunedì 6 Settembre 2027", "POLIAMBULATORIO SUD", "ECO 2", seleziona_id=c.A + ":s1") +
+            f'<div id="{c.A}:nextArea">Estendi area di ricerca</div></partial-response>')
+    con_portale(monkeypatch, [RICERCA, pagina], [xml(), xml(), disp, c.requests.ReadTimeout("x")])
+    c.DIARIO.clear()
+    monkeypatch.setattr(c, "AREA_INCOMPLETA", False)
+    monkeypatch.setattr(c, "PIU_LENTA", 0.0)
+    res = c.check_nuova(CF, NRE, {"tipo": "provincia", "valore": "TO"})
+    assert sorted(x.luogo.sede for x in res["slots"]) == ["POLIAMBULATORIO NORD", "POLIAMBULATORIO SUD"]
+    assert c.AREA_INCOMPLETA and c.PIU_LENTA == c.LENTO
+    assert any(x.startswith("estendi area: timeout al passo 1 di 4") for x in c.DIARIO)

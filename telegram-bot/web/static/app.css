@@ -108,7 +108,7 @@ button.secondario { background: transparent; color: var(--tenue); width: 100%; }
   background: var(--sfondo); cursor: pointer;
 }
 .scelta input[type="radio"] { margin-top: 3px; accent-color: var(--bottone); }
-.scelta input[type="text"] {
+.scelta input[type="text"], .scelta input[type="date"] {
   display: block; width: 100%; margin-top: 8px; font: inherit; padding: 8px 10px; border-radius: 8px;
   border: 1px solid var(--separatore); background: var(--scheda); color: var(--testo);
 }
