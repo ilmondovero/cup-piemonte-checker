@@ -38,6 +38,22 @@ piccolo, senza Chromium.
    stessa prestazione, la data scelta e lo stesso luogo. Poi verifica con una sessione nuova che la
    prenotazione risulti davvero spostata. Se l'esito è incerto, avvisa subito con il numero del call
    center (800 000 500).
+   - **Stato "in corso".** Mentre prenota, la scheda dell'app mostra data, ora e luogo della data nuova
+     e la fase: "Sposto a…", "Conferma inviata, aspetto la risposta del portale…", "Conferma inviata,
+     verifico sul portale…". Il pannello in chat la mostra dalla verifica (prima della Conferma il bot
+     non aspetta Telegram). A fine operazione (riuscita, fallita, incerta o per un errore imprevisto) lo
+     stato sparisce; se il processo si ferma dopo la Conferma resta, e al riavvio diventa esito incerto.
+     L'app, solo in quel momento, si aggiorna ogni 5 secondi.
+   - **Verifica rapida.** Dopo la Conferma (anche se il portale risponde con un errore o non risponde)
+     il bot verifica con pause crescenti (2, 5, 10, 20, 40 secondi), in tutto al massimo 3 minuti:
+     nessuna richiesta aspetta oltre, e con meno di 30 secondi rimasti non tenta piu'.
+   - **Da verificare.** Se la verifica non chiude, la data nuova resta "⚠️ Da verificare" su pannello e
+     scheda, sotto la prenotazione vera. La prenotazione salvata cambia solo quando il portale la
+     mostra: il bot non decide nulla (date migliori, calendario, automatica) su una data non verificata.
+     Il controllo successivo legge il portale e dice com'è andata.
+   - **Riavvio a metà.** Se il bot si ferma durante una prenotazione, all'avvio: Conferma già partita →
+     esito incerto, automatica spenta e verifica al prossimo controllo (anticipato); Conferma non ancora
+     partita → avvisa che la prenotazione non è cambiata.
 5. **Conferma automatica (facoltativa, `/auto`).** Le date buone spariscono in pochi minuti. Chi la
    attiva lascia che il bot prenoti da solo la prima data migliore, senza aspettare il tocco.
    - È solo accesa o spenta. Rispetta le sedi scelte e il calendario dei giorni sì/no (vedi
@@ -177,6 +193,12 @@ vecchia. Cosa si fa dall'app:
 - **Admin** (solo `ADMIN_CHAT_ID`): contatori e tempi delle sessioni sul portale degli ultimi 7
   giorni, e l'attesa imparata per l'ora corrente. Le metriche stanno nel database (solo orario, durata
   ed esito, nessun dato personale), quindi sopravvivono ai riavvii.
+  - **Sorveglianza:** se il ciclo del bot gira ancora e l'ora dell'ultima sessione riuscita sul portale.
+  - **Rapporto guasti** (ultime 24 ore o 7 giorni): per ogni passo del portale (elenco, appuntamenti,
+    estendi area, riepilogo, conferma, verifica) le richieste, gli errori per tipo (sovraccarico,
+    timeout, risposta inattesa) e il tempo tipico e massimo; gli errori per ora del giorno, in grafico e
+    in tabella; i tempi delle ultime prenotazioni, dal controllo che ha trovato la data a ogni fase.
+    Solo tempi, codici HTTP ed esiti.
 
 Come è protetta:
 
@@ -234,11 +256,25 @@ Come è protetta:
   - Dopo un timeout, per quella ricetta aspetta il 50% in più, fino al massimo. Dopo un successo la
     pazienza in più cala piano. Se il portale non risponde proprio (collegamento rifiutato o assente)
     non aspetta di più: per collegarsi bastano 10 secondi.
-  - Le prenotazioni usano sempre l'attesa massima: sono rare e una data persa costa.
+  - **Un'attesa per ogni passo.** Il bot registra ogni richiesta per passo (elenco, appuntamenti,
+    estendi area, ricerca, riepilogo, conferma, verifica) e impara l'attesa di ciascun passo con la
+    stessa regola. L'elenco, che risponde in pochi secondi, non aspetta come "Estendi area". Un passo con
+    pochi dati in quell'ora usa l'attesa della fascia.
+  - Le prenotazioni usano sempre l'attesa massima: sono rare e una data persa costa. Fa eccezione la
+    verifica dopo la Conferma, che usa l'attesa imparata e deve stare nei 3 minuti.
+  - **Errori con il loro significato.** Nel log ogni errore del portale ha il passo e il codice HTTP (mai
+    l'indirizzo, né codice fiscale o NRE). 502, 503, 504, timeout e connessione caduta sono "portale
+    sovraccarico": si riprova, e all'utente arriva un messaggio sobrio. Gli altri codici sono "risposta
+    inattesa". Per la Conferma ogni errore porta sempre alla verifica e, se non chiude, all'esito incerto.
   - Con errori di fila i controlli si diradano (l'intervallo raddoppia, fino a 60 minuti), per non
     insistere su un portale in difficoltà. Al primo successo si torna al ritmo normale.
   - L'utente viene avvisato al 3°, al 12° e al 40° errore di fila, con l'orario del prossimo controllo,
     e di nuovo quando il portale torna a rispondere.
+  - **Sorveglianza.** Chi gestisce il bot riceve un solo avviso quando nessuna sessione sul portale
+    riesce da 45 minuti (tutte fallite, o controlli in ritardo di oltre 10 minuti), e uno quando torna
+    normale. Se il ciclo del bot non fa un giro e non riceve risposte dal portale da 15 minuti, la Mini
+    App (che gira in un altro thread) lo segnala nella pagina Admin e con un avviso, e poi di nuovo
+    quando riparte. Stato solo in memoria.
 
   L'attesa vale per ogni richiesta, e un controllo ne fa diverse (elenco, "Sposta", una per ogni
   estensione dell'area). Mentre aspetta il portale il bot non risponde su Telegram né nella Mini App,

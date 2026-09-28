@@ -67,6 +67,9 @@ TZ = ZoneInfo("Europe/Rome")  # gli orari del portale sono italiani, anche se il
 ATTESA_MIN, ATTESA_BASE, ATTESA_MAX = 60, 90, 180  # secondi di attesa di una risposta lenta del portale
 ATTESA_GIORNI = 7  # quanti giorni di controlli guardare per imparare l'attesa
 MAX_RALLENTA = 60  # minuti: con il portale in difficolta' l'intervallo cresce fino a qui (o all'intervallo, se piu' lungo)
+GUASTO_MIN = 45  # minuti senza una sessione riuscita sul portale (con ricette da controllare): un avviso all'amministratore
+RITARDO_GUASTO = 10 * 60  # secondi: un controllo in ritardo di tanto, senza successi da GUASTO_MIN, e' un guasto
+BATTITO_MAX = 15 * 60  # secondi senza un giro del ciclo ne' una risposta del portale: il bot e' fermo
 
 
 def adesso():
@@ -77,28 +80,34 @@ def orario(ts):
     return datetime.fromtimestamp(ts, TZ)
 
 
-def attesa_appresa(metriche, ora):
+def attesa_appresa(metriche, ora, base=ATTESA_BASE):
     """Secondi da aspettare una risposta lenta del portale in quest'ora, imparati dai controlli dei giorni
     scorsi alla stessa ora (e a quelle vicine): 1,5 volte le risposte piu' lente, e il massimo se in quella
     fascia il portale va spesso in timeout. Nessuna tabella di "ore di punta": se il portale cambia
     abitudini, l'attesa cambia con lui. metriche: [(ts, durata, riuscita, lenta, timeout)], dove lenta e' la
     risposta singola piu' lenta del controllo (le righe senza, di versioni precedenti, non contano).
     Un timeout vale come una risposta lunga almeno quanto l'attesa di allora: contare solo le risposte
-    arrivate abbasserebbe l'attesa proprio quando serve di piu'. Gli altri errori non dicono nulla sui tempi."""
+    arrivate abbasserebbe l'attesa proprio quando serve di piu'. Gli altri errori non dicono nulla sui tempi.
+    base: l'attesa con pochi dati (per un passo, quella imparata per tutta la sessione)."""
     h = orario(ora).hour
     fascia = [(lenta, ok, scaduta) for ts, _, ok, lenta, scaduta in metriche
               if lenta is not None and (orario(ts).hour - h) % 24 in (0, 1, 23)]
     tempi = sorted(d for d, ok, scaduta in fascia if ok or scaduta)
-    attesa = 1.5 * tempi[int(0.9 * (len(tempi) - 1))] if len(tempi) >= 5 else ATTESA_BASE
+    attesa = 1.5 * tempi[int(0.9 * (len(tempi) - 1))] if len(tempi) >= 5 else base
     if len(fascia) >= 5 and sum(1 for *_, scaduta in fascia if scaduta) >= 0.3 * len(fascia):
         attesa = ATTESA_MAX  # a quest'ora il portale non risponde in tempo spesso: tutta la pazienza possibile
     return round(min(ATTESA_MAX, max(ATTESA_MIN, attesa)))
 
 
-def lento(e):
-    """Il portale c'e' ma non risponde in tempo: anche a pagina iniziata, che requests chiama ConnectionError."""
-    return isinstance(e, requests.ReadTimeout) or (
-        isinstance(e, requests.ConnectionError) and "read timed out" in str(e).lower())
+def attese_apprese(richieste, ora, base=ATTESA_BASE):
+    """{passo: secondi}: l'attesa di ogni passo del portale (elenco, appuntamenti, estendi, riepilogo,
+    conferma, verifica...), imparata come attesa_appresa dalle sue richieste. Un passo con pochi dati in
+    quest'ora aspetta `base`. richieste: [(ts, passo, secondi, esito, codice)] (Store.metriche_passi)."""
+    passi = {}
+    for ts, passo, secondi, esito, _ in richieste:
+        passi.setdefault(passo, []).append((ts, secondi, esito == "ok", secondi, esito == "timeout"))
+    return {passo: attesa_appresa(righe, ora, base) for passo, righe in passi.items()}
+
 
 PRIVACY = (
     "🔒 Informativa, prima di iniziare\n\n"
@@ -214,6 +223,48 @@ def da_prenotare(p):
 
 def senza_prenotazione(cosa):
     return {"quando": SENZA_DATA.isoformat(), "sede": "", "ambulatorio": "", "indirizzo": "", "cosa": cosa or ""}
+
+
+def luogo_di(d):
+    """Il luogo di in_corso / incerta: {"sede" (o "luogo" in in_corso), "ambulatorio", "indirizzo"}."""
+    return cup_http.Luogo(d.get("sede") or d.get("luogo") or "", d.get("ambulatorio") or "", d.get("indirizzo") or "")
+
+
+def sospesa(p):
+    """La prenotazione che il bot sta facendo (p["in_corso"]) o di cui aspetta la verifica (p["incerta"]):
+    (tipo, data e ora, luogo, spiegazione) con tipo "in_corso" o "incerta"; None se non c'e' nulla in sospeso.
+    La data nuova si mostra solo cosi': p["attuale"] cambia quando il portale la conferma."""
+    ic, inc = p.get("in_corso"), p.get("incerta")
+    if ic:
+        q, luogo = datetime.fromisoformat(ic["quando"]), luogo_di(ic)
+        verbo = "Prenoto" if ic.get("nuova") else "Sposto a"
+        spiega = {"conferma": "Conferma inviata, aspetto la risposta del portale…",
+                  "verifica": "Conferma inviata, verifico sul portale…"}.get(ic.get("fase"), "Sono sul portale CUP…")
+        return "in_corso", f"{verbo} {fmt(q)}", luogo, spiega
+    if inc:
+        q = datetime.fromisoformat(inc["quando"])
+        return ("incerta", f"Da verificare: {fmt(q)}", luogo_di(inc),
+                "Ho inviato la conferma ma il portale non l'ha ancora mostrata: finché non la verifico vale la "
+                "prenotazione qui sopra. " + ("Riprendi i controlli per verificarla." if p.get("stato") == "pausa"
+                                             else "Verifico al prossimo controllo."))
+    return None
+
+
+def riga_sospesa(p):
+    """Per il pannello in chat: "⏳ Sposto a mer 28/10/2026 ore 08:30 – Ospedale, Via… · Conferma inviata…"."""
+    s = sospesa(p)
+    if not s:
+        return ""
+    tipo, quando, luogo, spiega = s
+    dove = ", ".join(x for x in (titolo(luogo.sede), indirizzo(luogo)) if x)
+    return f"{'⏳' if tipo == 'in_corso' else '⚠️'} {quando} – {dove}\n     {spiega}"
+
+
+def incerta_da(ic):
+    """L'esito incerto di una prenotazione in corso (conferma partita): lo chiude il prossimo controllo."""
+    luogo = luogo_di(ic)
+    return {"quando": ic["quando"], "luogo": luogo.key(), "sede": luogo.sede, "ambulatorio": luogo.ambulatorio,
+            "indirizzo": luogo.indirizzo}
 
 
 def descrivi_prenotazione(att, titolo="Prenotazione"):
@@ -445,6 +496,13 @@ class Bot:
         self.pazienza = {}  # id pratica -> secondi: dopo un timeout la sua ricerca aspetta di piu', fino al successo
         self.date_mostrate = {}  # id pratica -> {"token", "ts", "chiavi", "att"}: le date con Prenota in chat
         self._attesa = (0.0, ATTESA_BASE)  # (quando e' stata calcolata, secondi): ricalcolata ogni 10 minuti
+        self._attese = (0.0, {})  # (quando, {passo: secondi}): l'attesa di ogni passo, ricalcolata ogni 10 minuti
+        # sorveglianza del portale e del ciclo (in memoria: un avviso all'amministratore per episodio)
+        self.ultimo_ok = time.time()  # ultima sessione riuscita sul portale (all'avvio: l'avvio)
+        self.primo_ko = None  # prima sessione fallita dopo l'ultima riuscita
+        self.ko_di_fila = 0
+        self.guasto = None  # inizio del guasto gia' segnalato
+        self.battito = time.time()  # ultimo giro del ciclo principale (lo guarda la Mini App, da un altro thread)
 
     def piena(self, n):
         """Una chat con n ricette puo' aggiungerne un'altra? Con max_pratiche 0 sempre."""
@@ -454,9 +512,9 @@ class Bot:
     def redact(self, e):
         return str(e).replace(self.token, "***")
 
-    def tg(self, method, **data):
+    def tg(self, method, attesa_tg=40, **data):
         try:
-            r = requests.post(self.api + method, json=data, timeout=40).json()
+            r = requests.post(self.api + method, json=data, timeout=attesa_tg).json()
         except (requests.RequestException, ValueError) as e:
             log.warning("Telegram %s fallito: %s", method, self.redact(e))
             return {}
@@ -519,6 +577,24 @@ class Bot:
             self._attesa = (ora, attesa_appresa(metriche, ora))
         return max(self._attesa[1], self.pazienza.get(pid, 0))
 
+    def attese_passi(self, pid=None, paziente=False):
+        """{passo: secondi} per cup_http.ATTESE. Una ricetta con pazienza extra aspetta almeno quella in ogni
+        passo. Una prenotazione aspetta il massimo (LENTO) in tutti i passi tranne la verifica dopo la
+        Conferma, che deve stare nei suoi tempi (cup_http.VERIFICA_MAX) e usa quella imparata."""
+        ora = time.time()
+        if ora - self._attese[0] > 600:
+            try:
+                righe = self.store.metriche_passi(ora - ATTESA_GIORNI * 86400)
+            except Exception as e:
+                log.warning("metriche dei passi non lette: %s", type(e).__name__)
+                righe = []
+            self._attese = (ora, attese_apprese(righe, ora, self.attesa()))
+        attese = self._attese[1]
+        if paziente:
+            return {"verifica": attese.get("verifica") or attese.get("elenco") or self.attesa()}
+        extra = self.pazienza.get(pid, 0)
+        return {passo: max(v, extra) for passo, v in attese.items()}
+
     def meno_paziente(self, pid):
         """Dopo un successo la pazienza extra di una ricetta cala piano, e mai sotto 1,5 volte la risposta piu'
         lenta appena misurata (una ricerca sempre lenta non torna a scadere), fino al valore imparato."""
@@ -538,9 +614,13 @@ class Bot:
             time.sleep(attesa)
         # un solo thread parla col portale: l'attesa vale per questa sessione
         cup_http.LENTO = pazienza = ATTESA_MAX if paziente else self.attesa(pid)
+        cup_http.ATTESE = self.attese_passi(pid, paziente)
         cup_http.PIU_LENTA, cup_http.AREA_INCOMPLETA = 0.0, False
         cup_http.DIARIO.clear()
+        cup_http.RICHIESTE.clear()
+        self.battito = time.time()
         inizio, riuscita, lenta, scaduta = time.time(), False, 0.0, False
+        guasto = False  # errore del portale (rete, codice HTTP, timeout), non della ricetta o della pagina
         try:
             risultato = fn(*args, **kwargs)
             riuscita = True
@@ -556,15 +636,20 @@ class Bot:
             self.meno_paziente(pid)
             raise
         except requests.RequestException as e:
+            guasto = True
             # il portale c'e' ma e' lento: la prossima volta un po' piu' di pazienza. Se invece non risponde
             # proprio (connessione rifiutata o assente), aspettare di piu' non servirebbe
-            if lento(e):
+            if cup_http.tipo_errore(e) == "timeout":  # anche a pagina iniziata (per requests ConnectionError)
                 scaduta, lenta = True, pazienza  # quella risposta ci avrebbe messo almeno tanto
                 if pid is not None and not paziente:  # una prenotazione aspetta gia' il massimo
                     self.pazienza[pid] = min(ATTESA_MAX, round(pazienza * 1.5))
             raise
         finally:
-            self.ultimo_portale = time.time()
+            self.ultimo_portale = self.battito = time.time()
+            if riuscita:
+                self.ultimo_ok, self.primo_ko, self.ko_di_fila = self.ultimo_portale, None, 0
+            elif guasto:  # per la sorveglianza contano solo i guasti del portale, non le risposte applicative
+                self.primo_ko, self.ko_di_fila = self.primo_ko or inizio, self.ko_di_fila + 1
             lenta = round(max(lenta, cup_http.PIU_LENTA), 1)
             if cup_http.DIARIO:  # solo conteggi e id di form e pulsanti: per capire i flussi ancora da osservare
                 log.info("portale %s %s: %s", f"pratica {pid}" if pid is not None else "ricerca", fn.__name__,
@@ -572,8 +657,31 @@ class Bot:
             self.metriche.append((inizio, self.ultimo_portale - inizio, riuscita, lenta, scaduta))
             try:  # sopravvive ai riavvii
                 self.store.metrica(inizio, self.ultimo_portale - inizio, riuscita, lenta, scaduta)
+                self.store.metrica_passi(list(cup_http.RICHIESTE))
             except Exception as e:
                 log.warning("metrica non salvata: %s", type(e).__name__)
+
+    def sorveglia(self, ora=None):
+        """Un solo avviso all'amministratore quando il portale fallisce in tutte le sessioni da piu' di
+        GUASTO_MIN minuti, o nessuna sessione riesce da GUASTO_MIN minuti mentre ci sono controlli in ritardo;
+        poi un avviso quando torna normale. Solo testo generico, mai dati degli utenti."""
+        ora = ora or time.time()
+        if self.guasto is None:
+            fallisce = self.primo_ko is not None and ora - self.primo_ko > GUASTO_MIN * 60
+            fermo = ora - self.ultimo_ok > GUASTO_MIN * 60 and bool(self.store.due(ora - RITARDO_GUASTO))
+            if fallisce or fermo:
+                self.guasto = ora
+                log.warning("sorveglianza: portale in difficolta' (%d sessioni fallite di fila)", self.ko_di_fila)
+                self.alert_admin(f"Portale CUP: nessuna sessione riuscita da {(ora - self.ultimo_ok) / 60:.0f} minuti"
+                                 + (f" ({self.ko_di_fila} fallite di fila)." if self.ko_di_fila else
+                                    ", con controlli in ritardo.") +
+                                 " Ti riscrivo quando torna normale.")
+        elif self.ultimo_ok >= self.guasto:
+            durata = (self.ultimo_ok - self.guasto) / 60 + GUASTO_MIN
+            self.guasto = None
+            log.info("sorveglianza: portale di nuovo normale")
+            self.alert_admin(f"✅ Portale CUP di nuovo normale: una sessione e' riuscita alle "
+                             f"{orario(self.ultimo_ok):%H:%M} (guasto di circa {durata:.0f} minuti).")
 
     # --- controllo periodico ------------------------------------------------------------
     def intervallo_di(self, chat_id):
@@ -643,7 +751,7 @@ class Bot:
                           "".join(traceback.format_tb(e.__traceback__)))
                 self.alert_admin(f"Errore imprevisto nel controllo di {uid(chat)}: {type(e).__name__}")
             p["errori"] = p.get("errori", 0) + 1
-            p["ultimo"] = {"ts": time.time(), "testo": f"errore: {e}"}
+            p["ultimo"] = {"ts": time.time(), "testo": f"errore: {cup_http.descrivi(e)}"}
             p["riassunto"] = {**(p.get("riassunto") or {}), "ts": time.time(), "errore": True}
             # errori di fila: controlli sempre piu' radi (fino a MAX_RALLENTA), per non insistere su un portale
             # in difficolta' e riprovare quando e' piu' probabile che risponda. Al primo successo, ritmo normale
@@ -660,10 +768,12 @@ class Bot:
             log.info("controllo %s/%s: errore %d: %s (prossimo tra %d min)", uid(chat), p["id"],
                      p["errori"], type(e).__name__, (p.get("prossimo", dopo) - time.time()) / 60)
             if manuale or p["errori"] in AVVISA_ERRORI:
-                if lento(e):
+                if cup_http.tipo_errore(e) == "timeout":
                     motivo = "il portale CUP e' lento e non risponde in tempo"
+                elif isinstance(e, requests.RequestException) and cup_http.sovraccarico(e):
+                    motivo = "il portale CUP e' sovraccarico e non risponde"
                 elif isinstance(e, requests.RequestException):
-                    motivo = "il portale CUP non risponde"
+                    motivo = "il portale CUP ha dato una risposta inattesa"
                 else:
                     motivo = str(e)
                 self.dire(p, f"⚠️ {motivo[0].upper()}{motivo[1:]}" + (
@@ -722,7 +832,8 @@ class Bot:
                 self.dire(p, f"⚡ Conferma automatica: ho trovato una data"
                              f"{'' if nuova else ' nei giorni che vuoi' if piu_tardi else ' prima'}.\n\n" + descrivi(res) +
                           "\n\n" + self.regola(p))
-                if self.prenota(p, slot, res["sessione"], automatica=True) != "fallita":
+                if self.prenota(p, slot, res["sessione"], automatica=True,
+                                trovata=self.sessioni.get(p["id"], {}).get("ts")) != "fallita":
                     return res
                 p = self.store.get(p["id"])
                 if p and p.get("auto") and nuova and " + " in (res.get("cosa") or ""):
@@ -786,6 +897,42 @@ class Bot:
             except Exception as e:
                 log.warning("registro sedi non aggiornato: %s", type(e).__name__)
 
+    def riprendi_in_corso(self):
+        """All'avvio: una prenotazione rimasta "in corso" (crash o riavvio). Se la Conferma era partita
+        (fase conferma o verifica) l'esito e' incerto: lo chiude il prossimo controllo, anticipato. Altrimenti
+        la Conferma non e' mai stata inviata: la prenotazione non e' cambiata."""
+        try:
+            pratiche = [p for p in self.store.tutte() if p.get("in_corso")]
+        except Exception as e:
+            log.warning("prenotazioni in corso non lette: %s", type(e).__name__)
+            return
+        for p in pratiche:
+            ic = p.pop("in_corso")
+            q, luogo = fmt(datetime.fromisoformat(ic["quando"])), luogo_di(ic)
+            dove = f"📅 {q}\n📍 {luogo}"
+            if ic.get("fase") in ("conferma", "verifica"):
+                p["incerta"] = incerta_da(ic)
+                if p["stato"] == "attivo":
+                    p["prossimo"] = min(p.get("prossimo") or float("inf"), time.time() + 60)
+                self.salva(p, "in_corso", "incerta", "prossimo")
+                cosa = "la prenotazione" if ic.get("nuova") else "lo spostamento"
+                self.dire(p, f"🚨 Il bot si e' riavviato mentre confermava {cosa}:\n{dove}\n\nLa conferma "
+                             "potrebbe essere arrivata al portale: lo verifico al prossimo controllo, fra pochi minuti."
+                             f" Intanto puoi controllare su {cup_http.LISTA_URL} o al "
+                             f"{cup_http.CALL_CENTER}.")
+                if p["stato"] != "attivo":
+                    self.dire(p, "I controlli di questa ricetta sono in pausa: riprendili (▶️ Riprendi) per "
+                                 "verificare com'e' andata.")
+                self.sospendi_auto(p)
+                self.alert_admin(f"Riavvio durante una conferma: esito incerto per {uid(p['chat_id'])}")
+            else:
+                self.salva(p, "in_corso")
+                self.dire(p, f"ℹ️ Il bot si e' riavviato prima di confermare:\n{dove}\n\nLa prenotazione non e' "
+                             "cambiata.")
+            log.info("prenotazione in corso %s/%s ripresa dopo il riavvio: fase %s", uid(p["chat_id"]), p["id"],
+                     ic.get("fase"))
+            self.aggiorna_pannello(p["chat_id"])
+
     def semina_sedi(self):
         """All'avvio: nel registro anche le sedi gia' salvate nelle ricette (controlli di versioni precedenti).
         Un errore non ferma l'avvio: il registro si riempie comunque con i controlli."""
@@ -842,10 +989,63 @@ class Bot:
             self.dire(p, "Questa data è alla stessa ora della prenotazione attuale: non la sposto.")
             return "fallita"
         self.scarta(p["id"])
-        return self.prenota(p, slot, s["sessione"], libera=True)
+        return self.prenota(p, slot, s["sessione"], libera=True, trovata=s["ts"])
 
-    def prenota(self, p, slot, sessione, automatica=False, libera=False):
-        """Ritorna "ok", "fallita" o "incerta" (conferma inviata ma esito non verificato)."""
+    def prenota(self, p, slot, sessione, automatica=False, libera=False, trovata=None):
+        """Ritorna "ok", "fallita" o "incerta" (conferma inviata ma esito non verificato). Durante la
+        prenotazione p["in_corso"] dice a pannello e Mini App cosa sta succedendo; alla fine si toglie sempre.
+        trovata: quando il controllo ha trovato la data (per i tempi nella pagina dell'amministratore)."""
+        inizio, esito, finita = time.time(), "fallita", False
+        cup_http.TEMPI.clear()  # le riempie cup_http.prenota: vuote se non si arriva al portale
+        try:
+            esito = self._prenota(p, slot, sessione, automatica, libera)
+            finita = True
+            return esito
+        except Exception:
+            finita = True
+            raise
+        finally:
+            # di solito gia' tolta appena finita la sessione: qui per ogni imprevisto. Se il processo si ferma
+            # (KeyboardInterrupt, SystemExit) dopo la partenza della Conferma resta nel database: al riavvio
+            # riprendi_in_corso la trasforma in esito incerto
+            if finita or (p.get("in_corso") or {}).get("fase") not in ("conferma", "verifica"):
+                self.togli_in_corso(p)
+            if cup_http.TEMPI:
+                try:
+                    self.store.tempo_prenotazione(inizio, esito, round(inizio - trovata, 1) if trovata else None,
+                                                  dict(cup_http.TEMPI))
+                except Exception as e:
+                    log.warning("tempi della prenotazione non salvati: %s", type(e).__name__)
+
+    def togli_in_corso(self, p):
+        """Fine della sessione di prenotazione: via p["in_corso"] (anche dal pannello). Ritorna com'era ({})."""
+        ic = p.pop("in_corso", None)
+        if ic:
+            try:
+                self.salva(p, "in_corso")
+                self.aggiorna_pannello(p["chat_id"])
+            except Exception as e:
+                log.warning("prenotazione in corso non tolta: %s", type(e).__name__)
+        return ic or {}
+
+    def fase(self, p, nome):
+        """Callback di cup_http.prenota: aggiorna la fase della prenotazione in corso. Il pannello in chat si
+        aggiorna solo dalla verifica: prima della Conferma ogni secondo conta (Telegram puo' essere lento)."""
+        if not p.get("in_corso"):
+            return
+        vecchia = p["in_corso"]
+        p["in_corso"] = {**vecchia, "fase": nome, "ts": time.time()}
+        try:
+            salvata = self.salva(p, "in_corso")
+        except Exception:
+            salvata = None
+        if not salvata:  # per "conferma" cup_http non invia la Conferma: lo stato deve dire il vero
+            p["in_corso"] = vecchia
+            raise cup_http.CupError("stato della prenotazione non salvato")
+        if nome == "verifica":
+            self.aggiorna_pannello(p["chat_id"], rapido=True)
+
+    def _prenota(self, p, slot, sessione, automatica=False, libera=False):
         chat = p["chat_id"]
         self.sessioni.pop(p["id"], None)  # la sessione va al Riepilogo: nessun'altra data la riusa
         nuova = da_prenotare(p)
@@ -859,10 +1059,24 @@ class Bot:
             return "fallita"
         # calendario appena riletto: un'offerta aperta prima di cambiarlo non lo scavalca
         calendario = None if libera else calendario_di(attuale_db)
+        p["in_corso"] = {"quando": slot.quando.isoformat(), "luogo": slot.luogo.sede,
+                         "ambulatorio": slot.luogo.ambulatorio, "indirizzo": slot.luogo.indirizzo,
+                         "fase": "riepilogo", "ts": time.time(), "nuova": nuova}
+        # la Mini App lo legge subito dal database; il pannello in chat si aggiorna dalla verifica (Telegram
+        # puo' metterci fino a 40 s, e prima della Conferma ogni secondo conta)
+        self.salva(p, "in_corso")
+        ic = {}
         try:
-            esito = self.portale(cup_http.prenota, p["cf"], p["nre"], slot, sessione=sessione,
-                                 zona=zona_di(p), dry_run=self.prova, libera=libera, nuova=nuova,
-                                 calendario=calendario, pid=p["id"], paziente=True)
+            try:
+                esito = self.portale(cup_http.prenota, p["cf"], p["nre"], slot, sessione=sessione,
+                                     zona=zona_di(p), dry_run=self.prova, libera=libera, nuova=nuova,
+                                     calendario=calendario, fase=lambda nome: self.fase(p, nome),
+                                     pid=p["id"], paziente=True)
+            except Exception:
+                ic = self.togli_in_corso(p)  # prima di ogni messaggio: scheda e pannello non la mostrano piu'
+                raise
+            # (KeyboardInterrupt, SystemExit: in_corso resta, vedi prenota)
+            ic = self.togli_in_corso(p)
         except cup_http.GiaPrenotata as e:
             self.dire(p, f"❌ Non prenotata: {e}.")
             try:
@@ -883,16 +1097,32 @@ class Bot:
             log.info("prenotazione %s/%s fallita: Separerebbe", uid(chat), p["id"])
             return "fallita"
         except (cup_http.CupError, requests.RequestException) as e:
-            urgente = "Conferma inviata" in str(e)
-            self.dire(p, ("🚨 " if urgente else ("❌ Non prenotata: " if nuova else "❌ Non spostata: ")) + str(e))
+            # la Conferma e' partita (lo dice cup_http o la fase): mai "non spostata"
+            urgente = "Conferma inviata" in str(e) or ic.get("fase") in ("conferma", "verifica")
+            if urgente and "Conferma inviata" not in str(e):
+                self.dire(p, f"🚨 Conferma inviata per il {fmt(slot.quando)}, {titolo(slot.luogo.sede)}, ma l'esito "
+                             f"non e' verificato ({cup_http.descrivi(e)}). Lo verifico al prossimo controllo; intanto "
+                             f"controlla su {cup_http.LISTA_URL} o al {cup_http.CALL_CENTER}.")
+            elif isinstance(e, requests.RequestException):
+                # prima della Conferma: niente e' cambiato. Il testo di requests ha l'indirizzo, qui non serve
+                motivo = ("il portale CUP e' sovraccarico e non ha risposto in tempo" if cup_http.sovraccarico(e)
+                          else "il portale CUP ha dato una risposta inattesa")
+                self.dire(p, f"❌ Non {'prenotata' if nuova else 'spostata'} al {fmt(slot.quando)}, "
+                             f"{titolo(slot.luogo.sede)}: {motivo}. La prenotazione resta com'era.")
+            else:
+                self.dire(p, ("🚨 " if urgente else ("❌ Non prenotata: " if nuova else "❌ Non spostata: ")) + str(e))
             if urgente:
                 self.alert_admin(f"Esito incerto dopo la conferma per {uid(chat)}")
                 self.sospendi_auto(p)
-                # il prossimo controllo che legge la prenotazione dice com'e' andata
-                p["incerta"] = {"quando": slot.quando.isoformat(), "luogo": slot.luogo.key()}
+                # il prossimo controllo che legge la prenotazione dice com'e' andata; intanto scheda e pannello
+                # mostrano la data nuova come "da verificare", senza toccare p["attuale"]
+                p["incerta"] = incerta_da(ic or {"quando": slot.quando.isoformat(), "luogo": slot.luogo.sede,
+                                                 "ambulatorio": slot.luogo.ambulatorio,
+                                                 "indirizzo": slot.luogo.indirizzo})
                 self.salva(p, "incerta")
+                self.aggiorna_pannello(chat)
             # il motivo (date, sedi, passi del portale) serve a capire i flussi nuovi: mai CF e NRE nel log
-            motivo = str(e)
+            motivo = cup_http.descrivi(e)
             for dato in (p.get("cf"), p.get("nre")):
                 motivo = motivo.replace(dato, "***") if dato else motivo
             # anche se il portale li riscrive a modo suo: qualunque cosa abbia la forma di un CF o di un NRE
@@ -908,6 +1138,10 @@ class Bot:
                          f"{cup_http.LISTA_URL} o al {cup_http.CALL_CENTER}.")
             self.alert_admin(f"Errore imprevisto nella prenotazione di {uid(chat)}: {type(e).__name__}")
             self.sospendi_auto(p)
+            if ic.get("fase") in ("conferma", "verifica"):  # la Conferma era partita: la chiude un controllo
+                p["incerta"] = incerta_da(ic)
+                self.salva(p, "incerta")
+                self.aggiorna_pannello(chat)
             return "incerta"
         log.info("prenotazione %s/%s riuscita%s%s", uid(chat), p["id"], " (automatica)" if automatica else "",
                  " (prova)" if self.prova else "")
@@ -1034,7 +1268,8 @@ class Bot:
             self.chiedi_cf(p)
             return
         except (cup_http.CupError, requests.RequestException) as e:
-            self.send(chat, f"Il portale CUP non risponde ({e}). Rimandami il numero ricetta tra qualche minuto.")
+            self.send(chat, f"Il portale CUP non risponde ({cup_http.descrivi(e)}). Rimandami il numero ricetta tra "
+                            "qualche minuto.")
             return
         altre = [x for x in self.store.della_chat(chat) if x["id"] != p["id"]]
         p.update(nre=nre, attuale=pren_to_dict(att) if att else senza_prenotazione(cosa),
@@ -1336,6 +1571,8 @@ class Bot:
                      f"📅 {fmt(att.quando)}",
                      f"📍 {titolo(att.luogo.sede)}, {indirizzo(att.luogo)}",
                      f"🔎 Cerco: {descr_zona(zona_di(p), att)}"]
+        if riga_sospesa(p):
+            righe.insert(2 if da_prenotare(p) else 3, riga_sospesa(p))
         if cup_http.estensioni(zona_di(p)):
             righe.append("     (allargo la ricerca a tutto il Piemonte, poi filtro)")
         righe.append(f"⚡ Prenoto da solo: {auto_descr(p)}")
@@ -1387,10 +1624,17 @@ class Bot:
         testo += sotto
         return testo, righe
 
-    def aggiorna_pannello(self, chat, nuovo=False):
-        """Aggiorna il messaggio fissato; con nuovo=True lo rimanda in fondo alla chat e lo fissa di nuovo."""
+    def aggiorna_pannello(self, chat, nuovo=False, rapido=False):
+        """Aggiorna il messaggio fissato; con nuovo=True lo rimanda in fondo alla chat e lo fissa di nuovo.
+        rapido: durante una prenotazione, solo la modifica sul posto e al massimo 5 secondi di attesa di
+        Telegram (se non riesce, il pannello si aggiorna a fine prenotazione)."""
         testo, righe = self.testo_pannello(chat)
         mid = self.store.pannello(chat)
+        if rapido:
+            if mid and testo:
+                self.tg("editMessageText", attesa_tg=5, chat_id=chat, message_id=mid, text=testo[:4000],
+                        reply_markup={"inline_keyboard": righe or []})
+            return
         if not testo:
             if mid:
                 self.tg("unpinChatMessage", chat_id=chat, message_id=mid)
@@ -1664,7 +1908,7 @@ class Bot:
         if p["stato"] not in ("attivo", "pausa"):
             self.dire(p, "Registrazione non completa: non posso prenotare.")
             return
-        self.prenota(p, o["slots"][int(indice)], o["sessione"])
+        self.prenota(p, o["slots"][int(indice)], o["sessione"], trovata=o["ts"])
 
     def cerca_da_app(self, chat, pid, token, cf, nre, nome, modo, chiesta=0.0, consenso=False):
         """Nuova ricetta (modo "nuova") o cambio di ricetta (modo "modifica") chiesti dalla Mini App.
@@ -1859,6 +2103,8 @@ class Bot:
         log.info("Bot @%s avviato%s", me["result"]["username"], " in MODALITA' PROVA" if self.prova else "")
         while True:
             try:
+                self.battito = time.time()
+                self.sorveglia()
                 self.pulizia()
                 self.esegui_coda()
                 fatto = self.controllo_pianificato()
@@ -1885,6 +2131,7 @@ def main():
               admin_intervallo=env_int("ADMIN_INTERVALLO_MIN", 0) or None, max_pratiche=env_int("MAX_PRATICHE", 0),
               webapp_url=os.environ.get("WEBAPP_URL", "").strip())
     bot.semina_sedi()
+    bot.riprendi_in_corso()
     if bot.webapp_url:
         import webapp
         webapp.avvia(bot, os.environ.get("DB_PATH", "data/cup.db"), os.environ.get("CUP_BOT_KEY"),

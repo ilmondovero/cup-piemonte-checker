@@ -40,6 +40,21 @@ AREA_INCOMPLETA = False  # "Estendi area" scaduto dall'ultimo azzeramento: le da
 # passi della sessione in corso nei flussi ancora da osservare (prenotazione nuova, piu' prestazioni): solo
 # conteggi, nomi di sezioni e id di form e pulsanti, mai dati personali. Il bot li scrive nel log e li azzera
 DIARIO = collections.deque(maxlen=50)
+# passo del flusso in corso (elenco, appuntamenti, estendi, ricerca, riepilogo, conferma, verifica): ogni
+# richiesta vale per il suo passo, con il timeout imparato per quel passo (ATTESE, che il bot imposta a ogni
+# sessione; un passo che non c'e' usa LENTO)
+PASSO = "elenco"
+ATTESE = {}
+# (ora, passo, secondi, esito, codice HTTP) di ogni richiesta: esito "ok", "timeout", "sovraccarico" o
+# "inattesa". Solo tempi e codici, mai indirizzi o dati. Il bot le salva e le azzera a ogni sessione
+RICHIESTE = collections.deque(maxlen=500)
+ULTIMA = 0.0  # epoch dell'ultima risposta (o errore) del portale: un ciclo lento ma vivo non sembra fermo
+TEMPI = {}  # fasi dell'ultima prenotazione: {"elenco": secondi, ...} (vedi prenota)
+# verifica dopo la Conferma: pause crescenti prima di ogni tentativo, e al massimo tanti secondi in tutto
+VERIFICA_PAUSE = (2, 5, 10, 20, 40)
+VERIFICA_MAX = 180
+VERIFICA_MIN = 30  # secondi: con meno tempo rimasto un altro tentativo non avrebbe senso
+SCADENZA = None  # time.monotonic() entro cui finisce la verifica in corso: ogni sua richiesta aspetta al massimo fin li'
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36"
 
 L = "_listaprenotazioni_WAR_cupprenotazione_:prescrizioniForm"
@@ -62,6 +77,36 @@ NRE_RE = re.compile(r"^[0-9A-Z]{15}$")
 
 class CupError(Exception):
     pass
+
+
+def tipo_errore(e):
+    """"timeout" (il portale non risponde in tempo), "sovraccarico" (502/503/504, connessione rifiutata o
+    caduta: si riprova) o "inattesa" (altri codici 4xx/5xx, altre eccezioni)."""
+    if isinstance(e, requests.ReadTimeout) or (
+            isinstance(e, requests.ConnectionError) and "read timed out" in str(e).lower()):
+        return "timeout"
+    if isinstance(e, requests.HTTPError):
+        return "sovraccarico" if _codice(e) in (502, 503, 504) else "inattesa"
+    if isinstance(e, (requests.ConnectionError, requests.Timeout)):
+        return "sovraccarico"
+    return "inattesa"
+
+
+def sovraccarico(e):
+    return tipo_errore(e) in ("timeout", "sovraccarico")
+
+
+def _codice(e):
+    return getattr(getattr(e, "response", None), "status_code", None)
+
+
+def descrivi(e):
+    """Un errore del portale in breve e senza l'indirizzo (requests lo mette nel testo, con i parametri):
+    "HTTP 504, portale sovraccarico", "ReadTimeout, portale sovraccarico", "HTTP 403, risposta inattesa"."""
+    if not isinstance(e, requests.RequestException):
+        return str(e) if isinstance(e, CupError) else type(e).__name__
+    cosa = f"HTTP {_codice(e)}" if _codice(e) else type(e).__name__
+    return f"{cosa}, {'risposta inattesa' if tipo_errore(e) == 'inattesa' else 'portale sovraccarico'}"
 
 
 class NonTrovata(CupError):
@@ -252,10 +297,8 @@ class _Form:
         data = {form: form, "javax.faces.encodedURL": self.enc, "ice.window": self.win, "ice.view": self.view}
         data.update(fields)
         data["javax.faces.ViewState"] = self.vs
-        r = self.s.post(self.enc, data=data, timeout=_attesa(), headers={
-            "Faces-Request": "partial/ajax", "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"})
-        r.raise_for_status()
-        return r.text
+        return _chiama(self.s.post, self.enc, data=data, headers={
+            "Faces-Request": "partial/ajax", "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"}).text
 
 
 def _event(source, event=None, param=True):
@@ -273,8 +316,55 @@ def _event(source, event=None, param=True):
 
 def _attesa():
     """Timeout delle richieste: 20 s per collegarsi, TLS compreso (se il portale e' giu' non serve aspettare
-    di piu'), LENTO per la risposta."""
-    return (20, LENTO)
+    di piu'), per la risposta quello imparato per il passo in corso (LENTO se non c'e')."""
+    return _limiti()[0]
+
+
+def _limiti():
+    """(timeout, ridotto): nella verifica dopo la Conferma nessuna richiesta va oltre SCADENZA; ridotto dice
+    che il timeout e' stato accorciato per questo (un timeout cosi' non dice nulla sul portale)."""
+    connessione, risposta = 20, ATTESE.get(PASSO, LENTO)
+    if PASSO == "verifica" and SCADENZA is not None:
+        resta = SCADENZA - time.monotonic()
+        if resta < risposta or resta < connessione:
+            return (min(connessione, max(resta, 0)), min(risposta, max(resta, 0))), True
+    return (connessione, risposta), False
+
+
+def _passo(nome):
+    global PASSO
+    PASSO = nome
+
+
+def _chiama(metodo, url, **kw):
+    """Una richiesta al portale nel passo in corso: ne registra tempo ed esito in RICHIESTE e, se fallisce,
+    scrive nel DIARIO passo, codice HTTP e tipo di errore (mai l'indirizzo, che puo' avere parametri).
+    Anche le pagine (GET) con un codice di errore sono errori: non contengono i moduli del portale."""
+    global ULTIMA
+    passo, (attesa, ridotto), inizio = PASSO, _limiti(), time.monotonic()
+    try:
+        if min(attesa) < 1:  # la verifica non ha piu' tempo: nessuna richiesta
+            raise requests.ReadTimeout("tempo della verifica finito")
+        r = metodo(url, timeout=attesa, **kw)
+        r.raise_for_status()
+    except requests.RequestException as e:
+        tipo = tipo_errore(e)
+        secondi = attesa[1] if tipo == "timeout" else time.monotonic() - inizio
+        if not (ridotto and tipo == "timeout"):  # un timeout accorciato apposta non insegna nulla sul portale
+            RICHIESTE.append((time.time(), passo, round(secondi, 1), tipo, _codice(e)))
+        DIARIO.append(f"{passo}: {descrivi(e)}" + (f" dopo {attesa[1]:.0f} s" if tipo == "timeout" else "") +
+                      (" (limite della verifica)" if ridotto and tipo == "timeout" else ""))
+        raise
+    finally:
+        ULTIMA = time.time()
+    elapsed = getattr(r, "elapsed", None)
+    secondi = elapsed.total_seconds() if elapsed is not None else time.monotonic() - inizio
+    RICHIESTE.append((time.time(), passo, round(secondi, 1), "ok", getattr(r, "status_code", None)))
+    return r
+
+
+def _get(session, url):
+    return _chiama(session.get, url).text
 
 
 def _misura(r, *args, **kwargs):
@@ -299,10 +389,12 @@ class CupSession:
         self.s.hooks["response"].append(_misura)
         self.search = {L + ":CFInput": cf, L + ":IDSearchTypeInput_input": "nre-label", L + ":IDSearchValueInput": nre}
         self.slots = []
+        self.passo_elenco = "elenco"  # "verifica" per la sessione che controlla l'esito di una Conferma
 
     def attuale(self):
         """La prenotazione in stato PRENOTATO per questa ricetta."""
-        self.lista = _Form(self.s, self.s.get(LISTA_URL, timeout=_attesa()).text, L)
+        _passo(self.passo_elenco)
+        self.lista = _Form(self.s, _get(self.s, LISTA_URL), L)
         src = L + ":filterPrescriptionNavigate"
         self.lista_xml = self.lista.post({**self.search, "javax.faces.source": src, "javax.faces.partial.event": "click",
                                           "javax.faces.partial.execute": f"{src} {L}", "javax.faces.partial.render": "@all",
@@ -341,8 +433,9 @@ class CupSession:
         sposta = re.search(r'id="(%s:[^"]*:%d:spostaButton)"' % (re.escape(L), self.riga), self.lista_xml)
         if not sposta:
             raise CupError("Pulsante 'Sposta appuntamento' non presente")
+        _passo("appuntamenti")
         self.lista.post({**self.search, **_event(sposta.group(1), "activate")})
-        page = self.s.get(RICETTA_URL, timeout=_attesa()).text  # qui il portale calcola le disponibilita': puo' essere lento
+        page = _get(self.s, RICETTA_URL)  # qui il portale calcola le disponibilita': puo' essere lento
         if "Appuntamenti Proposti" not in page:
             raise CupError("Il portale non ha aperto la pagina degli appuntamenti dopo 'Sposta'")
         self.modo = "sposta"
@@ -355,13 +448,14 @@ class CupSession:
         url = html.unescape(redirect.group(1)) if redirect else RICETTA_URL
         if not url.startswith(CUP + "/"):
             raise CupError("Il portale ha indicato un indirizzo esterno: non proseguo")
-        return self.s.get(url, timeout=_attesa()).text  # verso gli appuntamenti il portale puo' essere lento
+        return _get(self.s, url)  # verso gli appuntamenti il portale puo' essere lento
 
     def ricetta(self):
         """Passo "Ricerca": codice fiscale + NRE e "Prosegui", come il browser (il pulsante visibile fa
         partire il comando nascosto epPrestazioniForwardNavigate). Non apre gli appuntamenti: non blocca
         date. GiaPrenotata se la ricetta ha gia' un appuntamento, NonTrovata se il portale la rifiuta."""
-        self.ric = _Form(self.s, self.s.get(RICETTA_URL, timeout=_attesa()).text, R)
+        _passo("ricerca")
+        self.ric = _Form(self.s, _get(self.s, RICETTA_URL), R)
         src = R + ":epPrestazioniForwardNavigate"
         xml = self.ric.post({R + ":CFInput": self.cf, R + ":nreInput0": self.nre, "g-recaptcha-token": "",
                              "javax.faces.source": src, "javax.faces.partial.event": "click",
@@ -397,6 +491,7 @@ class CupSession:
         """Dal passo "Prestazioni" agli Appuntamenti: "Avanti" col form com'e', come fa una persona.
         Il passo non l'abbiamo mai visto dal vivo ("Sposta" lo salta): se non si riconosce un pulsante
         per andare avanti ci si ferma, e l'errore descrive la pagina (senza dati personali)."""
+        _passo("appuntamenti")
         for _ in range(3):
             if "Appuntamenti Proposti" in page or "Appuntamenti Disponibili" in page:
                 return page
@@ -430,6 +525,7 @@ class CupSession:
         """Pagina Appuntamenti (la stessa per "Sposta" e per una prenotazione nuova): proposta e
         "Appuntamenti Disponibili", estendendo l'area se richiesto."""
         self._carrello(page)
+        _passo("appuntamenti")
         self.app = _Form(self.s, page, A)
         prop_html = page[page.find("Appuntamenti Proposti"):]
         q = _date(_text(prop_html[:6000]))
@@ -450,6 +546,7 @@ class CupSession:
                 if "Appuntamenti Disponibili" in _text(xml):
                     disp_html = xml[xml.find("Appuntamenti Disponibili"):]
                     break
+        _passo("estendi")
         for passo in range(estendi if disp_html else 0):
             area = re.search(r'id="(%s:nextArea)"' % re.escape(A), disp_html)
             if not area:
@@ -461,7 +558,7 @@ class CupSession:
                 # il portale e' lento proprio ad allargare l'area: valgono le date gia' lette (proposta e aree
                 # precedenti) invece di perdere tutto il controllo; il bot al giro dopo aspetta di piu'
                 global AREA_INCOMPLETA, PIU_LENTA
-                AREA_INCOMPLETA, PIU_LENTA = True, max(PIU_LENTA, LENTO)
+                AREA_INCOMPLETA, PIU_LENTA = True, max(PIU_LENTA, _attesa()[1])
                 DIARIO.append(f"estendi area: timeout al passo {passo + 1} di {estendi}, tengo le date lette")
                 break
             if "Appuntamenti Disponibili" not in _text(xml):
@@ -508,6 +605,7 @@ class CupSession:
         if not slot.seleziona_id and not slot.proposta:
             raise CupError("Questa data non ha un pulsante 'Seleziona': non posso sceglierla")
         osserva = self.modo == "nuova" or self.n_prestazioni > 1
+        _passo("riepilogo")
         if slot.seleziona_id:
             xml = self.app.post({**GEO, **_event(slot.seleziona_id)})
             errori = _errori(xml)
@@ -520,7 +618,7 @@ class CupSession:
         url = html.unescape(redirect.group(1)) if redirect else None
         if url and not url.startswith(CUP + "/"):
             raise CupError("Il portale ha indicato un indirizzo esterno: non proseguo")
-        page = self.s.get(url, timeout=_attesa()).text if url else xml
+        page = _get(self.s, url) if url else xml
         if "Riepilogo" not in page or RIEPILOGO + ":riepilogo-nextButton-bottom" not in page:
             errori = _errori(xml) or (_errori(page) if url else [])  # dopo un redirect, sulla pagina raggiunta
             if osserva:
@@ -543,6 +641,7 @@ class CupSession:
         return t, _date(m.group(0)), t[m.end():m.end() + 250], page
 
     def conferma(self, riepilogo_page):
+        _passo("conferma")
         form = _Form(self.s, riepilogo_page, RIEPILOGO)
         campi = {k: v for k, v in _form_fields(riepilogo_page, RIEPILOGO).items()
                  if k not in (RIEPILOGO, "javax.faces.encodedURL", "ice.window", "ice.view", "javax.faces.ViewState")}
@@ -801,22 +900,36 @@ def _verifica_riepilogo(testo, data_riep, dopo_data, slot, cosa):
         raise CupError("Il riepilogo riporta un luogo diverso da quello scelto")
 
 
-def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=False, nuova=False, calendario=None):
-    """Come _prenota, e nel diario quanto e' durata ogni fase: per capire dove va il tempo di una prenotazione."""
+def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=False, nuova=False, calendario=None,
+            fase=None):
+    """Come _prenota, e nel diario (e in TEMPI) quanto e' durata ogni fase: per capire dove va il tempo di una
+    prenotazione. fase: funzione chiamata con "riepilogo", "conferma" (prima di inviarla: da li' l'esito puo'
+    essere incerto) e "verifica"; un suo errore non ferma la prenotazione."""
     tempi, inizio = [], [time.time()]
+    TEMPI.clear()
 
     def tappa(nome):
         ora = time.time()
         tempi.append(f"{nome} {ora - inizio[0]:.1f}s")
+        TEMPI[nome] = round(ora - inizio[0], 1)
         inizio[0] = ora
+
+    def avvisa(nome):
+        try:
+            if fase:
+                fase(nome)
+        except Exception as e:
+            DIARIO.append(f"fase {nome}: {type(e).__name__}")
+            if nome == "conferma":  # la Conferma non e' ancora partita: senza lo stato salvato non si invia
+                raise CupError("Non riesco a salvare lo stato della prenotazione: non confermo") from None
     try:
-        return _prenota(cf, nre, slot, sessione, zona, dry_run, libera, nuova, tappa, calendario)
+        return _prenota(cf, nre, slot, sessione, zona, dry_run, libera, nuova, tappa, calendario, avvisa)
     finally:
         tappa("fine")
         DIARIO.append("tempi: " + ", ".join(tempi))
 
 
-def _prenota(cf, nre, slot, sessione, zona, dry_run, libera, nuova, tappa, calendario=None):
+def _prenota(cf, nre, slot, sessione, zona, dry_run, libera, nuova, tappa, calendario=None, fase=lambda nome: None):
     """Sposta la prenotazione sullo slot. sessione: quella del controllo che ha trovato lo slot
     (lo tiene bloccato per noi); se manca o fallisce si riparte da una sessione nuova.
     Con dry_run si ferma al Riepilogo. Ritorna un messaggio; CupError se un controllo fallisce.
@@ -872,13 +985,14 @@ def _prenota(cf, nre, slot, sessione, zona, dry_run, libera, nuova, tappa, calen
             raise CupError(SOLO_PROPOSTA)  # prima di "Seleziona", che bloccherebbe la data
         return (s,) + cup.riepilogo(s)
 
+    fase("riepilogo")
     try:
         if sessione is None:
             raise CupError("nessuna sessione del controllo")
         cup = sessione
         s, testo, data_riep, dopo, page = arriva_al_riepilogo(cup)
     except (CupError, requests.RequestException) as e:
-        primo_errore = str(e)
+        primo_errore = descrivi(e)
         cup = CupSession(cf, nre)
         if nuova:
             cup.appuntamenti(cup.fino_agli_appuntamenti(cup.ricetta()), estendi=estensioni(zona))
@@ -926,29 +1040,43 @@ def _prenota(cf, nre, slot, sessione, zona, dry_run, libera, nuova, tappa, calen
     if dry_run:
         return f"PROVA: arrivato al Riepilogo di {s!r}, non confermo."
 
-    # da qui la Conferma e' partita: qualunque problema e' "esito incerto", mai "non spostata"
+    # da qui la Conferma e' partita: qualunque problema e' "esito incerto", mai "non spostata". La fase si
+    # segna PRIMA di inviarla: se il bot si ferma durante l'invio, al riavvio l'esito e' incerto, non "non fatta"
+    fase("conferma")
     nuova_att = None
     try:
         cup.conferma(page)
-        tappa("conferma")
     except Exception as e:
-        # nessuna risposta (timeout...): la Conferma puo' essere arrivata lo stesso, si verifica comunque.
+        # nessuna risposta (timeout, 504...): la Conferma puo' essere arrivata lo stesso, si verifica comunque.
         # Dal vivo (2026-09-28) la risposta e' scaduta dopo 180 s ma la prenotazione era fatta
-        DIARIO.append(f"conferma: {type(e).__name__}, verifico con una sessione nuova")
+        DIARIO.append(f"conferma: {descrivi(e)}, verifico con una sessione nuova")
+    tappa("conferma")
+    fase("verifica")
+    # verifica con pause crescenti (la prima dopo pochi secondi), in tutto al massimo VERIFICA_MAX: ogni
+    # richiesta aspetta la risposta quanto il passo "verifica", mai oltre SCADENZA (vedi _limiti)
+    global SCADENZA
+    SCADENZA = time.monotonic() + VERIFICA_MAX
     try:
-        for _ in range(3):
+        for pausa in VERIFICA_PAUSE:
+            if SCADENZA - time.monotonic() - pausa < VERIFICA_MIN:
+                break  # non c'e' piu' tempo per un tentativo sensato
+            time.sleep(pausa)
             try:
                 verifica = CupSession(cf, nre)
+                verifica.passo_elenco = "verifica"
                 nuova_att = verifica.attuale()
                 # una riga prenotata senza data leggibile potrebbe essere rimasta alla data vecchia
                 if verifica.n_prenotate <= len(verifica.prenotate) and _tutte_al_posto(
                         verifica.prenotate or [nuova_att], s, nomi, att.quando if len(insieme) > 1 else None):
+                    tappa("verifica")
                     return "Prenotazione fatta." if nuova else "Prenotazione spostata."
-            except (CupError, requests.RequestException):
-                pass
-            time.sleep(10)
+            except (CupError, requests.RequestException) as e:
+                DIARIO.append(f"verifica: {descrivi(e) if isinstance(e, requests.RequestException) else 'pagina non letta'}")
     except Exception:
         pass  # qualunque errore dopo la Conferma: esito incerto, sotto
+    finally:
+        SCADENZA = None
+    tappa("verifica")
     stato = f"al {nuova_att.quando:%d/%m/%Y %H:%M}" if nuova_att else "non verificabile"
     raise CupError(f"Conferma inviata, esito incerto: la prenotazione risulta {stato}. "
                    f"Controlla subito su {LISTA_URL} o al {CALL_CENTER}.")

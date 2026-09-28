@@ -822,3 +822,100 @@ def test_foglio_dove_comuni_ricetta_mai_prenotata(b, monkeypatch):
     assert "🏥 Poliambulatorio Nord" in riga_comune(t, "TORINO")  # vista nel controllo della ricetta nuova
     assert b.zone_viste[-1] == {"tipo": "comuni", "valore": ["TORINO", "MONCALIERI"]}
     assert "a Torino, Moncalieri" in get(app, "/ui/ricette")[2].decode()
+
+
+# --- prenotazione in corso, data da verificare, sorveglianza, rapporto guasti -------------------
+from datetime import datetime, timedelta  # noqa: E402
+
+from test_bot import ATT, inviati  # noqa: E402
+
+
+def test_scheda_in_corso_si_aggiorna_da_sola_solo_finche_serve(app):
+    b = app.bot
+    t = get(app, "/ui/ricette")[2].decode()
+    assert "data-in-corso" not in t and "da-verificare" not in t  # niente polling veloce senza motivo
+    pid = pratica(b)["id"]
+    quando = datetime.now() + timedelta(days=30)
+    b.store.modifica(pid, lambda p: p.update(in_corso={
+        "quando": quando.replace(second=0, microsecond=0).isoformat(), "luogo": "OIRM - REGINA MARGHERITA",
+        "ambulatorio": "AMB 2", "indirizzo": "Piazza Polonia, 94 - TORINO (TO)", "fase": "verifica", "ts": time.time()}))
+    t = get(app, "/ui/ricette")[2].decode()
+    assert t.count("data-in-corso") == 1
+    assert f"Sposto a {botmod.fmt(quando)}" in t and "Oirm - Regina Margherita" in t and "Piazza Polonia" in t
+    assert "Conferma inviata, verifico sul portale…" in t
+    assert botmod.fmt(ATT.quando).split(" ore ")[0].split(" ")[1] in t  # la prenotazione resta quella di prima
+    # esito incerto: la data nuova "da verificare", senza aggiornamenti ogni 5 s
+    b.store.modifica(pid, lambda p: (p.update(incerta=botmod.incerta_da(p.pop("in_corso")))))
+    t = get(app, "/ui/ricette")[2].decode()
+    assert "data-in-corso" not in t and 'class="da-verificare"' in t
+    assert f"Da verificare: {botmod.fmt(quando)}" in t and "Oirm - Regina Margherita" in t
+    js = (webapp.STATIC / "app.js").read_text(encoding="utf-8")
+    assert "[data-in-corso]" in js and "5000" in js
+
+
+def test_admin_rapporto_guasti(app):
+    b = app.bot
+    b.admin = "1"
+    ora = time.time()
+    b.store.metrica_passi(
+        [(ora - 60, "elenco", 1.2, "ok", 200), (ora - 50, "elenco", 3.0, "ok", 200),
+         (ora - 40, "elenco", 20.0, "sovraccarico", 504), (ora - 30, "estendi", 150.0, "timeout", None),
+         (ora - 20, "conferma", 2.0, "inattesa", 403), (ora - 3 * 86400, "riepilogo", 9.0, "sovraccarico", 502)])
+    b.store.tempo_prenotazione(ora - 100, "incerta", 42.0, {"elenco": 1.2, "riepilogo": 7.0, "conferma": 180.0,
+                                                            "verifica": 191.3, "fine": 0.0})
+    t = get(app, "/ui/admin", chat=1)[2].decode()
+    assert "Rapporto guasti" in t and 'aria-pressed="true">Ultime 24 ore' in t
+    assert "Elenco prenotazioni" in t and "3 richieste · sovraccarico 1" in t and "tipico 3,0 s, massimo 3,0 s" in t
+    assert "timeout 1" in t and "risposta inattesa 1" in t and "Riepilogo" not in t.split("Rapporto guasti")[1].split(
+        "Errori per ora")[0]  # di 3 giorni fa: solo nella settimana
+    assert "<svg" in t and "Errori per ora del giorno" in t and "errori su" in t
+    assert "Ultime prenotazioni" in t and "esito incerto" in t and "dalla data trovata: 42 s" in t
+    assert "conferma 3 min" in t and "verifica 3 min 11 s" in t
+    assert "Sorveglianza" in t and "ciclo del bot" in t and "ultima sessione riuscita" in t
+    t7 = get(app, "/ui/admin?giorni=7", chat=1)[2].decode()
+    assert 'aria-pressed="true">Ultimi 7 giorni' in t7 and "<strong>Riepilogo</strong>" in t7
+    assert CF not in t7 and NRE not in t7
+
+
+def test_battito_del_ciclo_un_avviso_e_ripartenza(app, monkeypatch):
+    b = app.bot
+    monkeypatch.setattr(webapp.cup_http, "ULTIMA", 0.0)
+    ora = time.time()
+    b.battito = ora
+    n = len([t for t in inviati(b) if t.startswith("⚙️")])
+    assert app.controlla_battito(ora + 60) < botmod.BATTITO_MAX
+    app.controlla_battito(ora + 20 * 60)
+    app.controlla_battito(ora + 25 * 60)
+    avvisi = [t for t in inviati(b) if t.startswith("⚙️")][n:]
+    assert len(avvisi) == 1 and "fermo da 20 minuti" in avvisi[0]
+    b.admin = "1"
+    b.battito = time.time() - 20 * 60
+    t = get(app, "/ui/admin", chat=1)[2].decode()
+    assert "⚠️ fermo da 20 min" in t  # anche nella pagina dell'amministratore, senza un secondo avviso
+    assert len([x for x in inviati(b) if x.startswith("⚙️")][n:]) == 1
+    b.battito = time.time()
+    app.controlla_battito()
+    assert [t for t in inviati(b) if t.startswith("⚙️")][-1] == "⚙️ ✅ Il ciclo del bot e' ripartito."
+
+
+def test_battito_vivo_se_il_portale_risponde(app, monkeypatch):
+    # una sessione lunga (area estesa, prenotazione) non e' un ciclo fermo: ogni risposta del portale conta
+    b = app.bot
+    ora = time.time()
+    b.battito = ora - 30 * 60
+    monkeypatch.setattr(webapp.cup_http, "ULTIMA", ora - 60)
+    assert app.controlla_battito(ora) < botmod.BATTITO_MAX
+
+
+def test_pagina_admin_non_manda_avvisi_del_battito(app, monkeypatch):
+    monkeypatch.setattr(webapp.cup_http, "ULTIMA", 0.0)
+    b = app.bot
+    b.admin = "1"
+    b.battito = time.time() - 30 * 60
+    n = len(inviati(b))
+    t = get(app, "/ui/admin", chat=1)[2].decode()
+    assert "⚠️ fermo da 30 min" in t and len(inviati(b)) == n  # solo il thread del battito avvisa
+
+
+def test_polling_senza_richieste_sovrapposte(app):
+    assert 'hx-sync="this:drop"' in app.pagina()

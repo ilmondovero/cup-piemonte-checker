@@ -82,6 +82,11 @@
   // una data vecchia non deve restare sullo schermo fino al prossimo aggiornamento
   const ricarica = () => ricette.dispatchEvent(new Event("aggiorna"));
   if (tg && tg.onEvent) tg.onEvent("activated", ricarica);
+  // una prenotazione in corso (data-in-corso sulla scheda): le schede si aggiornano ogni 5 s finche' c'e',
+  // poi di nuovo solo ogni 15 s
+  setInterval(() => {
+    if (document.visibilityState === "visible" && ricette.querySelector("[data-in-corso]")) ricarica();
+  }, 5000);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") ricarica();
   });

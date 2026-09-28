@@ -58,6 +58,10 @@ AZIONI_SENSIBILI = ("offerta", "vista", "cancella", "modifica")  # vogliono una 
 MAX_NO_CAL = 400  # date segnate no al massimo nel calendario
 GIORNI_CAL = 400  # il calendario arriva fino a tanti giorni da oggi
 MESI_CAL = 12  # mesi dopo quello corrente sfogliabili nel calendario
+PASSI = {"elenco": "Elenco prenotazioni", "ricerca": "Ricerca ricetta", "appuntamenti": "Appuntamenti",
+         "estendi": "Estendi area", "riepilogo": "Riepilogo", "conferma": "Conferma",
+         "verifica": "Verifica dopo la conferma"}  # passi del portale, nell'ordine del flusso
+ESITI = {"ok": "riuscita", "incerta": "esito incerto", "fallita": "non riuscita"}
 e = html.escape
 
 
@@ -124,6 +128,7 @@ class App:
         self._ultima_azione = {}  # chat -> ora dell'ultima azione (limite di frequenza)
         self._richieste = {}      # token di una ricerca in corso -> (chat, ora)
         self._lock = threading.Lock()
+        self._fermo = False  # il ciclo del bot e' fermo ed e' gia' stato segnalato
 
     @property
     def store(self):
@@ -132,6 +137,28 @@ class App:
         if not hasattr(self._locale, "store"):
             self._locale.store = Store(*self._db)
         return self._locale.store
+
+    def fermo_da(self, ora=None):
+        """Da quanti secondi il ciclo del bot non fa un giro ne' riceve risposte dal portale (solo lettura)."""
+        return (ora or time.time()) - max(self.bot.battito, cup_http.ULTIMA)
+
+    def controlla_battito(self, ora=None):
+        """Dal thread del battito (ogni minuto): oltre BATTITO_MAX un avviso all'amministratore, e uno quando
+        il ciclo riparte (uno per episodio)."""
+        fermo = self.fermo_da(ora)
+        with self._lock:
+            avviso = None
+            if fermo > botmod.BATTITO_MAX and not self._fermo:
+                self._fermo = True
+                avviso = (f"Il ciclo del bot e' fermo da {fermo / 60:.0f} minuti: controlli e prenotazioni non "
+                          "partono. Forse serve un riavvio.")
+            elif fermo <= botmod.BATTITO_MAX and self._fermo:
+                self._fermo = False
+                avviso = "✅ Il ciclo del bot e' ripartito."
+        if avviso:
+            log.warning("battito: %s", "fermo" if self._fermo else "ripartito")
+            self.bot.alert_admin(avviso)
+        return fermo
 
     def _limita(self, chat):
         with self._lock:
@@ -182,7 +209,7 @@ class App:
             if metodo == "GET" and percorso == "/ui/admin":
                 if not self.bot.admin or str(chat) != self.bot.admin:
                     raise Richiesta(404, "Pagina non trovata.")
-                return self._html(200, self.foglio_admin())
+                return self._html(200, self.foglio_admin(7 if dati.get("giorni") == "7" else 1))
             # --- pagine di una ricetta
             m = re.fullmatch(r"/ui/r/(\d+)/([a-z]+)", percorso)
             if not m or m.group(2) not in (AZIONI_POST if metodo == "POST" else FOGLI_GET):
@@ -500,7 +527,8 @@ class App:
 <link rel="stylesheet" href="/static/app.css?v={versione_statico("app.css")}">
 </head>
 <body>
-<main id="ricette" hx-get="/ui/ricette" hx-trigger="load, every 15s, aggiorna" hx-swap="innerMorph">
+<main id="ricette" hx-get="/ui/ricette" hx-trigger="load, every 15s, aggiorna" hx-swap="innerMorph"
+  hx-sync="this:drop">
   <p class="caricamento">Carico le tue ricette…</p>
 </main>
 <div id="velo" hidden></div>
@@ -556,6 +584,20 @@ class App:
                 f'<div class="dove">{e(botmod.titolo(att.luogo.sede))}<small>{e(att.luogo.ambulatorio)}<br>'
                 f'{e(botmod.indirizzo(att.luogo))}</small></div>')
 
+    def sospesa(self, p):
+        """Prenotazione in corso (con data-in-corso: app.js aggiorna le schede ogni 5 s finche' c'e') o data
+        nuova da verificare dopo una Conferma senza esito: data, ora e luogo, mai al posto della prenotazione."""
+        s = botmod.sospesa(p)
+        if not s:
+            return ""
+        tipo, quando, luogo, spiega = s
+        dove = ", ".join(x for x in (botmod.titolo(luogo.sede), botmod.indirizzo(luogo)) if x)
+        if tipo == "in_corso":
+            return (f'<section class="in-corso" data-in-corso role="status"><div class="rotella" aria-hidden="true"></div>'
+                    f'<div><strong>{e(quando)}</strong><small>{e(dove)}</small><small>{e(spiega)}</small></div></section>')
+        return (f'<section class="da-verificare" role="status"><strong>⚠️ {e(quando)}</strong><small>{e(dove)}</small>'
+                f'<small>{e(spiega)}</small></section>')
+
     def prossimo(self, p):
         if p["stato"] == "pausa":
             return "in pausa"
@@ -578,6 +620,7 @@ class App:
   </header>
   <p class="cosa">{e(botmod.prestazione(att.cosa, 80) or "Prestazione della ricetta")}</p>
   {self.quando_dove(p, att)}
+  {self.sospesa(p)}
   {self.offerta(p)}
   {self.riga_date(p)}
   <div class="regole">
@@ -1181,7 +1224,7 @@ class App:
             self._in_coda("sgancia", chat, mid)
         return "Fatto: ho cancellato tutti i tuoi dati."
 
-    def foglio_admin(self):
+    def foglio_admin(self, giorni=1):
         s = self.store
         chat_attive = s.chat_count()
         per_stato = dict(s.db.execute("SELECT stato, COUNT(*) FROM pratiche GROUP BY stato").fetchall())
@@ -1231,7 +1274,120 @@ class App:
   {tile(e24, "errori", f"{(e24 / n24 * 100 if n24 else 0):.0f}%")}
   {tile(f"{m24:.0f}s", "durata media")}
   {tile(f"{p24:.0f}s", "durata p95")}
+</div>
+{self.sorveglianza(ora)}
+{self.rapporto_guasti(ora, giorni)}"""
+
+    def sorveglianza(self, ora):
+        """Stato del ciclo del bot (battito) e del portale (ultima sessione riuscita, guasto segnalato)."""
+        b = self.bot
+        fermo = self.fermo_da(ora)  # gli avvisi li manda solo il thread del battito
+        ciclo = (f"⚠️ fermo da {fermo / 60:.0f} min" if fermo > botmod.BATTITO_MAX else
+                 "attivo" if fermo < 120 else f"ultimo giro {fermo / 60:.0f} min fa")
+        guasto = f"⚠️ guasto dalle {botmod.orario(b.guasto):%H:%M}" if b.guasto else "nessun guasto"
+        return f"""
+<h3>Sorveglianza</h3>
+<div class="tiles">
+  <div class="tile"><strong>{e(ciclo)}</strong><span>ciclo del bot</span><small>controlli, coda, Telegram</small></div>
+  <div class="tile"><strong>{e(f"{botmod.orario(b.ultimo_ok):%H:%M}")}</strong><span>ultima sessione riuscita</span>
+    <small>{e(guasto)}{e(f", {b.ko_di_fila} fallite di fila") if b.ko_di_fila else ""}</small></div>
 </div>"""
+
+    def rapporto_guasti(self, ora, giorni):
+        """Per passo del portale: richieste, errori per tipo, tempo tipico e massimo; gli errori per ora del
+        giorno; i tempi delle ultime prenotazioni. Solo tempi, codici ed esiti: nessun dato degli utenti."""
+        righe = self.store.metriche_passi(ora - giorni * 86400)
+        scelta = "".join(
+            f'<button type="button" hx-get="/ui/admin{"?giorni=7" if g == 7 else ""}" hx-target="#foglio"'
+            f' aria-pressed="{"true" if g == giorni else "false"}">{e(testo)}</button>'
+            for g, testo in ((1, "Ultime 24 ore"), (7, "Ultimi 7 giorni")))
+        testa = f'<h3>Rapporto guasti</h3><div class="finestra">{scelta}</div>'
+        per_passo = {}
+        for _, passo, secondi, esito, _ in righe:
+            per_passo.setdefault(passo, []).append((secondi, esito))
+        voci = []
+        for passo in sorted(per_passo, key=lambda x: (list(PASSI).index(x) if x in PASSI else 99, x)):
+            r = per_passo[passo]
+            ok = sorted(sec for sec, esito in r if esito == "ok")
+            conta = {t: sum(1 for _, esito in r if esito == t) for t in ("sovraccarico", "timeout", "inattesa")}
+            nomi = {"sovraccarico": "sovraccarico", "timeout": "timeout", "inattesa": "risposta inattesa"}
+            errori = ", ".join(f"{nomi[t]} {n}" for t, n in conta.items() if n)
+            tempi = (f"tipico {durata(ok[len(ok) // 2])}, massimo {durata(ok[-1])}" if ok else "nessuna risposta")
+            voci.append(f'<li><strong>{e(PASSI.get(passo, passo))}</strong><small>{len(r)} richieste · '
+                        f'{e(errori) if errori else "nessun errore"}</small><small>{e(tempi)}</small></li>')
+        passi = (f'<ul class="elenco">{"".join(voci)}</ul>' if voci else
+                 '<p class="nota">Ancora nessuna richiesta registrata in questo periodo.</p>')
+        return testa + passi + self.errori_per_ora(righe, giorni) + self.ultime_prenotazioni()
+
+    def errori_per_ora(self, righe, giorni):
+        """Barre degli errori per ora del giorno (una serie: niente legenda), con tooltip nativi e tabella."""
+        errori, richieste = [0] * 24, [0] * 24
+        for ts, _, _, esito, _ in righe:
+            h = botmod.orario(ts).hour
+            richieste[h] += 1
+            errori[h] += esito != "ok"
+        titolo = f"<h3>Errori per ora del giorno{' (7 giorni)' if giorni == 7 else ''}</h3>"
+        if not any(errori):
+            return titolo + '<p class="nota">Nessun errore del portale in questo periodo.</p>'
+        L, H, ml, mb, mt = 340, 120, 28, 20, 8
+        passo_x = (L - ml) / 24
+        massimo = max(errori)
+        barre = []
+        for h, n in enumerate(errori):
+            alto = (H - mb - mt) * n / massimo
+            testo = f"ore {h:02d}: {n} errori su {richieste[h]} richieste"
+            barre.append(f'<rect class="barra-hit" x="{ml + h * passo_x:.1f}" y="{mt}" width="{passo_x:.1f}" '
+                         f'height="{H - mb - mt}"><title>{e(testo)}</title></rect>')
+            if n:
+                barre.append(f'<path class="barra" d="{barra_arrotondata(ml + h * passo_x + 1, H - mb, passo_x - 2, alto)}">'
+                             f'<title>{e(testo)}</title></path>')
+        assi = [f'<line class="griglia" x1="{ml}" x2="{L}" y1="{H - mb}" y2="{H - mb}"/>',
+                f'<line class="griglia" x1="{ml}" x2="{L}" y1="{mt}" y2="{mt}"/>',
+                f'<text class="asse" x="{ml - 6}" y="{mt + 4}" text-anchor="end">{massimo}</text>',
+                f'<text class="asse" x="{ml - 6}" y="{H - mb + 4}" text-anchor="end">0</text>']
+        assi += [f'<text class="asse" x="{ml + (h + 0.5) * passo_x:.1f}" y="{H - 5}" text-anchor="middle">{h}</text>'
+                 for h in (0, 6, 12, 18, 23)]
+        tabella = "".join(f"<tr><td>{h:02d}</td><td>{errori[h]}</td><td>{richieste[h]}</td></tr>"
+                          for h in range(24) if richieste[h])
+        return titolo + f"""
+<figure class="grafico">
+  <figcaption>Richieste al portale finite in errore (sovraccarico, timeout, risposta inattesa), per ora.</figcaption>
+  <svg viewBox="0 0 {L} {H}" role="img" aria-label="Errori del portale per ora del giorno">{"".join(assi)}{"".join(barre)}</svg>
+</figure>
+<details><summary>Mostra in tabella</summary><table><thead><tr><th>Ora</th><th>Errori</th><th>Richieste</th></tr></thead>
+<tbody>{tabella}</tbody></table></details>"""
+
+    def ultime_prenotazioni(self):
+        """Tempi delle ultime prenotazioni: dalla data trovata dal controllo all'inizio della prenotazione, poi
+        le fasi (elenco, riepilogo, conferma, verifica). Niente date prenotate ne' ricette."""
+        voci = []
+        for ts, esito, dalla_data, fasi in self.store.tempi_prenotazioni(10):
+            pezzi = [f"{nome} {durata(fasi[nome])}" for nome in ("elenco", "riepilogo", "conferma", "verifica")
+                     if nome in fasi]
+            totale = sum(v for v in fasi.values())
+            voci.append(f'<li><strong>{e(f"{botmod.orario(ts):%d/%m %H:%M}")} · {e(ESITI.get(esito, esito))}</strong>'
+                        f'<small>{e("dalla data trovata: " + durata(dalla_data) if dalla_data is not None else "")}'
+                        f'{" · " if dalla_data is not None else ""}sul portale {e(durata(totale))}</small>'
+                        f'<small>{e(" · ".join(pezzi) or "nessuna fase misurata")}</small></li>')
+        return ('<h3>Ultime prenotazioni</h3>' +
+                (f'<ul class="elenco">{"".join(voci)}</ul>' if voci else
+                 '<p class="nota">Ancora nessuna prenotazione registrata.</p>'))
+
+
+def durata(secondi):
+    """12.3 -> "12,3 s"; 95 -> "1 min 35 s"."""
+    if secondi < 60:
+        return f"{secondi:.1f} s".replace(".", ",") if secondi < 10 else f"{secondi:.0f} s"
+    m, s = divmod(round(secondi), 60)
+    return f"{m} min {s} s" if s else f"{m} min"
+
+
+def barra_arrotondata(x, base, larghezza, altezza, r=2):
+    """Percorso di una barra con gli angoli in alto arrotondati, poggiata sulla base."""
+    r = min(r, larghezza / 2, altezza)
+    cima = base - altezza
+    return (f"M{x:.1f},{base:.1f}V{cima + r:.1f}Q{x:.1f},{cima:.1f} {x + r:.1f},{cima:.1f}"
+            f"H{x + larghezza - r:.1f}Q{x + larghezza:.1f},{cima:.1f} {x + larghezza:.1f},{cima + r:.1f}V{base:.1f}Z")
 
 
 class _Gestore(BaseHTTPRequestHandler):
@@ -1275,11 +1431,21 @@ class _Gestore(BaseHTTPRequestHandler):
 
 
 def avvia(bot, db_path, key, porta=8095):
-    """Server della Mini App in un thread suo, solo su 127.0.0.1 (davanti c'e' il reverse proxy)."""
+    """Server della Mini App in un thread suo, solo su 127.0.0.1 (davanti c'e' il reverse proxy), e un thread
+    che ogni minuto guarda se il ciclo del bot gira ancora (App.controlla_battito)."""
     pronto = threading.Event()
+    app = App(bot, db_path=db_path, key=key)  # ogni thread di richiesta apre la sua connessione
+
+    def sorveglia():
+        while True:
+            time.sleep(60)
+            try:
+                app.controlla_battito()
+            except Exception as ex:
+                log.error("battito: errore imprevisto %s", type(ex).__name__)
 
     def servi():
-        _Gestore.app = App(bot, db_path=db_path, key=key)  # ogni thread di richiesta apre la sua connessione
+        _Gestore.app = app
         server = ThreadingHTTPServer(("127.0.0.1", porta), _Gestore)
         server.daemon_threads = True
         pronto.set()
@@ -1287,4 +1453,5 @@ def avvia(bot, db_path, key, porta=8095):
         server.serve_forever()
 
     threading.Thread(target=servi, name="webapp", daemon=True).start()
+    threading.Thread(target=sorveglia, name="battito", daemon=True).start()
     pronto.wait(10)

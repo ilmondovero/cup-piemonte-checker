@@ -242,7 +242,8 @@ def b(tmp_path, monkeypatch):
 
     bot.calendari = []
 
-    def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=False, nuova=False, calendario=None):
+    def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=False, nuova=False, calendario=None,
+                fase=None):
         bot.chiamate.append((cf, slot.key(), sessione, dry_run))
         bot.libere.append(libera)
         bot.calendari.append(calendario)
@@ -641,9 +642,9 @@ def test_timeout_non_abbassano_l_attesa():
 
 
 def test_timeout_a_pagina_iniziata_e_lentezza():
-    assert botmod.lento(botmod.requests.ReadTimeout("x"))
-    assert botmod.lento(botmod.requests.ConnectionError("HTTPSConnectionPool(host='x'): Read timed out."))
-    assert not botmod.lento(botmod.requests.ConnectionError("Connection refused"))
+    assert c.tipo_errore(botmod.requests.ReadTimeout("x")) == "timeout"
+    assert c.tipo_errore(botmod.requests.ConnectionError("HTTPSConnectionPool(host='x'): Read timed out.")) == "timeout"
+    assert c.tipo_errore(botmod.requests.ConnectionError("Connection refused")) != "timeout"
 
 
 def test_dopo_un_timeout_piu_pazienza_fino_al_successo(b, monkeypatch):
@@ -1880,3 +1881,343 @@ def test_errore_del_registro_sedi_non_ferma_il_controllo(b, monkeypatch):
     assert pratica(b)["errori"] == 0 and pratica(b).get("luoghi")  # il controllo e' andato avanti
     monkeypatch.setattr(b.store, "tutte", rotto)
     b.semina_sedi()  # nemmeno l'avvio si ferma
+
+
+# --- prenotazione in corso, esito da verificare, pazienza per passo, sorveglianza -----------------
+def pannelli(b):
+    return [d["text"] for m, d in b.out if m in ("sendMessage", "editMessageText") and d["text"].startswith("📋")]
+
+
+def tocca_prenota(b):
+    b.controlla(pratica(b))
+    [cb] = [x for x in pulsanti(b) if x.startswith("p:")][:1]
+    b.on_callback(cq(1, cb))
+
+
+def test_in_corso_impostato_aggiornato_e_tolto(b, monkeypatch):
+    registra(b)
+    visto = []
+
+    def prenota(*a, fase=None, **k):
+        visto.append(dict(pratica(b)["in_corso"]))
+        fase("conferma")
+        visto.append(dict(pratica(b)["in_corso"]))
+        n = len(pannelli(b))
+        fase("verifica")
+        visto.append(dict(pratica(b)["in_corso"]))
+        assert len(pannelli(b)) == n + 1  # il pannello si aggiorna dalla verifica (prima conta ogni secondo)
+        return "Prenotazione spostata."
+    monkeypatch.setattr(c, "prenota", prenota)
+    tocca_prenota(b)
+    assert [v["fase"] for v in visto] == ["riepilogo", "conferma", "verifica"]
+    assert visto[0]["quando"] == MEGLIO.quando.isoformat() and visto[0]["luogo"] == "OSPEDALE A"
+    assert visto[0]["ambulatorio"] == "AMB 2" and "Via Roma" in visto[0]["indirizzo"]
+    testi = pannelli(b)
+    assert any(f"⏳ Sposto a {botmod.fmt(MEGLIO.quando)} – Ospedale A" in t for t in testi)
+    assert any("Conferma inviata, verifico sul portale" in t for t in testi)
+    p = pratica(b)
+    assert "in_corso" not in p and p["attuale"]["quando"] == MEGLIO.quando.isoformat()
+    assert "⏳" not in pannello(b)  # a fine operazione il pannello non lo mostra piu'
+
+
+@pytest.mark.parametrize("fase_raggiunta, incerta", [("riepilogo", False), ("conferma", True), ("verifica", True)])
+def test_in_corso_tolto_anche_su_eccezione_imprevista(b, monkeypatch, fase_raggiunta, incerta):
+    registra(b)
+
+    def prenota(*a, fase=None, **k):
+        for nome in ("riepilogo", "conferma", "verifica")[:("riepilogo", "conferma", "verifica").index(fase_raggiunta) + 1]:
+            fase(nome)
+        raise KeyError("boom")
+    monkeypatch.setattr(c, "prenota", prenota)
+    tocca_prenota(b)
+    p = pratica(b)
+    assert "in_corso" not in p and p["attuale"]["quando"] == ATT.quando.isoformat()
+    assert bool(p.get("incerta")) == incerta
+    if incerta:  # la Conferma era partita: la data nuova e' da verificare, non la prenotazione
+        assert p["incerta"]["quando"] == MEGLIO.quando.isoformat() and p["incerta"]["luogo"] == MEGLIO.luogo.key()
+
+
+def test_conferma_in_errore_da_verificare_poi_verificata(b, monkeypatch):
+    registra(b)
+
+    def prenota(*a, fase=None, **k):
+        fase("conferma")
+        fase("verifica")
+        raise c.CupError("Conferma inviata, esito incerto: la prenotazione risulta non verificabile. Controlla subito.")
+    monkeypatch.setattr(c, "prenota", prenota)
+    tocca_prenota(b)
+    p = pratica(b)
+    # la data nuova non diventa la prenotazione: il bot non decide nulla su una data non verificata
+    assert p["attuale"]["quando"] == ATT.quando.isoformat() and "in_corso" not in p
+    assert p["incerta"]["sede"] == "OSPEDALE A" and p["incerta"]["ambulatorio"] == "AMB 2"
+    scheda = b.scheda(p)
+    assert f"⚠️ Da verificare: {botmod.fmt(MEGLIO.quando)} – Ospedale A" in scheda and botmod.fmt(ATT.quando) in scheda
+    assert "⚠️ Da verificare" in pannello(b)
+    # il controllo dopo legge dal portale la prenotazione alla data nuova: verificato, data, ora e luogo
+    fatta = c.Prenotazione(MEGLIO.quando, MEGLIO.luogo, ATT.cosa)
+    monkeypatch.setattr(c, "check", lambda cf, nre, zona: {"attuale": fatta, "slots": [], "sessione": "S",
+                                                           "migliori": []})
+    b.controlla(pratica(b))
+    p = pratica(b)
+    assert "incerta" not in p and p["attuale"]["quando"] == MEGLIO.quando.isoformat()
+    assert any("✅ Verificato" in t and botmod.fmt(MEGLIO.quando) in t and "OSPEDALE A" in t for t in inviati(b))
+    assert "Da verificare" not in pannello(b)
+
+
+def test_errore_del_portale_in_prenotazione_messaggio_sobrio_senza_indirizzo(b, monkeypatch, caplog):
+    registra(b)
+    r = requests.Response()
+    r.status_code, r.url = 504, f"https://cup.isan.csi.it/web?cf={CF}&nre={NRE}"
+
+    def prenota(*a, **k):
+        raise requests.HTTPError(f"504 Server Error: Gateway Time-out for url: {r.url}", response=r)
+    monkeypatch.setattr(c, "prenota", prenota)
+    with caplog.at_level(logging.INFO, logger="cupbot"):
+        tocca_prenota(b)
+    t = inviati(b)[-1]
+    assert "sovraccarico" in t and botmod.fmt(MEGLIO.quando) in t and "Ospedale A" in t and "http" not in t
+    assert "HTTP 504, portale sovraccarico" in caplog.text and CF not in caplog.text and NRE not in caplog.text
+    assert "in_corso" not in pratica(b) and "incerta" not in pratica(b)
+
+
+def metti_in_corso(b, fase, nuova=False):
+    def f(p):
+        p["in_corso"] = {"quando": MEGLIO.quando.isoformat(), "luogo": "OSPEDALE A", "ambulatorio": "AMB 2",
+                         "indirizzo": "Via Roma, 1 - TORINO (TO)", "fase": fase, "ts": time.time(), "nuova": nuova}
+        p["auto"] = {"on": True}
+        p["prossimo"] = time.time() + 3000
+    b.store.modifica(pratica(b)["id"], f)
+
+
+def test_ripresa_dopo_un_riavvio_durante_la_conferma(b):
+    registra(b)
+    metti_in_corso(b, "verifica")
+    b.riprendi_in_corso()
+    p = pratica(b)
+    assert "in_corso" not in p and p["incerta"]["quando"] == MEGLIO.quando.isoformat()
+    assert p["incerta"]["luogo"] == MEGLIO.luogo.key() and p["attuale"]["quando"] == ATT.quando.isoformat()
+    assert p["auto"] is None and p["prossimo"] <= time.time() + 61  # verifica presto, niente altri tentativi da solo
+    t = [x for x in inviati(b) if "riavviato" in x][-1]
+    assert botmod.fmt(MEGLIO.quando) in t and "OSPEDALE A" in t
+    assert any(x.startswith("⚙️ Riavvio durante una conferma") for x in inviati(b))
+    b.riprendi_in_corso()  # un secondo avvio non ripete nulla
+    assert len([x for x in inviati(b) if "riavviato" in x]) == 1
+
+
+def test_ripresa_dopo_un_riavvio_prima_della_conferma(b):
+    registra(b)
+    metti_in_corso(b, "riepilogo")
+    b.riprendi_in_corso()
+    p = pratica(b)
+    assert "in_corso" not in p and "incerta" not in p and p["auto"] == {"on": True}
+    t = inviati(b)[-1]
+    assert "prima di confermare" in t and botmod.fmt(MEGLIO.quando) in t and "non e' cambiata" in t
+
+
+def test_attese_per_passo_imparate():
+    ora = alle(11)
+    righe = ([(alle(11, g), "elenco", 2.0, "ok", 200) for g in range(1, 8)] +
+             [(alle(11, g), "estendi", 100.0, "ok", 200) for g in range(1, 8)] +
+             [(alle(11, g), "conferma", 30.0, "ok", 200) for g in range(1, 3)] +  # pochi dati: la base
+             [(alle(11, g), "riepilogo", 20.0, "ok", 200) for g in range(1, 6)] +
+             [(alle(11, g), "riepilogo", 30.0, "timeout", None) for g in range(1, 4)])  # timeout frequenti
+    attese = botmod.attese_apprese(righe, ora, base=95)
+    assert attese == {"elenco": botmod.ATTESA_MIN, "estendi": 150, "conferma": 95, "riepilogo": botmod.ATTESA_MAX}
+
+
+def test_timeout_per_passo_nelle_sessioni(b, monkeypatch):
+    registra(b)
+    pid = pratica(b)["id"]
+    ieri = time.time() - 86400
+    b.store.metrica_passi([(ieri, "elenco", 2.0, "ok", 200)] * 6 + [(ieri, "estendi", 100.0, "ok", 200)] * 6)
+    b._attese = (0.0, {})  # ricalcolate ogni 10 minuti: qui subito
+    viste = []
+
+    def sessione(*a, **k):
+        viste.append((dict(c.ATTESE), c.LENTO))
+        c.RICHIESTE.append((time.time(), "elenco", 1.5, "ok", 200))
+    b.portale(sessione, pid=pid)
+    assert viste[-1] == ({"elenco": 60, "estendi": 150}, 90)
+    b.pazienza[pid] = 135  # dopo un timeout questa ricetta aspetta di piu' in ogni passo
+    b.portale(sessione, pid=pid)
+    assert viste[-1][0] == {"elenco": 135, "estendi": 150}
+    b.portale(sessione, pid=pid, paziente=True)  # prenotazione: il massimo, la verifica coi suoi tempi
+    assert viste[-1] == ({"verifica": 60}, botmod.ATTESA_MAX)
+    assert len([r for r in b.store.metriche_passi(ieri + 1) if r[1] == "elenco"]) == 3  # salvate ogni volta
+
+
+def test_sorveglianza_un_avviso_per_episodio_e_ritorno(b):
+    registra(b)
+    ora = time.time()
+    b.sorveglia(ora)
+    assert not [t for t in inviati(b) if t.startswith("⚙️")]
+    b.primo_ko, b.ko_di_fila = ora - 46 * 60, 9  # tutte le sessioni falliscono da piu' di 45 minuti
+    b.ultimo_ok = ora - 50 * 60
+    b.sorveglia(ora)
+    b.sorveglia(ora + 600)
+    avvisi = [t for t in inviati(b) if t.startswith("⚙️")]
+    assert len(avvisi) == 1 and "nessuna sessione riuscita da 50 minuti (9 fallite di fila)" in avvisi[0]
+    b.portale(lambda: None)  # una sessione riesce: il portale e' tornato
+    b.sorveglia()
+    b.sorveglia()
+    avvisi = [t for t in inviati(b) if t.startswith("⚙️")]
+    assert len(avvisi) == 2 and "di nuovo normale" in avvisi[1]
+    assert CF not in "".join(avvisi) and "Ospedale" not in "".join(avvisi)
+
+
+def test_sorveglianza_nessun_controllo_riuscito_con_ricette_in_ritardo(b):
+    registra(b)
+    ora = time.time()
+    b.ultimo_ok = ora - 46 * 60
+    b.store.modifica(pratica(b)["id"], lambda p: p.update(prossimo=ora - 11 * 60))  # controllo mai partito
+    b.sorveglia(ora)
+    assert "con controlli in ritardo" in inviati(b)[-1]
+    b.guasto = None
+    b.store.modifica(pratica(b)["id"], lambda p: p.update(stato="pausa"))  # nessuna ricetta attiva: nessun guasto
+    b.sorveglia(ora)
+    assert len([t for t in inviati(b) if t.startswith("⚙️")]) == 1
+
+
+def test_sessioni_fallite_e_riuscite_per_la_sorveglianza(b):
+    def ko():
+        raise requests.ConnectionError("x")
+    for _ in range(2):
+        with pytest.raises(requests.ConnectionError):
+            b.portale(ko)
+    assert b.ko_di_fila == 2 and b.primo_ko is not None
+    b.portale(lambda: None)
+    assert b.ko_di_fila == 0 and b.primo_ko is None and time.time() - b.ultimo_ok < 5
+
+
+def test_messaggio_dei_controlli_per_tipo_di_errore(b, monkeypatch):
+    registra(b)
+    r = requests.Response()
+    r.status_code = 503
+    monkeypatch.setattr(c, "check", lambda *a: (_ for _ in ()).throw(requests.HTTPError("x", response=r)))
+    b.controlla(pratica(b), manuale=True)
+    assert "sovraccarico e non risponde" in inviati(b)[-1]
+    r.status_code = 403
+    b.controlla(pratica(b), manuale=True)
+    assert "risposta inattesa" in inviati(b)[-1]
+
+
+def test_tempi_della_prenotazione_salvati(b, monkeypatch):
+    registra(b)
+
+    def prenota(*a, **k):
+        c.TEMPI.update(elenco=1.2, riepilogo=7.0, conferma=180.0, verifica=12.5, fine=0.0)
+        return "Prenotazione spostata."
+    monkeypatch.setattr(c, "prenota", prenota)
+    tocca_prenota(b)
+    [(ts, esito, dalla_data, fasi)] = b.store.tempi_prenotazioni()
+    assert esito == "ok" and 0 <= dalla_data < 60 and fasi["conferma"] == 180.0
+
+
+# --- revisione: arresti a meta', stato non salvato, sorveglianza solo per i guasti del portale ---------------
+def test_arresto_dopo_la_conferma_lascia_in_corso_per_il_riavvio(b, monkeypatch):
+    registra(b)
+
+    def prenota(*a, fase=None, **k):
+        fase("conferma")
+        raise KeyboardInterrupt
+    monkeypatch.setattr(c, "prenota", prenota)
+    with pytest.raises(KeyboardInterrupt):
+        tocca_prenota(b)
+    assert pratica(b)["in_corso"]["fase"] == "conferma"  # resta nel database per riprendi_in_corso
+    b.riprendi_in_corso()
+    p = pratica(b)
+    assert "in_corso" not in p and p["incerta"]["quando"] == MEGLIO.quando.isoformat()
+
+
+def test_arresto_prima_della_conferma_toglie_in_corso(b, monkeypatch):
+    registra(b)
+
+    def prenota(*a, fase=None, **k):
+        raise KeyboardInterrupt
+    monkeypatch.setattr(c, "prenota", prenota)
+    with pytest.raises(KeyboardInterrupt):
+        tocca_prenota(b)
+    assert "in_corso" not in pratica(b) and "incerta" not in pratica(b)
+
+
+def test_fase_non_salvata_e_un_errore(b):
+    registra(b)
+    p = pratica(b)
+    p["in_corso"] = {"quando": MEGLIO.quando.isoformat(), "luogo": "OSPEDALE A", "fase": "riepilogo"}
+    b.salva(p, "in_corso")
+    b.store.delete(p["id"])  # la ricetta non c'e' piu': la fase non si salva
+    with pytest.raises(c.CupError):
+        b.fase(p, "conferma")
+    assert p["in_corso"]["fase"] == "riepilogo"  # in memoria resta la fase vera
+
+
+def test_errore_di_rete_dopo_la_conferma_e_esito_incerto(b, monkeypatch):
+    registra(b)
+
+    def prenota(*a, fase=None, **k):
+        fase("conferma")
+        raise requests.ConnectionError("x")
+    monkeypatch.setattr(c, "prenota", prenota)
+    tocca_prenota(b)
+    t = inviati(b)
+    assert any(x.startswith("🚨 Conferma inviata per il " + botmod.fmt(MEGLIO.quando)) and "Ospedale A" in x for x in t)
+    assert not any("resta com'era" in x for x in t)
+    assert pratica(b)["incerta"]["quando"] == MEGLIO.quando.isoformat()
+
+
+def test_pannello_durante_la_prenotazione_solo_rapido(b, monkeypatch):
+    registra(b)
+    b.controlla(pratica(b))
+    chiamate = []
+    vero = b.tg
+
+    def tg(method, **d):
+        chiamate.append((method, d.get("attesa_tg")))
+        return vero(method, **d)
+    b.tg = tg
+
+    def prenota(*a, fase=None, **k):
+        # prima del portale: solo la risposta al tocco, i pulsanti tolti e il messaggio "Sposto…"
+        assert [m for m, _ in chiamate] == ["answerCallbackQuery", "editMessageReplyMarkup", "sendMessage"]
+        n = len(chiamate)
+        fase("conferma")
+        assert len(chiamate) == n  # nessuna chiamata a Telegram prima della Conferma
+        fase("verifica")
+        assert chiamate[n:] == [("editMessageText", 5)]  # una sola modifica del pannello, 5 s al massimo
+        return "Prenotazione spostata."
+    monkeypatch.setattr(c, "prenota", prenota)
+    [cb] = [x for x in pulsanti(b) if x.startswith("p:")][:1]
+    chiamate.clear()
+    b.on_callback(cq(1, cb))
+    assert pratica(b)["attuale"]["quando"] == MEGLIO.quando.isoformat()
+
+
+def test_ricetta_in_pausa_con_esito_incerto(b):
+    registra(b)
+    metti_in_corso(b, "verifica")
+    b.store.modifica(pratica(b)["id"], lambda p: p.update(stato="pausa"))
+    b.riprendi_in_corso()
+    assert any("riprendili" in x for x in inviati(b))
+    assert "Riprendi i controlli per verificarla" in b.scheda(pratica(b))
+
+
+def test_sorveglianza_ignora_gli_errori_non_del_portale(b):
+    for e in (c.CupError("pagina"), c.GiaPrenotata("x"), c.Separerebbe("x")):
+        with pytest.raises(c.CupError):
+            b.portale(lambda: (_ for _ in ()).throw(e))
+    assert b.ko_di_fila == 0 and b.primo_ko is None
+    r = requests.Response()
+    r.status_code = 504
+    with pytest.raises(requests.HTTPError):
+        b.portale(lambda: (_ for _ in ()).throw(requests.HTTPError("x", response=r)))
+    assert b.ko_di_fila == 1
+
+
+def test_ultimo_errore_senza_indirizzo(b, monkeypatch):
+    registra(b)
+    r = requests.Response()
+    r.status_code = 504
+    monkeypatch.setattr(c, "check", lambda *a: (_ for _ in ()).throw(
+        requests.HTTPError(f"504 for url: https://cup.isan.csi.it/x?cf={CF}", response=r)))
+    b.controlla(pratica(b))
+    assert pratica(b)["ultimo"]["testo"] == "errore: HTTP 504, portale sovraccarico"

@@ -37,6 +37,20 @@ CREATE TABLE IF NOT EXISTS metriche (
     timeout  INTEGER                     -- 1 se il portale non ha risposto in tempo
 );
 CREATE INDEX IF NOT EXISTS ix_metriche_ts ON metriche(ts);
+CREATE TABLE IF NOT EXISTS metriche_passi (  -- ogni richiesta al portale, per passo (niente dati personali)
+    ts      REAL NOT NULL,
+    passo   TEXT NOT NULL,               -- elenco, appuntamenti, estendi, ricerca, riepilogo, conferma, verifica
+    secondi REAL NOT NULL,               -- tempo di risposta (per un timeout: l'attesa di allora)
+    esito   TEXT NOT NULL,               -- ok | timeout | sovraccarico | inattesa
+    codice  INTEGER                      -- codice HTTP, se c'e'
+);
+CREATE INDEX IF NOT EXISTS ix_metriche_passi_ts ON metriche_passi(ts);
+CREATE TABLE IF NOT EXISTS tempi_prenotazioni (  -- solo tempi ed esito, mai la data o la ricetta
+    ts         REAL NOT NULL,            -- inizio della prenotazione
+    esito      TEXT NOT NULL,            -- ok | incerta | fallita
+    dalla_data REAL,                     -- secondi dal controllo che ha trovato la data all'inizio della prenotazione
+    fasi       TEXT NOT NULL             -- JSON {"elenco": s, "riepilogo": s, "conferma": s, "verifica": s, "fine": s}
+);
 CREATE TABLE IF NOT EXISTS pannelli (
     chat_id    INTEGER PRIMARY KEY,
     message_id INTEGER NOT NULL           -- messaggio fissato che il bot aggiorna con lo stato delle ricette
@@ -228,6 +242,31 @@ class Store:
             "SELECT ts, durata, riuscita, lenta, timeout FROM metriche WHERE ts >= ? ORDER BY ts", (dal,))]
         prima = self.db.execute("SELECT MIN(ts) FROM metriche").fetchone()[0]
         return righe, prima
+
+    def metrica_passi(self, righe, tieni_giorni=7):
+        """righe: [(ts, passo, secondi, esito, codice)] delle richieste di una sessione (cup_http.RICHIESTE)."""
+        if not righe:
+            return
+        self.db.executemany("INSERT INTO metriche_passi (ts, passo, secondi, esito, codice) VALUES (?, ?, ?, ?, ?)",
+                            righe)
+        self.db.execute("DELETE FROM metriche_passi WHERE ts < ?", (max(r[0] for r in righe) - tieni_giorni * 86400,))
+        self.db.commit()
+
+    def metriche_passi(self, dal):
+        """[(ts, passo, secondi, esito, codice)] dal momento indicato."""
+        return [tuple(r) for r in self.db.execute(
+            "SELECT ts, passo, secondi, esito, codice FROM metriche_passi WHERE ts >= ? ORDER BY ts", (dal,))]
+
+    def tempo_prenotazione(self, ts, esito, dalla_data, fasi, tieni_giorni=30):
+        self.db.execute("INSERT INTO tempi_prenotazioni (ts, esito, dalla_data, fasi) VALUES (?, ?, ?, ?)",
+                        (ts, esito, dalla_data, json.dumps(fasi)))
+        self.db.execute("DELETE FROM tempi_prenotazioni WHERE ts < ?", (ts - tieni_giorni * 86400,))
+        self.db.commit()
+
+    def tempi_prenotazioni(self, n=10):
+        """Le ultime n prenotazioni: [(ts, esito, dalla_data, {fase: secondi})], dalla piu' recente."""
+        return [(r["ts"], r["esito"], r["dalla_data"], json.loads(r["fasi"])) for r in self.db.execute(
+            "SELECT * FROM tempi_prenotazioni ORDER BY ts DESC LIMIT ?", (n,))]
 
     def registra_sedi(self, sedi, visto):
         """sedi: [(chiave del comune, comune, sede)] mostrate dal portale; di ognuna resta l'ultimo `visto`."""

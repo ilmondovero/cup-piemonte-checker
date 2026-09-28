@@ -529,7 +529,9 @@ def test_tempi_della_prenotazione_nel_diario(monkeypatch):
     c.DIARIO.clear()
     assert prenota_nuova() == "Prenotazione fatta."
     [tempi] = [x for x in c.DIARIO if x.startswith("tempi: ")]
-    assert re.fullmatch(r"tempi: elenco [\d.]+s, riepilogo [\d.]+s, conferma [\d.]+s, fine [\d.]+s", tempi)
+    assert re.fullmatch(r"tempi: elenco [\d.]+s, riepilogo [\d.]+s, conferma [\d.]+s, verifica [\d.]+s, fine [\d.]+s",
+                        tempi)
+    assert set(c.TEMPI) == {"elenco", "riepilogo", "conferma", "verifica", "fine"}
     c.DIARIO.clear()
     sessioni_finte(monkeypatch, [FATTA])
     with pytest.raises(c.GiaPrenotata):
@@ -597,3 +599,205 @@ def test_comuni_col_trattino_e_accenti():
     assert c.zona_norm([1]) == {"tipo": "sede", "valore": ""}
     samone = c.COORD[c._chiave_comune("Samone")]
     assert 45 < samone[0] < 46 and 7 < samone[1] < 8  # Samone (TO), non quello del Trentino
+
+
+# --- errori del portale, passi, verifica dopo la Conferma --------------------------------------
+def errore_http(codice):
+    r = c.requests.Response()
+    r.status_code, r.url = codice, f"https://cup.isan.csi.it/web?cf={CF}&nre={NRE}"
+    return c.requests.HTTPError(f"{codice} Server Error for url: {r.url}", response=r)
+
+
+def test_errori_classificati():
+    for codice in (502, 503, 504):
+        assert c.tipo_errore(errore_http(codice)) == "sovraccarico" and c.sovraccarico(errore_http(codice))
+    for codice in (400, 403, 404, 500):
+        assert c.tipo_errore(errore_http(codice)) == "inattesa" and not c.sovraccarico(errore_http(codice))
+    assert c.tipo_errore(c.requests.ReadTimeout("x")) == "timeout"
+    assert c.tipo_errore(c.requests.ConnectionError("HTTPSConnectionPool: Read timed out.")) == "timeout"
+    assert c.tipo_errore(c.requests.ConnectionError("Connection refused")) == "sovraccarico"
+    assert c.tipo_errore(c.requests.ConnectTimeout("x")) == "sovraccarico"
+    assert c.descrivi(errore_http(504)) == "HTTP 504, portale sovraccarico"
+    assert c.descrivi(errore_http(403)) == "HTTP 403, risposta inattesa"
+    assert c.descrivi(c.requests.ReadTimeout("x")) == "ReadTimeout, portale sovraccarico"
+
+
+class RispostaErrata:
+    def __init__(self, codice):
+        self.status_code, self.text = codice, "<html>Gateway Time-out</html>"
+
+    def raise_for_status(self):
+        raise errore_http(self.status_code)
+
+
+def test_codice_e_passo_nel_diario_senza_dati_personali(monkeypatch):
+    c.DIARIO.clear()
+    c.RICHIESTE.clear()
+    c._passo("riepilogo")
+    with pytest.raises(c.requests.HTTPError):
+        c._chiama(lambda url, timeout: RispostaErrata(504), f"https://cup.isan.csi.it/x?cf={CF}")
+    c._passo("elenco")
+    with pytest.raises(c.requests.HTTPError):
+        c._get(type("S", (), {"get": lambda self, url, timeout: RispostaErrata(403)})(), c.LISTA_URL)
+    c._passo("estendi")
+
+    def lenta(url, timeout):
+        raise c.requests.ReadTimeout(f"HTTPSConnectionPool: Read timed out. (read timeout={timeout[1]}) {url}")
+    monkeypatch.setattr(c, "ATTESE", {"estendi": 77})
+    with pytest.raises(c.requests.ReadTimeout):
+        c._chiama(lenta, f"https://cup.isan.csi.it/x?nre={NRE}")
+    assert list(c.DIARIO) == ["riepilogo: HTTP 504, portale sovraccarico", "elenco: HTTP 403, risposta inattesa",
+                              "estendi: ReadTimeout, portale sovraccarico dopo 77 s"]
+    assert [(r[1], r[3], r[4]) for r in c.RICHIESTE] == [("riepilogo", "sovraccarico", 504),
+                                                         ("elenco", "inattesa", 403), ("estendi", "timeout", None)]
+    assert c.RICHIESTE[-1][2] == 77  # un timeout conta come una risposta lunga quanto l'attesa
+    assert CF not in " ".join(c.DIARIO) and NRE not in " ".join(c.DIARIO) and "http" not in " ".join(c.DIARIO)
+
+
+def test_timeout_del_passo_in_corso(monkeypatch):
+    monkeypatch.setattr(c, "ATTESE", {"elenco": 33, "estendi": 150})
+    monkeypatch.setattr(c, "LENTO", 90)
+    attese = []
+
+    class R:
+        status_code, text = 200, "ok"
+
+        def raise_for_status(self):
+            pass
+
+    def get(url, timeout):
+        attese.append((c.PASSO, timeout))
+        return R()
+    c.RICHIESTE.clear()
+    for passo in ("elenco", "estendi", "riepilogo"):
+        c._passo(passo)
+        c._chiama(get, "u")
+    assert attese == [("elenco", (20, 33)), ("estendi", (20, 150)), ("riepilogo", (20, 90))]  # senza dati: LENTO
+    assert [(r[1], r[3], r[4]) for r in c.RICHIESTE] == [("elenco", "ok", 200), ("estendi", "ok", 200),
+                                                         ("riepilogo", "ok", 200)]
+
+
+def test_pagina_con_errore_http_e_un_errore_del_portale(monkeypatch):
+    # prima un 504 sulla pagina dell'elenco diventava "campi JSF mancanti"; ora e' il sovraccarico che e'
+    finto = con_portale(monkeypatch, [], [])
+    finto.get = lambda url, timeout=None: RispostaErrata(504)
+    c.DIARIO.clear()
+    with pytest.raises(c.requests.HTTPError):
+        c.cerca(CF, NRE)
+    assert list(c.DIARIO) == ["elenco: HTTP 504, portale sovraccarico"]
+
+
+def orologio_finto(monkeypatch, tentativo_s=0.0):
+    """time.monotonic e time.sleep finti: ogni pausa e ogni tentativo di verifica fanno avanzare l'orologio."""
+    ora, pause = [0.0], []
+
+    def dormi(s):
+        pause.append(s)
+        ora[0] += s
+    monkeypatch.setattr(c.time, "sleep", dormi)
+    monkeypatch.setattr(c.time, "monotonic", lambda: ora[0])
+    return ora, pause
+
+
+def test_verifica_con_attese_crescenti(monkeypatch):
+    sessioni_finte(monkeypatch, [c.NonTrovata("Non esistono prenotazioni"), c.CupError("x"), c.CupError("x"), FATTA])
+    ora, pause = orologio_finto(monkeypatch)
+    assert prenota_nuova() == "Prenotazione fatta."
+    assert pause == [2, 5, 10]  # riuscita al terzo tentativo
+
+
+def test_verifica_senza_esito_resta_incerta_in_tempo_limitato(monkeypatch):
+    log = sessioni_finte(monkeypatch, [c.NonTrovata("Non esistono prenotazioni"), c.CupError("x")])
+    ora, pause = orologio_finto(monkeypatch)
+    with pytest.raises(c.CupError, match="esito incerto"):
+        prenota_nuova()
+    assert pause == list(c.VERIFICA_PAUSE) and log["conferma"] == 1
+
+
+def test_verifica_lenta_si_ferma_entro_il_massimo(monkeypatch):
+    sessioni_finte(monkeypatch, [c.NonTrovata("Non esistono prenotazioni")])
+    ora, pause = orologio_finto(monkeypatch)
+    passi, attese = [], []
+
+    def attuale(self):
+        passi.append(self.passo_elenco)
+        c._passo(self.passo_elenco)
+        attese.append(c._attesa()[1] if passi[-1] == "verifica" else None)
+        if passi[-1] == "verifica":
+            ora[0] += 80  # ogni tentativo il portale ci mette 80 s
+            raise c.requests.ReadTimeout("x")
+        raise c.NonTrovata("Non esistono prenotazioni")
+    monkeypatch.setattr(c.CupSession, "attuale", attuale)
+    monkeypatch.setattr(c, "ATTESE", {"verifica": 150})
+    with pytest.raises(c.CupError, match="esito incerto"):
+        prenota_nuova()
+    assert passi[0] == "elenco" and set(passi[1:]) == {"verifica"}
+    # due tentativi; al terzo (dopo 2 + 80 + 5 + 80 s) resterebbero 13 s meno la pausa: meno di VERIFICA_MIN
+    assert pause == [2, 5] and ora[0] == 2 + 80 + 5 + 80 <= c.VERIFICA_MAX
+    assert attese[1:] == [150, 180 - 87]  # ogni richiesta aspetta al massimo il tempo che resta
+    assert c.ATTESE == {"verifica": 150} and c.SCADENZA is None
+
+
+def test_fasi_della_prenotazione(monkeypatch):
+    sessioni_finte(monkeypatch, [c.NonTrovata("Non esistono prenotazioni"), FATTA])
+    fasi = []
+    assert c.prenota(CF, NRE, SLOT, zona={"tipo": "tutte", "valore": ""}, dry_run=False, nuova=True,
+                     fase=fasi.append) == "Prenotazione fatta."
+    assert fasi == ["riepilogo", "conferma", "verifica"]
+    fasi.clear()
+    sessioni_finte(monkeypatch, [c.NonTrovata("Non esistono prenotazioni"), FATTA])
+    c.prenota(CF, NRE, SLOT, zona={"tipo": "tutte", "valore": ""}, dry_run=True, nuova=True, fase=fasi.append)
+    assert fasi == ["riepilogo"]  # in prova la Conferma non parte
+
+    def rotta(nome):
+        raise RuntimeError("callback")
+    log = sessioni_finte(monkeypatch, [c.NonTrovata("Non esistono prenotazioni"), FATTA])
+    with pytest.raises(c.CupError, match="non confermo"):  # senza lo stato salvato la Conferma non parte
+        c.prenota(CF, NRE, SLOT, zona={"tipo": "tutte", "valore": ""}, dry_run=False, nuova=True, fase=rotta)
+    assert log["conferma"] == 0
+
+    def rotta_dopo(nome):
+        if nome != "conferma":
+            raise RuntimeError("callback")
+    sessioni_finte(monkeypatch, [c.NonTrovata("Non esistono prenotazioni"), FATTA])
+    assert c.prenota(CF, NRE, SLOT, zona={"tipo": "tutte", "valore": ""}, dry_run=False, nuova=True,
+                     fase=rotta_dopo) == "Prenotazione fatta."  # le altre fasi non fermano la prenotazione
+
+
+def test_conferma_con_504_si_verifica_e_lo_scrive_senza_indirizzo(monkeypatch):
+    log = sessioni_finte(monkeypatch, [c.NonTrovata("Non esistono prenotazioni"), FATTA])
+
+    def conferma(self, page):
+        log["conferma"] += 1
+        raise errore_http(504)
+    monkeypatch.setattr(c.CupSession, "conferma", conferma)
+    c.DIARIO.clear()
+    assert prenota_nuova() == "Prenotazione fatta."
+    assert "conferma: HTTP 504, portale sovraccarico, verifico con una sessione nuova" in c.DIARIO
+    assert CF not in " ".join(c.DIARIO)
+
+
+def test_timeout_accorciati_della_verifica_non_insegnano(monkeypatch):
+    ora, _ = orologio_finto(monkeypatch)
+    monkeypatch.setattr(c, "ATTESE", {"verifica": 60})
+    monkeypatch.setattr(c, "SCADENZA", 40.0)  # restano 40 s
+    c.RICHIESTE.clear()
+    c.DIARIO.clear()
+    visti = []
+
+    def lenta(url, timeout):
+        visti.append(timeout)
+        raise c.requests.ReadTimeout("x")
+    c._passo("verifica")
+    with pytest.raises(c.requests.ReadTimeout):
+        c._chiama(lenta, "u")
+    assert visti == [(20, 40)] and not c.RICHIESTE  # accorciato: non va nelle metriche
+    assert c.DIARIO[-1] == "verifica: ReadTimeout, portale sovraccarico dopo 40 s (limite della verifica)"
+    ora[0] = 40.5  # tempo finito: nessuna richiesta
+    with pytest.raises(c.requests.ReadTimeout):
+        c._chiama(lenta, "u")
+    assert len(visti) == 1 and not c.RICHIESTE
+    monkeypatch.setattr(c, "SCADENZA", None)  # fuori dalla verifica il timeout pieno si registra
+    with pytest.raises(c.requests.ReadTimeout):
+        c._chiama(lenta, "u")
+    assert visti[-1] == (20, 60) and [(r[1], r[3]) for r in c.RICHIESTE] == [("verifica", "timeout")]
