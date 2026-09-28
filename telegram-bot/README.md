@@ -40,7 +40,8 @@ piccolo, senza Chromium.
 5. **Conferma automatica (facoltativa, `/auto`).** Le date buone spariscono in pochi minuti. Chi la
    attiva lascia che il bot prenoti da solo la prima data migliore, senza aspettare il tocco.
    - Rispetta le sedi scelte e un anticipo minimo scelto dall'utente: da domani, tra 3 giorni o tra
-     7 giorni.
+     7 giorni, oppure (dalla Mini App) da un giorno preciso.
+   - Rispetta anche i giorni scelti (vedi "Giorni" sotto).
    - Fa un solo tentativo per ogni data.
    - Dopo un esito incerto si disattiva da sola e avvisa l'utente.
    - Prima di attivarla il bot ricorda due cose: la data vecchia si perde, e se poi non si può andare
@@ -113,7 +114,12 @@ vecchia. Cosa si fa dall'app:
   anche "cancella tutti i miei dati". La ricerca sul portale la fa il bot e l'app aspetta il risultato.
 - **Dove cerco** (si tocca la riga sulla scheda). Stessa sede, comune, provincia, ovunque, oppure una
   delle sedi trovate nei controlli. I comuni trovati compaiono come suggerimenti.
-- **Prenoto da solo** (si tocca la riga sulla scheda). La conferma automatica e l'anticipo minimo.
+- **Prenoto da solo** (si tocca la riga sulla scheda). La conferma automatica e l'anticipo minimo (1, 3 o 7 giorni, oppure da un giorno preciso).
+- **Giorni** (si tocca la riga "📅 Giorni" sulla scheda). Giorni della settimana, date precise e fascia
+  (mattina prima delle 13, pomeriggio dalle 13) in cui la data va bene; le altre non si propongono né si
+  prenotano. Con "anche più tardi, fino al…" il bot sposta anche su una data più lontana, ma solo finché
+  la prenotazione non è già in un giorno scelto: da lì anticipa soltanto, niente spostamenti a catena.
+  Il CUP mostra solo la prima data libera di ogni sede: un giorno preciso si trova se è quella.
 - **Date disponibili** (dalla riga "📅 3 date disponibili · la prima: …" sulla scheda). Tutte le date
   dell'ultimo controllo, divise in "prima della tua prenotazione, dove cerchi", "dove cerchi, ma dopo la
   tua prenotazione" e "in altre zone". Finché la sessione del controllo è valida (20 minuti) ogni data

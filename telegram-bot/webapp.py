@@ -48,9 +48,12 @@ CSP = (f"default-src 'self'; script-src 'self' {TELEGRAM_JS}; style-src 'self' '
        "img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'; "
        "frame-ancestors https://web.telegram.org https://*.telegram.org")
 ATTIVE = ("attivo", "pausa")
-AZIONI_POST = ("dove", "auto", "pausa", "riprendi", "controlla", "offerta", "vista", "nome", "cancella", "modifica")
-FOGLI_GET = ("dove", "auto", "date", "storico", "altro")
+AZIONI_POST = ("dove", "auto", "giorni", "pausa", "riprendi", "controlla", "offerta", "vista", "nome", "cancella", "modifica")
+FOGLI_GET = ("dove", "auto", "giorni", "date", "storico", "altro")
 AZIONI_SENSIBILI = ("offerta", "vista", "cancella", "modifica")  # vogliono una firma recente
+MAX_DATE_GIORNI = 20  # date precise al massimo nel foglio "Giorni"
+FASCE = (("", "Tutto il giorno"), ("mattina", "Solo di mattina (prima delle 13)"),
+         ("pomeriggio", "Solo di pomeriggio (dalle 13)"))
 e = html.escape
 
 
@@ -283,6 +286,52 @@ class App:
             raise Richiesta(400, "Scelta non valida.")
         self._modifica(chat, p, lambda f: f.update(auto=auto))
         return f"{self.bot.nome(p)}: " + ("conferma automatica attiva." if auto else "conferma automatica spenta.")
+
+    def azione_giorni(self, chat, p, dati):
+        """Giorni della settimana (g0..g6), date precise ("gg/mm" o "gg/mm/aaaa"), fascia ed "entro"
+        (anche piu' tardi della prenotazione, fino a quel giorno). togli o niente scelto: qualsiasi giorno."""
+        oggi = botmod.adesso().date()
+        ultimo = oggi + timedelta(days=366)
+        settimana = [i for i in range(7) if dati.get(f"g{i}")]
+        precise = set()
+        for pezzo in re.split(r"[\s,;]+", dati.get("date", "").strip()):
+            if not pezzo:
+                continue
+            m = re.fullmatch(r"(\d{1,2})/(\d{1,2})(?:/(\d{4}))?", pezzo)
+            if not m:
+                raise Richiesta(400, f"Non capisco la data «{pezzo[:12]}»: scrivila come 15/10 o 15/10/2026.")
+            d = None
+            for anno in [int(m.group(3))] if m.group(3) else [oggi.year, oggi.year + 1]:
+                try:  # senza anno: la prossima volta che quel giorno arriva
+                    d = date(anno, int(m.group(2)), int(m.group(1)))
+                except ValueError:
+                    continue
+                if d > oggi:
+                    break
+            if not d or not oggi < d <= ultimo:
+                raise Richiesta(400, f"La data {pezzo} non va bene: scegli un giorno da domani a un anno da oggi.")
+            precise.add(d.isoformat())
+        if len(precise) > MAX_DATE_GIORNI:
+            raise Richiesta(400, f"Al massimo {MAX_DATE_GIORNI} date precise.")
+        fascia = dati.get("fascia", "")
+        if fascia not in {f for f, _ in FASCE}:
+            raise Richiesta(400, "Scelta non valida.")
+        entro = ""
+        if dati.get("entro") and not botmod.da_prenotare(p):  # senza prenotazione non c'e' un "piu' tardi"
+            try:
+                fine = date.fromisoformat(dati["entro"])
+            except ValueError:
+                raise Richiesta(400, "Scegli il giorno fino a cui accetti una data più tardi.") from None
+            if not oggi < fine <= ultimo:
+                raise Richiesta(400, "Il limite per le date più tardi va da domani a un anno da oggi.")
+            if not (settimana or precise or fascia):
+                raise Richiesta(400, "Per accettare date più tardi scegli prima i giorni o la fascia che vanno bene.")
+            entro = fine.isoformat()
+        giorni = None
+        if not dati.get("togli") and (settimana or precise or fascia):
+            giorni = {"settimana": settimana, "date": sorted(precise), "fascia": fascia, "entro": entro}
+        self._modifica(chat, p, lambda f: f.update(giorni_ok=giorni))
+        return f"{self.bot.nome(p)}: giorni che vanno bene: " + botmod.descr_giorni({**p, "giorni_ok": giorni}) + "."
 
     def azione_pausa(self, chat, p, dati):
         self._modifica(chat, p, lambda f: f.update(stato="pausa", pausa_da=time.time()))
@@ -520,6 +569,8 @@ class App:
       <span class="nome">🔎 Dove cerco</span><span class="valore">{e(botmod.descr_zona(zona, att))}{estesa}</span></button>
     <button type="button" class="regola" hx-get="/ui/r/{pid}/auto" hx-target="#foglio" aria-label="Cambia prenotazione automatica">
       <span class="nome">⚡ Prenoto da solo</span><span class="valore">{e(botmod.auto_descr(p))}</span></button>
+    <button type="button" class="regola" hx-get="/ui/r/{pid}/giorni" hx-target="#foglio" aria-label="Cambia i giorni che vanno bene">
+      <span class="nome">📅 Giorni</span><span class="valore">{e(botmod.descr_giorni(p))}</span></button>
     <div class="regola"><span class="nome">⏱ Ultimo controllo</span>
       <span class="valore">{e(riassunto.split(' ', 1)[1] if ' ' in riassunto else riassunto)}</span></div>
     <div class="regola"><span class="nome">⏭ Prossimo controllo</span><span class="valore">{e(self.prossimo(p))}</span></div>
@@ -555,6 +606,8 @@ class App:
             return ""
         scade = botmod.orario(o["ts"] + botmod.TTL_OFFERTA)
         voci, nuova = [], botmod.da_prenotare(p)
+        att = botmod.attuale_di(p)
+        piu_tardi = not nuova and any(x.quando > att.quando for x in o["slots"])  # entro il limite dei giorni
         for i, x in enumerate(o["slots"]):
             conferma = (f"Prenoto {self.bot.nome(p)} il {botmod.fmt(x.quando)}, {botmod.titolo(x.luogo.sede)}? "
                         "Se poi non si può andare, va disdetta almeno 2 giorni lavorativi prima." if nuova else
@@ -568,7 +621,8 @@ class App:
         <button class="primario">Prenota</button></form></li>""")
         return f"""
   <section class="offerta">
-    <h3>{'🎉 C’è una data libera' if nuova else '🎉 C’è una data prima'}</h3>
+    <h3>{'🎉 C’è una data libera' if nuova else '🎉 C’è una data nei giorni che vuoi' if piu_tardi
+         else '🎉 C’è una data prima'}</h3>
     <ul>{''.join(voci)}</ul>
     <form hx-post="/ui/r/{p['id']}/offerta" hx-target="#ricette" hx-swap="innerMorph">
       <input type="hidden" name="tipo" value="x"><input type="hidden" name="token" value="{e(o['token'])}">
@@ -685,6 +739,40 @@ class App:
   <button class="primario">Salva</button>
 </form>"""
 
+    def foglio_giorni(self, p):
+        g = p.get("giorni_ok") or {}
+        oggi = botmod.adesso().date()
+        nuova = botmod.da_prenotare(p)
+        caselle = "".join(
+            f'<label class="scelta"><input type="checkbox" name="g{i}" value="1"'
+            f'{" checked" if i in (g.get("settimana") or []) else ""}><span>{e(nome)}</span></label>'
+            for i, nome in enumerate(botmod.GIORNI))
+        precise = ", ".join(f"{date.fromisoformat(d):%d/%m/%Y}" for d in g.get("date") or []
+                            if date.fromisoformat(d) > oggi)  # quelle passate non servono piu'
+        fasce = "".join(
+            f'<label class="scelta"><input type="radio" name="fascia" value="{v}"'
+            f'{" checked" if v == (g.get("fascia") or "") else ""}><span>{e(t)}</span></label>' for v, t in FASCE)
+        entro = "" if nuova else (
+            f'<label class="scelta"><span>Anche più tardi, fino al (facoltativo): solo se la tua prenotazione non è '
+            f'già in uno di questi giorni<input type="date" name="entro" value="{e(g.get("entro") or "")}" '
+            f'min="{(oggi + timedelta(days=1)).isoformat()}" max="{(oggi + timedelta(days=366)).isoformat()}"></span></label>')
+        spiega = ("Ricetta non ancora prenotata: prenoto solo una data in questi giorni." if nuova else
+                  "Sposto la prenotazione solo su una data in questi giorni, prima della tua; altrimenti tengo la tua.")
+        return f"""
+<h2>📅 Giorni · {e(self.bot.nome(p))}</h2>
+<p class="nota">{e(spiega)} Se non scegli niente, va bene qualsiasi giorno.</p>
+<form hx-post="/ui/r/{p['id']}/giorni" hx-target="#ricette" hx-swap="innerMorph" class="scelte">
+  {caselle}
+  <label class="scelta"><span>Date precise, per esempio 15/10, 22/10/2026
+    <input type="text" name="date" value="{e(precise)}" placeholder="gg/mm, gg/mm" autocomplete="off" maxlength="300"></span></label>
+  {fasce}{entro}
+  <p class="nota">Il CUP mostra solo la prima data libera di ogni sede: un giorno preciso lo trovo solo se è la
+    prima data libera di una sede.</p>
+  <button class="primario">Salva</button>
+</form>
+<form hx-post="/ui/r/{p['id']}/giorni" hx-target="#ricette" hx-swap="innerMorph">
+  <input type="hidden" name="togli" value="1"><button class="secondario">Qualsiasi giorno</button></form>"""
+
     def foglio_date(self, p):
         viste = p.get("viste") or []
         r = p.get("riassunto") or {}
@@ -692,10 +780,7 @@ class App:
         if not viste:
             return titolo + '<p class="nota">Nessuna data ancora: arrivano con il prossimo controllo.</p>'
         quando = botmod.orario(r["ts"]).strftime("%H:%M") if r.get("ts") else ""
-        gruppi = [("✅ Dove cerchi" if botmod.da_prenotare(p) else "✅ Prima della tua prenotazione, dove cerchi",
-                   [v for v in viste if v["ok"]]),
-                  ("Dove cerchi, ma dopo la tua prenotazione", [v for v in viste if v["area"] and not v["ok"]]),
-                  ("In altre zone", [v for v in viste if not v["area"]])]
+        gruppi = botmod.gruppi_date(p, viste)
         s = self.bot.sessioni.get(p["id"])
         fresche = bool(s) and time.time() - s["ts"] <= botmod.TTL_OFFERTA
         if fresche:
@@ -746,7 +831,7 @@ class App:
         return (f'<li class="prenotabile">{testo}<form action="/ui/r/{p["id"]}/vista" method="post" '
                 f'data-conferma="{e(conferma)}"><input type="hidden" name="slot" value="{e(v["k"])}">'
                 f'<input type="hidden" name="att" value="{e(att.quando.isoformat())}">'
-                f'<button class="{"primario" if rispetto == "PRIMA" else "secondario-pieno"}">Prenota</button></form></li>')
+                f'<button class="{"primario" if rispetto == "PRIMA" or v["ok"] else "secondario-pieno"}">Prenota</button></form></li>')
 
     def foglio_storico(self, p):
         storico = p.get("storico") or []

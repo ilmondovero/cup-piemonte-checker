@@ -23,7 +23,7 @@ import html
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 
 import requests
 
@@ -600,6 +600,40 @@ def ammesso(slot, attuale, zona="sede"):
     return tipo == "tutte"
 
 
+def giorno_ok(quando, giorni):
+    """Giorno e ora vanno bene per i giorni scelti (p["giorni_ok"]; vuoto o None: tutti). Senza giorni della
+    settimana ne' date precise ogni giorno va bene; la fascia: mattina prima delle 13, pomeriggio dalle 13."""
+    if not giorni:
+        return True
+    sett, precise = giorni.get("settimana") or [], giorni.get("date") or []
+    if (sett or precise) and quando.weekday() not in sett and quando.date().isoformat() not in precise:
+        return False
+    fascia = giorni.get("fascia") or ""
+    return not fascia or (quando.hour < 13) == (fascia == "mattina")
+
+
+def entro_di(attuale, giorni):
+    """Fino a che giorno si accetta una data piu' tardi della prenotazione: solo con "entro" e se la
+    prenotazione non e' gia' in un giorno scelto (da li' si anticipa soltanto: niente spostamenti a catena)."""
+    if not giorni or not giorni.get("entro") or attuale is None or giorno_ok(attuale.quando, giorni):
+        return None
+    return date.fromisoformat(giorni["entro"])
+
+
+def candidata(slot, attuale, zona, giorni=None, solo_proposta=False):
+    """La regola unica delle date da proporre (e da prenotare da soli): prenotabile, nella zona, nei giorni
+    scelti e prima della prenotazione, o piu' tardi fino a entro_di. attuale None: ricetta mai prenotata,
+    ogni data e' buona (con piu' prestazioni solo la proposta del portale, vedi SOLO_PROPOSTA)."""
+    if not (slot.proposta or (slot.seleziona_id and not solo_proposta)):
+        return False
+    if not ammesso(slot, attuale, zona) or not giorno_ok(slot.quando, giorni):
+        return False
+    if attuale is None or slot.quando < attuale.quando:
+        return True
+    entro = entro_di(attuale, giorni)
+    return bool(entro) and slot.quando.date() <= entro
+
+
 def cerca(cf, nre):
     """Solo la prenotazione attuale (usato alla registrazione): non apre "Sposta", non blocca slot."""
     return CupSession(cf, nre).attuale()
@@ -612,8 +646,7 @@ def check(cf, nre, zona="sede"):
     att = cup.attuale()
     slots = cup.alternative(estendi=estensioni(zona))
     return {"attuale": att, "slots": slots, "sessione": cup,
-            "migliori": [x for x in slots if (x.proposta or x.seleziona_id) and x.quando < att.quando
-                         and ammesso(x, att, zona)]}
+            "migliori": [x for x in slots if candidata(x, att, zona)]}
 
 
 def nuova(cf, nre):
@@ -633,8 +666,7 @@ def check_nuova(cf, nre, zona="tutte"):
     slots = cup.appuntamenti(page, estendi=estensioni(zona))
     solo_proposta = cup.n_prestazioni > 1
     return {"attuale": None, "cosa": cup.cosa, "slots": slots, "sessione": cup, "solo_proposta": solo_proposta,
-            "migliori": [x for x in slots if (x.proposta or (x.seleziona_id and not solo_proposta))
-                         and ammesso(x, None, zona)]}
+            "migliori": [x for x in slots if candidata(x, None, zona, solo_proposta=solo_proposta)]}
 
 
 def _conta_nomi(testo, nomi):
@@ -688,7 +720,7 @@ def _verifica_riepilogo(testo, data_riep, dopo_data, slot, cosa):
         raise CupError("Il riepilogo riporta un luogo diverso da quello scelto")
 
 
-def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=False, nuova=False):
+def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=False, nuova=False, giorni=None):
     """Come _prenota, e nel diario quanto e' durata ogni fase: per capire dove va il tempo di una prenotazione."""
     tempi, inizio = [], [time.time()]
 
@@ -697,19 +729,21 @@ def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=Fals
         tempi.append(f"{nome} {ora - inizio[0]:.1f}s")
         inizio[0] = ora
     try:
-        return _prenota(cf, nre, slot, sessione, zona, dry_run, libera, nuova, tappa)
+        return _prenota(cf, nre, slot, sessione, zona, dry_run, libera, nuova, tappa, giorni)
     finally:
         tappa("fine")
         DIARIO.append("tempi: " + ", ".join(tempi))
 
 
-def _prenota(cf, nre, slot, sessione, zona, dry_run, libera, nuova, tappa):
+def _prenota(cf, nre, slot, sessione, zona, dry_run, libera, nuova, tappa, giorni=None):
     """Sposta la prenotazione sullo slot. sessione: quella del controllo che ha trovato lo slot
     (lo tiene bloccato per noi); se manca o fallisce si riparte da una sessione nuova.
     Con dry_run si ferma al Riepilogo. Ritorna un messaggio; CupError se un controllo fallisce.
     libera: scelta esplicita dell'utente di una data vista (anche fuori area o piu' tardi): niente filtro
     su zona e anticipo, ma restano tutte le verifiche sul Riepilogo e dopo la conferma.
-    nuova: ricetta mai prenotata (prima prenotazione). Se nel frattempo risulta prenotata: GiaPrenotata."""
+    nuova: ricetta mai prenotata (prima prenotazione). Se nel frattempo risulta prenotata: GiaPrenotata.
+    giorni: i giorni scelti (vedi giorno_ok), riletti al momento: lo slot deve rispettarli e puo' essere piu'
+    tardi dell'attuale solo fino a entro_di, calcolato sulla prenotazione appena letta dal portale."""
     insieme = []  # prestazioni prenotate nello stesso appuntamento di quello da spostare
     if nuova:
         try:
@@ -730,9 +764,13 @@ def _prenota(cf, nre, slot, sessione, zona, dry_run, libera, nuova, tappa):
         # piu' prestazioni prenotate nello stesso appuntamento: si spostano insieme o niente
         insieme = [x.cosa for x in lista.prenotate if x.quando == att.quando]
     tappa("elenco")
+    if not libera and not giorno_ok(slot.quando, giorni):
+        raise CupError(f"Lo slot {slot.quando:%d/%m/%Y %H:%M} non e' nei giorni o nella fascia scelti")
     if not dry_run and not libera and att and slot.quando >= att.quando:
-        raise CupError(f"Lo slot {slot.quando:%d/%m/%Y %H:%M} non e' prima dell'appuntamento attuale "
-                       f"({att.quando:%d/%m/%Y %H:%M})")
+        entro = entro_di(att, giorni)
+        if not entro or slot.quando.date() > entro:
+            raise CupError(f"Lo slot {slot.quando:%d/%m/%Y %H:%M} non e' prima dell'appuntamento attuale "
+                           f"({att.quando:%d/%m/%Y %H:%M})" + (f" ne' entro il {entro:%d/%m/%Y}" if entro else ""))
     if not libera and not ammesso(slot, att, zona):
         raise CupError(f"Sede non ammessa dalle tue preferenze: {slot.luogo}")
     if not (slot.proposta or slot.seleziona_id):

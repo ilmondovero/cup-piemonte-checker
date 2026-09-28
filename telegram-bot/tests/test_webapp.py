@@ -575,3 +575,57 @@ def test_ricetta_mai_prenotata_date_dove_e_andamento(app):
     t = get(app, f"/ui/r/{p['id']}/storico", chat=3)[2].decode()
     assert "Non ancora prenotata" in t and "la tua prenotazione" not in t and "2100" not in t and "<svg" in t
     assert 'class="riferimento"' not in t
+
+
+def test_foglio_giorni_salva_e_toglie(app):
+    pid = pratica(app.bot, 1)["id"]
+    stato, _, corpo = get(app, f"/ui/r/{pid}/giorni")
+    t = corpo.decode()
+    assert stato == 200 and 'name="g0"' in t and 'name="entro"' in t and "prima data libera di ogni sede" in t
+    oggi = botmod.adesso().date()
+    domani = oggi + botmod.timedelta(days=1)
+    entro = (oggi + botmod.timedelta(days=30)).isoformat()
+    stato, _, corpo = post(app, f"/ui/r/{pid}/giorni", {"g0": "1", "g4": "1", "fascia": "mattina", "entro": entro,
+                                                        "date": f"{domani:%d/%m}, {domani:%d/%m/%Y}  {oggi:%d/%m}"})
+    g = app.store.get(pid)["giorni_ok"]
+    assert stato == 200 and g["settimana"] == [0, 4] and g["fascia"] == "mattina" and g["entro"] == entro
+    # senza anno: la prossima volta che arriva (oggi e' gia' passato: l'anno prossimo); doppioni tolti
+    assert g["date"] == sorted({domani.isoformat(), oggi.replace(year=oggi.year + 1).isoformat()})
+    assert "solo lun, ven" in corpo.decode() and "anche più tardi fino al" in corpo.decode()
+    _, _, corpo = get(app, "/ui/ricette")
+    assert "📅 Giorni" in corpo.decode() and "mattina" in corpo.decode()
+    _, _, corpo = get(app, f"/ui/r/{pid}/giorni")
+    assert 'name="g4" value="1" checked' in corpo.decode() and f'value="{entro}"' in corpo.decode()
+    post(app, f"/ui/r/{pid}/giorni", {"togli": "1", "g0": "1"})
+    assert app.store.get(pid)["giorni_ok"] is None and botmod.descr_giorni(app.store.get(pid)) == "qualsiasi giorno"
+    post(app, f"/ui/r/{pid}/giorni", {"fascia": ""})  # niente scelto: qualsiasi giorno
+    assert app.store.get(pid)["giorni_ok"] is None
+
+
+def test_foglio_giorni_validazione(app):
+    pid = pratica(app.bot, 1)["id"]
+    oggi = botmod.adesso().date()
+    troppe = " ".join(f"{oggi + botmod.timedelta(days=i):%d/%m/%Y}" for i in range(1, 23))
+    for cattivi in ({"g1": "1", "date": "31/02"}, {"date": "domani"}, {"date": f"{oggi:%d/%m/%Y}"},
+                    {"date": f"{oggi + botmod.timedelta(days=400):%d/%m/%Y}"}, {"date": troppe},
+                    {"g1": "1", "fascia": "sera"}, {"g1": "1", "entro": "2020-01-01"}, {"g1": "1", "entro": "x"},
+                    {"entro": (oggi + botmod.timedelta(days=5)).isoformat()}):  # entro senza giorni ne' fascia
+        stato, _, corpo = post(app, f"/ui/r/{pid}/giorni", cattivi)
+        assert stato == 400 and 'class="errore"' in corpo.decode(), cattivi
+    assert not app.store.get(pid).get("giorni_ok")
+    stato, _, _ = post(app, f"/ui/r/{pid}/giorni", {"g1": "1"}, chat=2)  # ricetta di un altro
+    assert stato == 404
+
+
+def test_foglio_giorni_ricetta_mai_prenotata(b, monkeypatch):
+    from test_bot import registra_nuova
+    monkeypatch.setattr(webapp, "PAUSA_AZIONI", 0)
+    b.token = TOKEN
+    registra_nuova(b)
+    app = webapp.App(b, b.store)
+    pid = pratica(b)["id"]
+    _, _, corpo = get(app, f"/ui/r/{pid}/giorni")
+    assert 'name="entro"' not in corpo.decode() and "non ancora prenotata" in corpo.decode()
+    entro = (botmod.adesso().date() + botmod.timedelta(days=9)).isoformat()
+    post(app, f"/ui/r/{pid}/giorni", {"g2": "1", "entro": entro})
+    assert app.store.get(pid)["giorni_ok"] == {"settimana": [2], "date": [], "fascia": "", "entro": ""}

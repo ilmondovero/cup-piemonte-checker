@@ -280,6 +280,46 @@ def auto_descr(p):
     return f"sì, date da {GIORNI[d.weekday()]} {d:%d/%m} in poi"
 
 
+def descr_giorni(p):
+    """"solo lun, ven · mattina · anche più tardi fino al 28/02" (p["giorni_ok"], vedi cup_http.giorno_ok)."""
+    g = p.get("giorni_ok")
+    if not g:
+        return "qualsiasi giorno"
+    oggi = adesso().date().isoformat()
+    future = [d for d in sorted(g.get("date") or []) if d >= oggi]
+    giorni = [GIORNI[i] for i in sorted(g.get("settimana") or [])]
+    giorni += [f"{date.fromisoformat(d):%d/%m}" for d in future]
+    if g.get("date") and not giorni:  # restavano solo date precise, tutte passate: nessuna data va bene
+        return "le date scelte sono passate: scegline altre"
+    pezzi = ["solo " + ", ".join(giorni) if giorni else "ogni giorno"]
+    if g.get("fascia"):
+        pezzi.append(g["fascia"])
+    if g.get("entro") and not da_prenotare(p):
+        pezzi.append(f"anche più tardi fino al {date.fromisoformat(g['entro']):%d/%m}")
+    return " · ".join(pezzi)
+
+
+def migliori(p, res):
+    """Le date da proporre e da prenotare da soli. Senza giorni scelti quelle del client; con i giorni la
+    stessa regola (cup_http.candidata) rifatta sulle date trovate, che puo' prenderne anche di piu' tarde."""
+    g = p.get("giorni_ok")
+    if not g:
+        return res["migliori"]
+    att = None if da_prenotare(p) else res["attuale"]
+    return [x for x in res["slots"] if cup_http.candidata(x, att, zona_di(p), g, res.get("solo_proposta"))]
+
+
+def gruppi_date(p, viste):
+    """Le date viste divise per la chat (/date) e la Mini App: prima quelle buone, poi le altre."""
+    if p.get("giorni_ok"):
+        ok, dopo = "✅ Nei giorni che vuoi, dove cerchi", "Dove cerchi, ma non nei giorni che vuoi o più tardi"
+    else:
+        ok = "✅ Dove cerchi" if da_prenotare(p) else "✅ Prima della tua prenotazione, dove cerchi"
+        dopo = "Dove cerchi, ma dopo la tua prenotazione"
+    return [(ok, [v for v in viste if v["ok"]]), (dopo, [v for v in viste if v["area"] and not v["ok"]]),
+            ("In altre zone", [v for v in viste if not v["area"]])]
+
+
 def zona_di(p):
     """Dove cercare. Formati precedenti: stringa ("sede", "tutte"...) o stessa_sede si'/no."""
     z = p.get("zona")
@@ -577,7 +617,8 @@ class Bot:
                 p["attuale"]["cosa"] = res["cosa"]
             res["attuale"] = attuale_di(p)
         att = res["attuale"]
-        self.sessioni[p["id"]] = {"ts": time.time(), "sessione": res["sessione"], "slots": res["slots"]}
+        res["migliori"] = migliori(p, res)  # da qui in poi (avvisi, automatica, app) valgono solo queste
+        self.sessioni[p["id"]] ={"ts": time.time(), "sessione": res["sessione"], "slots": res["slots"]}
         if att.quando < adesso():
             self.scarta(p["id"])
             self.store.delete(p["id"])
@@ -615,7 +656,9 @@ class Bot:
                 slot = candidati[0]  # la piu' vicina tra quelle ammesse
                 p["tentati_auto"] = sorted(tentati | {slot.key()})
                 self.salva(p, "tentati_auto")
-                self.dire(p, f"⚡ Conferma automatica: ho trovato una data{'' if nuova else ' prima'}.\n\n" + descrivi(res) +
+                piu_tardi = not nuova and slot.quando > att.quando  # nei giorni scelti, entro il limite
+                self.dire(p, f"⚡ Conferma automatica: ho trovato una data"
+                             f"{'' if nuova else ' nei giorni che vuoi' if piu_tardi else ' prima'}.\n\n" + descrivi(res) +
                           "\n\n" + self.regola(p))
                 if self.prenota(p, slot, res["sessione"], automatica=True) != "fallita":
                     return res
@@ -688,7 +731,9 @@ class Bot:
         nuova = da_prenotare(p)
         insieme = ("\n\nLa ricetta ha piu' prestazioni: le prenoto tutte nello stesso appuntamento. Se il portale le "
                    "mette in date diverse non confermo e te lo dico." if nuova and " + " in (res.get("cosa") or "") else "")
-        ok = self.dire(p, ("🎉 C'e' una data libera!" if nuova else "🎉 C'e' una data PRIMA!") + "\n\n" + descrivi(res) +
+        piu_tardi = not nuova and any(x.quando > res["attuale"].quando for x in slots)  # entro il limite dei giorni
+        ok = self.dire(p, ("🎉 C'e' una data libera!" if nuova else "🎉 C'e' una data nei giorni che vuoi!" if piu_tardi
+                           else "🎉 C'e' una data PRIMA!") + "\n\n" + descrivi(res) +
                        "\n\n" + self.regola(p) + insieme + f"\n\nTocca per {'prenotare' if nuova else 'spostare la prenotazione'} "
                        f"(valido {TTL_OFFERTA // 60} minuti).{prova}", buttons)
         if ok:
@@ -729,10 +774,12 @@ class Bot:
         if automatica and (not attuale_db.get("auto") or attuale_db["stato"] != "attivo"):
             self.dire(p, "Nel frattempo hai spento la conferma automatica o messo in pausa: non prenoto da solo.")
             return "fallita"
+        # giorni scelti appena riletti: un'offerta aperta prima di cambiarli non li scavalca
+        giorni = None if libera else attuale_db.get("giorni_ok")
         try:
             esito = self.portale(cup_http.prenota, p["cf"], p["nre"], slot, sessione=sessione,
                                  zona=zona_di(p), dry_run=self.prova, libera=libera, nuova=nuova,
-                                 pid=p["id"], paziente=True)
+                                 giorni=giorni, pid=p["id"], paziente=True)
         except cup_http.GiaPrenotata as e:
             self.dire(p, f"❌ Non prenotata: {e}.")
             try:
@@ -1032,10 +1079,8 @@ class Bot:
         r = p.get("riassunto") or {}
         s = self.sessioni.get(p["id"])
         fresche = bool(s) and time.time() - s["ts"] <= TTL_OFFERTA
-        att, nuova, token = attuale_di(p), da_prenotare(p), secrets.token_hex(4)
-        gruppi = [("✅ Dove cerchi" if nuova else "✅ Prima della tua prenotazione, dove cerchi", [v for v in viste if v["ok"]]),
-                  ("Dove cerchi, ma dopo la tua prenotazione", [v for v in viste if v["area"] and not v["ok"]]),
-                  ("In altre zone", [v for v in viste if not v["area"]])]
+        att, token = attuale_di(p), secrets.token_hex(4)
+        gruppi = gruppi_date(p, viste)
         testo, bottoni, chiavi, elencate = [f"📅 Date trovate · {self.nome(p)}"], [], [], 0
         pieno = False  # il testo non ci sta piu': le altre date restano solo nei pulsanti
         for nome_gruppo, voci in gruppi:
@@ -1138,7 +1183,8 @@ class Bot:
         z = descr_zona(zona_di(p), att)
         d = dal_giorno(p)
         return (f"🔎 {z[0].upper()}{z[1:]} · ⚡ " +
-                (f"prenoto da solo date da {GIORNI[d.weekday()]} {d:%d/%m} in poi" if d else "decidi tu"))
+                (f"prenoto da solo date da {GIORNI[d.weekday()]} {d:%d/%m} in poi" if d else "decidi tu") +
+                (f" · 📅 {descr_giorni(p)}" if p.get("giorni_ok") else ""))
 
     def riassunto(self, p):
         r = p.get("riassunto")
@@ -1156,11 +1202,11 @@ class Bot:
         if da_prenotare(p):
             pezzi.append(f"✅ {r['migliori']} prenotabili dove cerchi" if r["migliori"] else "nessuna dove cerchi")
         elif r["migliori"]:
-            pezzi.append(f"✅ {r['migliori']} prima della tua")
+            pezzi.append(f"✅ {r['migliori']} " + ("nei giorni che vuoi" if p.get("giorni_ok") else "prima della tua"))
         elif r.get("prima_area") and area_breve(zona, att):
             pezzi.append(f"la prima {area_breve(zona, att)} e' {r['prima_area']}, dopo la tua")
         else:
-            pezzi.append("nessuna prima della tua")
+            pezzi.append("nessuna nei giorni che vuoi" if p.get("giorni_ok") else "nessuna prima della tua")
         return f"⏱ {ora} · " + ", ".join(pezzi)
 
     def scheda(self, p):
@@ -1179,6 +1225,8 @@ class Bot:
         if cup_http.estensioni(zona_di(p)):
             righe.append("     (allargo la ricerca a tutto il Piemonte, poi filtro)")
         righe.append(f"⚡ Prenoto da solo: {auto_descr(p)}")
+        if p.get("giorni_ok"):
+            righe.append(f"📅 Giorni: {descr_giorni(p)}")
         righe.append(self.riassunto(p))
         return "\n".join(righe)
 
