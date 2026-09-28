@@ -127,6 +127,7 @@ button.secondario { background: transparent; color: var(--tenue); width: 100%; }
 .cm input { margin: 0; width: 18px; height: 18px; flex: none; accent-color: var(--bottone); }
 .cm span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .cm small { color: var(--tenue); font-size: 13px; white-space: nowrap; }
+.cm-sedi { display: block; font-style: normal; color: var(--tenue); font-size: 13px; }
 .scelta input[type="text"], .scelta input[type="date"] {
   display: block; width: 100%; margin-top: 8px; font: inherit; padding: 8px 10px; border-radius: 8px;
   border: 1px solid var(--separatore); background: var(--scheda); color: var(--testo);

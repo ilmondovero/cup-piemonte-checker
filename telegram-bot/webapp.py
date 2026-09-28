@@ -744,7 +744,9 @@ class App:
         """La scelta "Questi comuni": i comuni vicini a un centro, dal piu' vicino, da spuntare (entro VICINI_KM,
         fino a VICINI_MAX_KM con "Mostra"). Le spunte stanno nel campo nascosto "comuni", che app.js aggiorna a
         ogni tocco: cosi' restano anche per i comuni nascosti o lontani. Centro: quello scelto con "Centra
-        qui", altrimenti il comune della prenotazione, altrimenti Torino. 🏥: comuni con sedi gia' viste."""
+        qui", altrimenti il comune della prenotazione, altrimenti Torino. Solo i comuni con sedi nel registro
+        (Store.sedi_per_comune, di tutte le ricette) e quelli gia' spuntati; i comuni del preset senza sedi
+        sono righe nascoste che app.js mostra al tocco di "Torino e prima cintura"."""
         att = botmod.attuale_di(p)
         scritto = " ".join(q.get("centro", "").split())
         proprio = "" if botmod.da_prenotare(p) else cup_http.comune(att.luogo)
@@ -761,32 +763,55 @@ class App:
             scelti = cup_http.elenco_comuni(q.get("comuni", "").split(","))[0]
         else:
             scelti = cup_http.elenco_comuni(z["valore"])[0] if z["tipo"] == "comuni" else []
-        viste = set(cup_http.elenco_comuni([l["comune"] for l in p.get("luoghi", []) if l.get("comune")])[0])
-        righe = [(n, d) for n, d in tutti if d <= VICINI_MAX_KM or n in scelti]
+        sedi = self.store.sedi_per_comune()  # registro di tutte le ricette: {chiave del comune: [sedi]}
+        cintura = set(cup_http.CINTURA_TORINO)
+        # il preset solo se la cintura e' tutta vicina al centro
+        con_preset = {n for n, d in tutti if d <= VICINI_MAX_KM} >= cintura
         nascosti = 0
         voci = []
-        for n, d in righe:
-            nascosto = d > VICINI_KM and n not in scelti
-            nascosti += nascosto
-            voci.append(f'<label class="cm"{" hidden" if nascosto else ""}><input type="checkbox" value="{e(n)}"'
-                        f'{" checked" if n in scelti else ""}><span>{"🏥 " if n in viste else ""}'
-                        f'{e(botmod.titolo(n))}</span><small>{"centro" if n == centro else f"{d:.0f} km"}</small></label>')
-        presenti = {n for n, _ in righe}
+        for n, d in tutti:
+            viste = sedi.get(cup_http._chiave_comune(n), [])
+            if n in scelti or (viste and d <= VICINI_MAX_KM):
+                nascosto = d > VICINI_KM and n not in scelti
+                preset = False
+            elif con_preset and n in cintura:  # nascosta: la mostra "Torino e prima cintura" (app.js)
+                nascosto = preset = True
+            else:
+                continue
+            nascosti += nascosto and not preset
+            if not viste:
+                sedi_testo, titolo = "nessuna sede vista", ""
+            else:
+                prima = botmod.titolo(viste[0])
+                sedi_testo = (f"🏥 {len(viste)} sedi" if len(viste) > 1 else
+                              "🏥 " + (prima if len(prima) <= 32 else prima[:31].rstrip() + "…"))
+                titolo = (' title="' + e(", ".join(botmod.titolo(s) for s in viste[:12]) +
+                                         (" …" if len(viste) > 12 else "")) + '"')
+            voci.append(f'<label class="cm"{" hidden" if nascosto else ""}{" data-preset" if preset else ""}'
+                        f'{titolo}><input type="checkbox" value="{e(n)}"'
+                        f'{" checked" if n in scelti else ""}><span>{e(botmod.titolo(n))}'
+                        f'<em class="cm-sedi">{e(sedi_testo)}</em></span>'
+                        f'<small>{"centro" if n == centro else f"{d:.0f} km"}</small></label>')
         preset = (f'<button type="button" class="cm-preset" data-comuni="{e(",".join(cup_http.CINTURA_TORINO))}">'
-                  f'＋ Torino e prima cintura</button>' if presenti >= set(cup_http.CINTURA_TORINO) else "")
+                  f'＋ Torino e prima cintura</button>' if con_preset else "")
         altri = (f'<button type="button" class="cm-altri">Mostra fino a {VICINI_MAX_KM} km</button>'
                  if nascosti else "")
+        vuoto = ""
+        if not any(d <= VICINI_KM and cup_http._chiave_comune(n) in sedi for n, d in tutti):
+            vuoto = (f'<p class="nota">Il bot non ha ancora visto sedi entro {VICINI_KM} km da '
+                     f'{e(botmod.titolo(centro))}: dopo i primi controlli compaiono qui. Intanto puoi usare '
+                     f'{"«Torino e prima cintura» o " if con_preset else ""}un altro comune.</p>')
         tutti_nomi = "".join(f'<option value="{e(botmod.titolo(n))}">' for n in sorted(cup_http.NOMI_COMUNI.values()))
-        legenda = " 🏥 = sedi già viste nei controlli." if viste else ""
         return f"""
   <label class="scelta"><input type="radio" name="tipo" value="comuni"{" checked" if scelto == "comuni" else ""}>
-    <span>Questi comuni<small>Spunta i comuni in cui cercare, al massimo {cup_http.COMUNI_MAX}.{legenda}</small></span></label>
+    <span>Questi comuni<small>Spunta i comuni in cui cercare, al massimo {cup_http.COMUNI_MAX}. Qui compaiono i
+      comuni entro {VICINI_KM} km in cui i controlli hanno visto sedi del CUP (🏥), più quelli già scelti.</small></span></label>
   <div class="comuni-scelta">
     <input type="hidden" name="comuni" value="{e(",".join(scelti))}">
     <div class="cm-centro"><input type="text" name="centro" value="{e(botmod.titolo(centro))}" list="tutti-{p['id']}"
       autocomplete="off" maxlength="40" aria-label="Comune al centro dell'elenco" enterkeyhint="go">
       <button type="button" hx-get="/ui/r/{p['id']}/dove" hx-include="#dove-{p['id']}" hx-target="#foglio">Centra qui</button></div>
-    {avviso}{preset}
+    {avviso}{preset}{vuoto}
     <div class="cm-elenco">{"".join(voci)}</div>
     {altri}
   </div>

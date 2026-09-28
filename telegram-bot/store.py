@@ -41,6 +41,13 @@ CREATE TABLE IF NOT EXISTS pannelli (
     chat_id    INTEGER PRIMARY KEY,
     message_id INTEGER NOT NULL           -- messaggio fissato che il bot aggiorna con lo stato delle ricette
 );
+CREATE TABLE IF NOT EXISTS sedi (        -- sedi del CUP viste nei controlli, di tutte le ricette (dati pubblici)
+    chiave_comune TEXT NOT NULL,          -- nome del comune senza accenti ne' spazi (cup_http._chiave_comune)
+    comune        TEXT NOT NULL,          -- come lo scrive il portale
+    sede          TEXT NOT NULL,
+    visto         REAL NOT NULL,          -- epoch dell'ultima volta che il portale l'ha mostrata
+    PRIMARY KEY (chiave_comune, sede)
+);
 """
 REGISTRAZIONE = ("cf", "nre", "nome", "sede", "comune")
 BASE = ("id", "chat_id", "stato", "prossimo", "errori", "creato")
@@ -67,7 +74,8 @@ class Store:
 
     def _migra(self):
         """Versioni precedenti: metriche senza la risposta piu' lenta; una sola ricetta per chat, nella
-        tabella `utenti`."""
+        tabella `utenti`. La tabella `sedi` la crea SCHEMA anche nei database vecchi: la semina il bot all'avvio
+        (Bot.semina_sedi), dalle sedi salvate nelle ricette cifrate."""
         colonne = {r["name"] for r in self.db.execute("PRAGMA table_info(metriche)")}
         for nome, tipo in (("lenta", "REAL"), ("timeout", "INTEGER")):
             if nome not in colonne:
@@ -220,6 +228,24 @@ class Store:
             "SELECT ts, durata, riuscita, lenta, timeout FROM metriche WHERE ts >= ? ORDER BY ts", (dal,))]
         prima = self.db.execute("SELECT MIN(ts) FROM metriche").fetchone()[0]
         return righe, prima
+
+    def registra_sedi(self, sedi, visto):
+        """sedi: [(chiave del comune, comune, sede)] mostrate dal portale; di ognuna resta l'ultimo `visto`."""
+        self.db.executemany("INSERT INTO sedi (chiave_comune, comune, sede, visto) VALUES (?, ?, ?, ?) "
+                            "ON CONFLICT (chiave_comune, sede) DO UPDATE SET comune = excluded.comune, "
+                            "visto = max(visto, excluded.visto)", [(k, c, s, visto) for k, c, s in sedi])
+        self.db.commit()
+
+    def sedi_per_comune(self):
+        """{chiave del comune: [sedi viste, in ordine alfabetico]}."""
+        sedi = {}
+        for r in self.db.execute("SELECT chiave_comune, sede FROM sedi ORDER BY chiave_comune, sede"):
+            sedi.setdefault(r["chiave_comune"], []).append(r["sede"])
+        return sedi
+
+    def tutte(self):
+        """Tutte le pratiche, decifrate (per seminare il registro delle sedi all'avvio)."""
+        return [self._riga(r) for r in self.db.execute("SELECT * FROM pratiche ORDER BY id")]
 
     def due(self, now):
         """Pratiche attive il cui controllo e' scaduto, dalla piu' in ritardo."""

@@ -127,6 +127,46 @@ def test_pulizia(tmp_path):
     assert sorted(ch for _, ch in s.pulizia(time.time())) == [1, 3] and s.della_chat(2)
 
 
+def test_registro_sedi_migrazione_e_upsert(tmp_path):
+    key = Fernet.generate_key().decode()
+    db = sqlite3.connect(tmp_path / "db.sqlite")  # database di prima: senza la tabella sedi
+    db.execute("CREATE TABLE pratiche (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER NOT NULL, "
+               "stato TEXT NOT NULL, prossimo REAL NOT NULL DEFAULT 0, errori INTEGER NOT NULL DEFAULT 0, "
+               "creato REAL NOT NULL, dati BLOB, coppia TEXT UNIQUE)")
+    db.commit()
+    db.close()
+    s = Store(tmp_path / "db.sqlite", key)
+    assert s.sedi_per_comune() == {}
+    s.registra_sedi([("MONCALIERI", "MONCALIERI", "OSPEDALE C"), ("TORINO", "TORINO", "OSPEDALE A")], 100)
+    s.registra_sedi([("MONCALIERI", "Moncalieri", "OSPEDALE C"), ("MONCALIERI", "MONCALIERI", "CASA SALUTE")], 50)
+    assert s.sedi_per_comune() == {"MONCALIERI": ["CASA SALUTE", "OSPEDALE C"], "TORINO": ["OSPEDALE A"]}
+    righe = {r["sede"]: (r["comune"], r["visto"]) for r in s.db.execute("SELECT * FROM sedi")}
+    assert righe["OSPEDALE C"] == ("Moncalieri", 100)  # una riga per sede: resta l'ultima volta vista
+    assert righe["CASA SALUTE"] == ("MONCALIERI", 50) and len(righe) == 3
+
+
+def test_registro_sedi_dal_controllo_e_dalla_semina(b):
+    registra(b)
+    b.controlla(pratica(b))
+    assert b.store.sedi_per_comune() == {"TORINO": ["OSPEDALE A"], "MONCALIERI": ["OSPEDALE C"],
+                                         "CUNEO": ["OSPEDALE B"]}
+    assert not b.store.db.execute("SELECT 1 FROM sedi WHERE sede LIKE ? OR comune LIKE ?", (f"%{CF}%", f"%{CF}%")).fetchone()
+    # sedi salvate nelle ricette da versioni precedenti (nel blob cifrato): le semina l'avvio del bot
+    b.store.db.execute("DELETE FROM sedi")
+    b.store.db.commit()
+    p = pratica(b)
+    p["luoghi"] = p["luoghi"] + [{"sede": "OSPEDALE Z", "comune": "MONDOVI'", "prov": "CN"},
+                                 {"sede": "SENZA COMUNE", "comune": "", "prov": ""}]
+    b.store.save(p)
+    b.semina_sedi()
+    sedi = b.store.sedi_per_comune()
+    assert sedi["MONDOVI"] == ["OSPEDALE Z"] and sedi["TORINO"] == ["OSPEDALE A"] and len(sedi) == 4
+    visto = b.store.db.execute("SELECT visto FROM sedi WHERE sede = 'OSPEDALE A'").fetchone()[0]
+    assert visto == p["ultimo"]["ts"]  # l'ora dell'ultimo controllo di quella ricetta
+    b.semina_sedi()  # ogni avvio: nessun doppione
+    assert b.store.db.execute("SELECT COUNT(*) FROM sedi").fetchone()[0] == 4
+
+
 # --- bot con Telegram e portale finti ----------------------------------------------------
 ATT = c.Prenotazione(datetime.now() + timedelta(days=200), c.Luogo("OSPEDALE A", "AMB 1", "Via Roma, 1 - TORINO (TO)"),
                      "VISITA - 11.11")
@@ -1828,3 +1868,15 @@ def test_chat_cintura_per_ricetta_mai_prenotata(b):
     b.controlla(p)
     assert "a Torino e prima cintura" in pannello(b)
     assert b.zone_viste[-1]["tipo"] == "comuni"
+
+
+def test_errore_del_registro_sedi_non_ferma_il_controllo(b, monkeypatch):
+    registra(b)
+
+    def rotto(*a, **k):
+        raise botmod.storemod.sqlite3.OperationalError("database is locked")
+    monkeypatch.setattr(b.store, "registra_sedi", rotto)
+    b.controlla(pratica(b))
+    assert pratica(b)["errori"] == 0 and pratica(b).get("luoghi")  # il controllo e' andato avanti
+    monkeypatch.setattr(b.store, "tutte", rotto)
+    b.semina_sedi()  # nemmeno l'avvio si ferma

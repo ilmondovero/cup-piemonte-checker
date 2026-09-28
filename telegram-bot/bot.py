@@ -766,6 +766,7 @@ class Bot:
                                     "prov": cup_http.provincia(x.luogo)}
         p["luoghi"] = list(luoghi.values())[-MAX_LUOGHI:]
         ora = time.time()
+        self.registra_sedi([luoghi[x.luogo.sede] for x in res["slots"]], ora)
         voce = {"t": ora, "a": nell_area[0].quando.isoformat() if nell_area else None,
                 "r": res["attuale"].quando.isoformat()}
         storico = [v for v in p.get("storico", []) if v["t"] > ora - STORICO_GIORNI * 86400]
@@ -773,6 +774,26 @@ class Bot:
         if not storico or (storico[-1]["a"], storico[-1]["r"]) != (voce["a"], voce["r"]) or ora - storico[-1]["t"] > 3600:
             storico.append(voce)
         p["storico"] = storico[-400:]
+
+    def registra_sedi(self, luoghi, visto):
+        """Registro globale delle sedi viste (per "Questi comuni" nella Mini App): solo sede e comune del
+        portale, niente dati della ricetta. Le sedi senza comune leggibile restano fuori."""
+        righe = {(cup_http._chiave_comune(l["comune"]), l["comune"], l["sede"])
+                 for l in luoghi if l.get("comune") and l.get("sede")}
+        if righe:
+            try:  # solo un aiuto per la Mini App: un errore qui non ferma il controllo
+                self.store.registra_sedi(sorted(righe), visto)
+            except Exception as e:
+                log.warning("registro sedi non aggiornato: %s", type(e).__name__)
+
+    def semina_sedi(self):
+        """All'avvio: nel registro anche le sedi gia' salvate nelle ricette (controlli di versioni precedenti).
+        Un errore non ferma l'avvio: il registro si riempie comunque con i controlli."""
+        try:
+            for p in self.store.tutte():
+                self.registra_sedi(p.get("luoghi", []), (p.get("ultimo") or {}).get("ts", 0))
+        except Exception as e:
+            log.warning("registro sedi non seminato: %s", type(e).__name__)
 
     def offri(self, p, res, ignorati=()):
         """Messaggio con un pulsante per ogni data migliore (max 3). La sessione del controllo resta
@@ -1863,6 +1884,7 @@ def main():
               prova=os.environ.get("MODALITA_PROVA", "0") == "1", contatto=os.environ.get("CONTATTO_GESTORE", ""),
               admin_intervallo=env_int("ADMIN_INTERVALLO_MIN", 0) or None, max_pratiche=env_int("MAX_PRATICHE", 0),
               webapp_url=os.environ.get("WEBAPP_URL", "").strip())
+    bot.semina_sedi()
     if bot.webapp_url:
         import webapp
         webapp.avvia(bot, os.environ.get("DB_PATH", "data/cup.db"), os.environ.get("CUP_BOT_KEY"),

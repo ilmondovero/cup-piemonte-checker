@@ -245,7 +245,8 @@
   }, true);
 
   // --- "Questi comuni" nel foglio "Dove cerco": le spunte stanno nel campo nascosto "comuni" (anche quelle
-  // dei comuni nascosti o fuori elenco), che il server legge al Salva e a "Centra qui"
+  // dei comuni nascosti o fuori elenco), che il server legge al Salva e a "Centra qui". Le righe
+  // data-preset (comuni della cintura senza sedi viste) compaiono solo con "Torino e prima cintura"
   const spunte = (box, cambia) => {
     const campo = box.querySelector('input[name="comuni"]');
     const s = new Set(campo.value.split(",").filter(Boolean));
@@ -264,7 +265,7 @@
     if (!b) return;
     const box = b.closest(".comuni-scelta");
     if (b.classList.contains("cm-altri")) {
-      for (const r of box.querySelectorAll(".cm[hidden]")) r.hidden = false;
+      for (const r of box.querySelectorAll(".cm[hidden]:not([data-preset])")) r.hidden = false;
       b.hidden = true;
       return;
     }

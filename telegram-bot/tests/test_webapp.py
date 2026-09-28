@@ -740,20 +740,51 @@ def test_questi_comuni_salva_valida_e_spiega(app):
 
 
 def test_foglio_dove_comuni_vicini_da_spuntare(app):
-    pid = pratica(app.bot, 1)["id"]  # prenotazione a Torino
+    pid = pratica(app.bot, 1)["id"]  # prenotazione a Torino, registro delle sedi ancora vuoto
     t = get(app, f"/ui/r/{pid}/dove")[2].decode()
     assert 'value="comuni">' in t and 'name="comuni" value=""' in t and 'name="centro" value="Torino"' in t
-    assert "<small>centro</small>" in riga_comune(t, "TORINO") and "<small>8 km</small>" in riga_comune(t, "MONCALIERI")
-    assert riga_comune(t, "FIANO") and " hidden>" not in riga_comune(t, "FIANO")  # 23 km: c'e'
-    assert not riga_comune(t, "PINEROLO") and not riga_comune(t, "SUSA") and "Mostra fino" not in t  # oltre 25 km no
+    assert ("Il bot non ha ancora visto sedi entro 25 km da Torino: dopo i primi controlli compaiono qui. "
+            "Intanto puoi usare «Torino e prima cintura» o un altro comune.") in t
     assert 'class="cm-preset"' in t and 'value="Torino"' in t  # preset e datalist di tutti i comuni
-    assert t.index('value="MONCALIERI"') < t.index('value="RIVOLI"')  # dal piu' vicino
-    post(app, f"/ui/r/{pid}/dove", {"tipo": "comuni", "comuni": "SUSA,FIANO,MONCALIERI"})
+    # i comuni del preset ci sono, nascosti: "Torino e prima cintura" li mostra spuntati (app.js)
+    assert ' hidden data-preset>' in riga_comune(t, "RIVOLI") and "nessuna sede vista" in riga_comune(t, "RIVOLI")
+    assert not riga_comune(t, "FIANO") and not riga_comune(t, "CHIERI")  # vicini ma senza sedi viste
+    app.bot.registra_sedi([{"sede": "OSPEDALE A", "comune": "TORINO"}, {"sede": "OSPEDALE C", "comune": "MONCALIERI"},
+                           {"sede": "CASA DELLA SALUTE", "comune": "MONCALIERI"},
+                           {"sede": "POLIAMBULATORIO", "comune": "FIANO"}, {"sede": "PRESIDIO", "comune": "SUSA"},
+                           {"sede": "OSPEDALE DI PINEROLO", "comune": "PINEROLO"}], time.time())
     t = get(app, f"/ui/r/{pid}/dove")[2].decode()
-    assert 'value="comuni" checked' in t and 'name="comuni" value="SUSA,FIANO,MONCALIERI"' in t
+    assert "non ha ancora visto sedi" not in t
+    assert "<small>centro</small>" in riga_comune(t, "TORINO") and "🏥 Ospedale A" in riga_comune(t, "TORINO")
+    assert "<small>8 km</small>" in riga_comune(t, "MONCALIERI") and "🏥 2 sedi" in riga_comune(t, "MONCALIERI")
+    assert 'title="Casa della Salute, Ospedale C"' in riga_comune(t, "MONCALIERI")
+    assert riga_comune(t, "FIANO") and " hidden" not in riga_comune(t, "FIANO")  # 23 km, con una sede: c'e'
+    assert not riga_comune(t, "PINEROLO") and not riga_comune(t, "SUSA") and "Mostra fino" not in t  # oltre 25 km no
+    assert not riga_comune(t, "CHIERI") and " hidden data-preset>" in riga_comune(t, "RIVOLI")
+    assert t.index('value="MONCALIERI"') < t.index('value="FIANO"')  # dal piu' vicino
+    post(app, f"/ui/r/{pid}/dove", {"tipo": "comuni", "comuni": "SUSA,FIANO,MONCALIERI,ALBA"})
+    t = get(app, f"/ui/r/{pid}/dove")[2].decode()
+    assert 'value="comuni" checked' in t and 'name="comuni" value="SUSA,FIANO,MONCALIERI,ALBA"' in t
     assert " checked" in riga_comune(t, "SUSA") and "50 km" in riga_comune(t, "SUSA")  # lontano ma scelto: c'e'
+    assert " hidden" not in riga_comune(t, "ALBA") and "nessuna sede vista" in riga_comune(t, "ALBA")  # scelto, senza sedi
     assert " hidden" not in riga_comune(t, "FIANO") and " checked" in riga_comune(t, "FIANO")
     assert " checked" not in riga_comune(t, "TORINO")
+    post(app, f"/ui/r/{pid}/dove", {"tipo": "cintura"})
+    t = get(app, f"/ui/r/{pid}/dove")[2].decode()  # salvata la cintura: le righe senza sedi restano, spuntate
+    assert " checked" in riga_comune(t, "RIVOLI") and " hidden" not in riga_comune(t, "RIVOLI")
+
+
+def test_foglio_dove_comuni_nomi_sede_abbreviati_ed_escapati(app):
+    pid = pratica(app.bot, 1)["id"]
+    lungo = "POLIAMBULATORIO DI CIRCOSCRIZIONE NUMERO SETTE"
+    app.bot.registra_sedi([{"sede": lungo, "comune": "MONCALIERI"},
+                           {"sede": 'OSP "X" <B>&', "comune": "RIVOLI"}, {"sede": "ALTRA", "comune": "RIVOLI"},
+                           {"sede": "CASA <I>", "comune": "NICHELINO"}], 1)
+    t = get(app, f"/ui/r/{pid}/dove")[2].decode()
+    assert "🏥 Poliambulatorio di Circoscrizio…" in riga_comune(t, "MONCALIERI")
+    assert 'title="Poliambulatorio di Circoscrizione Numero Sette"' in riga_comune(t, "MONCALIERI")
+    assert 'title="Altra, Osp &quot;x&quot; &lt;b&gt;&amp;"' in riga_comune(t, "RIVOLI") and '"x"' not in t
+    assert "🏥 Casa &lt;i&gt;</em>" in riga_comune(t, "NICHELINO") and "<i>" not in t
 
 
 def test_foglio_dove_centra_qui_tiene_le_spunte(app):
@@ -761,14 +792,17 @@ def test_foglio_dove_centra_qui_tiene_le_spunte(app):
     fam = pratica(b, 1, 1)  # prenotazione ad Asti, sedi viste anche ad Alba
     b.controlla(fam)
     t = get(app, f"/ui/r/{fam['id']}/dove")[2].decode()
-    assert 'name="centro" value="Asti"' in t and "🏥 = sedi già viste" in t
+    assert 'name="centro" value="Asti"' in t and "🏥 Clinica Asti" in riga_comune(t, "ASTI")
     assert not riga_comune(t, "ALBA")  # 26 km da Asti: oltre il limite, anche se ci sono sedi viste
-    assert 'class="cm-preset"' not in t  # Torino e la cintura non sono vicine ad Asti
+    assert 'class="cm-preset"' not in t and "data-preset" not in t  # Torino e la cintura non sono vicine ad Asti
     t = get(app, f"/ui/r/{fam['id']}/dove?centro=torino&comuni=ALBA%2CRIVOLI&tipo=sede")[2].decode()
     assert 'name="centro" value="Torino"' in t and 'value="comuni" checked' in t
     assert " checked" in riga_comune(t, "RIVOLI") and " checked" in riga_comune(t, "ALBA")
+    assert "🏥 Osp Alba" in riga_comune(t, "ALBA") and "non ha ancora visto sedi entro 25 km da Torino" in t
     t = get(app, f"/ui/r/{fam['id']}/dove?centro=%3Cb%3EPaperopoli&comuni=")[2].decode()
     assert "Non trovo «&lt;b&gt;Paperopoli» tra i comuni del Piemonte: centro su Asti." in t and "<b>" not in t
+    t = get(app, f"/ui/r/{fam['id']}/dove?centro=Cuneo&comuni=")[2].decode()  # lontano da Torino: niente preset
+    assert "Intanto puoi usare un altro comune." in t
 
 
 def test_foglio_dove_comuni_ricetta_mai_prenotata(b, monkeypatch):
@@ -779,9 +813,12 @@ def test_foglio_dove_comuni_ricetta_mai_prenotata(b, monkeypatch):
     app = webapp.App(b, b.store)
     pid = pratica(b)["id"]
     t = get(app, f"/ui/r/{pid}/dove")[2].decode()
-    assert 'name="centro" value="Torino"' in t and 'class="cm-preset"' in t and riga_comune(t, "MONCALIERI")
+    assert 'name="centro" value="Torino"' in t and 'class="cm-preset"' in t
+    assert " hidden data-preset>" in riga_comune(t, "MONCALIERI")  # nessuna sede vista: solo col preset
     stato, _, corpo = post(app, f"/ui/r/{pid}/dove", {"tipo": "comuni", "comuni": "TORINO,MONCALIERI"})
     assert stato == 200 and "cerco a Torino, Moncalieri" in corpo.decode()
     b.controlla(b.store.get(pid))
+    t = get(app, f"/ui/r/{pid}/dove")[2].decode()
+    assert "🏥 Poliambulatorio Nord" in riga_comune(t, "TORINO")  # vista nel controllo della ricetta nuova
     assert b.zone_viste[-1] == {"tipo": "comuni", "valore": ["TORINO", "MONCALIERI"]}
     assert "a Torino, Moncalieri" in get(app, "/ui/ricette")[2].decode()

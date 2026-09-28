@@ -63,7 +63,9 @@ Ogni ricetta ha la sua zona: una data va bene solo se la sede è lì.
 - **Alcuni comuni**: un elenco, fino a 30. Il preset **"Torino e prima cintura"** (in chat e nella Mini
   App) vale per Torino, Beinasco, Borgaro Torinese, Collegno, Grugliasco, Moncalieri, Nichelino,
   Orbassano, Rivoli, San Mauro Torinese, Settimo Torinese e Venaria Reale. Un elenco scelto a mano si fa
-  solo dalla Mini App: i comuni vicini a un centro, dal più vicino, con i km in linea d'aria, da spuntare.
+  solo dalla Mini App: i comuni entro 25 km da un centro, dal più vicino, con i km in linea d'aria, da
+  spuntare. Compaiono solo i comuni dove il bot ha già visto sedi del CUP, più quelli già scelti (anche
+  lontani o senza sedi, per poterli togliere).
 - **La provincia**, oppure **ovunque proponga il CUP**.
 
 Il comune di una sede si legge dall'indirizzo del portale; se l'indirizzo non lo riporta, dal nome della
@@ -71,6 +73,11 @@ sede ("PRESIDIO - SUSA"). Se non si legge, la data non viene proposta. I nomi si
 accenti e apostrofi ("Mondovì" = "MONDOVI'"). L'elenco dei 1180 comuni del Piemonte, con provincia e
 coordinate del centro, è in `comuni_piemonte.txt` (ISTAT). Per comune, comuni e provincia il bot estende
 l'area di ricerca del portale, come detto sopra.
+
+Le sedi viste nei controlli di tutte le ricette finiscono in un registro comune (tabella `sedi`: solo nome
+della sede, comune e ora dell'ultima volta che il portale l'ha mostrata, in chiaro perché sono dati
+pubblici del portale; niente codice fiscale, NRE o chat). All'avvio il bot lo completa con le sedi già
+salvate nelle ricette. Il registro decide quali comuni compaiono in "Questi comuni".
 
 ## Ricetta mai prenotata (sperimentale)
 
@@ -138,8 +145,9 @@ vecchia. Cosa si fa dall'app:
   delle sedi trovate nei controlli. I comuni trovati compaiono come suggerimenti. Con **"Questi comuni"**
   si spuntano i comuni vicini, ordinati per distanza dal centro: il comune della prenotazione, oppure
   Torino per una ricetta mai prenotata; "Centra qui" cambia il centro senza perdere le spunte. Si vedono
-  quelli entro 25 km. "＋ Torino e prima cintura" spunta il
-  preset, 🏥 segna i comuni dove i controlli hanno già visto sedi.
+  solo i comuni entro 25 km dove il bot ha visto sedi del CUP, con "🏥" e il nome della sede (o quante
+  sono), più quelli già spuntati, segnati "nessuna sede vista" se non ne hanno. Finché il bot non ha visto
+  sedi vicine l'elenco lo dice. "＋ Torino e prima cintura" spunta il preset e mostra i suoi comuni.
 - **Prenoto da solo** (si tocca la riga sulla scheda). La conferma automatica: sì o no.
 - **Calendario** (si tocca la riga "📅 Calendario" sulla scheda). Un mese alla volta, da quello
   corrente fino a 12 mesi dopo (◀ ▶). Ogni giorno è sì o no: un tocco lo cambia. Un tocco sul nome del
@@ -246,7 +254,8 @@ Il bot tratta **dati sanitari di terzi**: codice fiscale, ricetta, prestazione e
 Chi lo mette online ne è responsabile. Il codice fa questo:
 
 - **Cifratura.** Codice fiscale, NRE e ogni informazione sulla prenotazione sono cifrati nel database
-  (Fernet, chiave in `CUP_BOT_KEY`). In chiaro restano solo l'id della chat e i campi di pianificazione.
+  (Fernet, chiave in `CUP_BOT_KEY`). In chiaro restano solo l'id della chat, i campi di pianificazione
+  e il registro delle sedi viste (nomi e comuni del portale, senza legame con chat o ricette).
 - **Chat pulita.** Cancella dalla chat i messaggi con codice fiscale e NRE appena letti, anche quelli
   scritti fuori dalla registrazione.
 - **Consenso prima di tutto.** Finché l'utente non accetta l'informativa, nel database non c'è nulla.
