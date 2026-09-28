@@ -142,6 +142,10 @@ def test_senza_prenotazione_la_zona_serve_col_suo_valore():
     assert c.ammesso(s, None, {"tipo": "tutte", "valore": ""})
     assert c.ammesso(s, None, {"tipo": "provincia", "valore": "TO"})
     assert not c.ammesso(s, None, {"tipo": "sede", "valore": ""})  # nessuna sede da cui ricavarla
+    assert c.ammesso(s, None, {"tipo": "sedi", "valore": [{"sede": "Poliambulatorio Nord", "comune": "Torino"}]})
+    assert not c.ammesso(s, None, {"tipo": "sedi", "valore": [{"sede": "POLIAMBULATORIO SUD", "comune": "TORINO"}]})
+    assert not c.ammesso(s, None, {"tipo": "sedi", "valore": [{"sede": "POLIAMBULATORIO NORD", "comune": "ALBA"}]})
+    assert not c.ammesso(s, None, {"tipo": "sedi", "valore": []})  # nessuna sede scelta: niente
 
 
 def test_non_presente_non_e_gia_presente(monkeypatch):

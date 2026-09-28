@@ -32,6 +32,26 @@ log = logging.getLogger("cupbot.web")
 
 STATIC = Path(__file__).resolve().parent / "web" / "static"
 MAX_TESTO_COMUNI = 2000  # campo nascosto "comuni": COMUNI_MAX nomi lunghi con le virgole ci stanno
+MAX_TESTO_SEDI = 4000  # campo nascosto "sedi": SEDI_MAX coppie [sede, comune] in JSON (nei nomi ci sono virgole)
+
+
+def coppie_sedi(testo):
+    """Campo "sedi" -> [{"sede", "comune"}]; None se non e' una lista JSON di coppie di stringhe."""
+    if len(testo) > MAX_TESTO_SEDI:
+        return None  # e niente json.loads su testi enormi (liste annidate: RecursionError)
+    try:
+        v = json.loads(testo or "[]")
+    except ValueError:
+        return None
+    if not isinstance(v, list) or not all(isinstance(x, list) and len(x) == 2 and all(isinstance(y, str) for y in x)
+                                          for x in v):
+        return None
+    return [{"sede": s, "comune": c} for s, c in v]
+
+
+def json_sedi(valore):
+    """Come app.js: JSON compatto, cosi' il valore di una casella e' uguale alla sua voce nel campo nascosto."""
+    return json.dumps(valore, ensure_ascii=False, separators=(",", ":"))
 VICINI_KM = VICINI_MAX_KM = 25  # "Questi comuni": solo i comuni vicini al centro (di piu' e' mezza provincia)
 FILE_STATICI = {"htmx.min.js": "text/javascript; charset=utf-8", "app.js": "text/javascript; charset=utf-8",
                 "app.css": "text/css; charset=utf-8"}
@@ -258,7 +278,9 @@ class App:
     def azione_dove(self, chat, p, dati):
         att = botmod.attuale_di(p)
         tipo = dati.get("tipo", "")
-        luoghi = {l["sede"] for l in p.get("luoghi", [])} | ({att.luogo.sede} - {""})
+        # (sede, comune) mostrate dal portale per questa ricetta: ci sono sedi omonime in comuni diversi
+        luoghi = [(l["sede"], l.get("comune", "")) for l in p.get("luoghi", [])] + \
+            ([(att.luogo.sede, cup_http.comune(att.luogo))] if att.luogo.sede else [])
         province = {l["prov"] for l in p.get("luoghi", []) if l.get("prov")}
         if tipo in ("sede", "comune", "provincia") and not att.luogo.sede:
             raise Richiesta(400, "Questa ricetta non è ancora prenotata: scegli un comune, una sede trovata o ovunque.")
@@ -270,10 +292,17 @@ class App:
         elif tipo == "sede":
             zona = {"tipo": "sede", "valore": att.luogo.sede}
         elif tipo == "sede_vista":
-            sede = dati.get("sede", "")
-            if sede not in luoghi:  # solo sedi che il portale ha davvero mostrato per questa ricetta
+            scelta = coppie_sedi(f'[{dati.get("sede", "")}]') or [{"sede": "", "comune": ""}]
+            chiave = cup_http.chiave_sede(scelta[0]["sede"], scelta[0]["comune"])
+            # solo sedi che il portale ha davvero mostrato per questa ricetta
+            trovate = [(x, y) for x, y in luoghi if cup_http.chiave_sede(x, y) == chiave]
+            if len(scelta) != 1 or not chiave[0] or not trovate:
                 raise Richiesta(400, "Scegli una sede dall'elenco.")
-            zona = {"tipo": "sede", "valore": sede}
+            sede, comune = trovate[0]
+            omonime = {cup_http.chiave_sede(x, y) for x, y in luoghi if cup_http._norm(x) == chiave[0]}
+            # col solo nome varrebbe anche l'omonima di un altro comune: allora la zona e' la coppia
+            zona = ({"tipo": "sedi", "valore": [{"sede": sede, "comune": comune}]} if len(omonime) > 1
+                    else {"tipo": "sede", "valore": sede})
         elif tipo == "comune":
             zona = {"tipo": "comune", "valore": cup_http.comune(att.luogo)}
         elif tipo == "provincia":
@@ -299,6 +328,35 @@ class App:
             if len(elenco) > cup_http.COMUNI_MAX:
                 raise Richiesta(400, f"Al massimo {cup_http.COMUNI_MAX} comuni: ne hai scritti {len(elenco)}.")
             zona = {"tipo": "comuni", "valore": elenco}
+        elif tipo == "sedi":
+            testo = dati.get("sedi", "")
+            if len(testo) > MAX_TESTO_SEDI:
+                raise Richiesta(400, f"L'elenco delle sedi è troppo lungo: al massimo {cup_http.SEDI_MAX} sedi.")
+            elenco = coppie_sedi(testo)
+            if elenco is None:
+                raise Richiesta(400, "Scelta non valida.")
+            coppie = {}
+            for x in elenco:
+                voce = {"sede": x["sede"].strip(), "comune": x["comune"].strip()}
+                if cup_http._norm(voce["sede"]):
+                    coppie.setdefault(cup_http.chiave_sede(voce["sede"], voce["comune"]), voce)
+            elenco = list(coppie.values())
+            gia = botmod.zona_di(p)
+            gia = gia["valore"] if gia["tipo"] == "sedi" else []
+            note = ({(cup_http._norm(x), k) for k, v in self.store.sedi_per_comune().items() for x in v}
+                    | {cup_http.chiave_sede(x, y) for x, y in luoghi}
+                    | {cup_http.chiave_sede(x["sede"], x["comune"]) for x in gia})
+            # solo sedi che il bot ha visto nei controlli
+            ignote = [x for x in elenco if cup_http.chiave_sede(x["sede"], x["comune"]) not in note]
+            if ignote:
+                nomi = [x["sede"] + (f" ({x['comune']})" if x["comune"] else "") for x in ignote]
+                raise Richiesta(400, "Non trovo tra le sedi viste nei controlli: " + ", ".join(nomi[:3]) +
+                                (f" e altre {len(nomi) - 3}" if len(nomi) > 3 else "") + ". Spuntale dall'elenco.")
+            if not elenco:
+                raise Richiesta(400, "Spunta almeno una sede.")
+            if len(elenco) > cup_http.SEDI_MAX:
+                raise Richiesta(400, f"Al massimo {cup_http.SEDI_MAX} sedi: ne hai spuntate {len(elenco)}.")
+            zona = {"tipo": "sedi", "valore": elenco}
         elif tipo == "tutte":
             zona = {"tipo": "tutte", "valore": ""}
         else:
@@ -711,7 +769,7 @@ class App:
         if z["tipo"] == "sede" and z["valore"] and z["valore"] != att.luogo.sede:
             scelto = "sede_vista"
         if z["tipo"] == "comuni" or "centro" in q:  # "centro": il foglio ricaricato da "Centra qui"
-            scelto = "comuni"
+            scelto = "sedi" if q.get("tipo") == "sedi" else "comuni"
         voci = "".join(
             f'<label class="scelta"><input type="radio" name="tipo" value="{t}"{" checked" if t == scelto else ""}>'
             f'<span>{e(testo)}</span></label>' for t, testo in scelte)
@@ -720,10 +778,7 @@ class App:
         altro_val = botmod.titolo(z["valore"]) if scelto == "altro" else ""
         sede_vista = ""
         if luoghi:
-            opzioni = "".join(
-                f'<option value="{e(l["sede"])}"{" selected" if scelto == "sede_vista" and l["sede"] == z["valore"] else ""}>'
-                f'{e(botmod.titolo(l["sede"]))}{" · " + e(botmod.titolo(l["comune"])) if l.get("comune") else ""}</option>'
-                for l in sorted(luoghi, key=lambda l: (l.get("comune", ""), l["sede"])))
+            opzioni = self.opzioni_sede_vista(luoghi, z, scelto)
             sede_vista = f"""
   <label class="scelta"><input type="radio" name="tipo" value="sede_vista"{" checked" if scelto == "sede_vista" else ""}>
     <span>Una sede trovata nei controlli<select name="sede">{opzioni}</select></span></label>"""
@@ -735,12 +790,22 @@ class App:
   <label class="scelta"><input type="radio" name="tipo" value="altro"{" checked" if scelto == "altro" else ""}>
     <span>Un altro comune <input type="text" name="comune" value="{e(altro_val)}" placeholder="es. Torino"
       list="comuni-{p['id']}" autocomplete="off" maxlength="40"></span></label>
-  {self.voci_comuni(p, z, scelto, q)}
+  {self.voci_comuni(p, z, scelto, q)}{self.voci_sedi(p, z, scelto, q)}
   <datalist id="comuni-{p['id']}">{lista_comuni}</datalist>
-  <p class="nota">Comuni e provincia allargano la ricerca a tutto il Piemonte: il controllo è più lento
+  <p class="nota">Sedi scelte, comuni e provincia allargano la ricerca a tutto il Piemonte: il controllo è più lento
     ma vede anche le altre aziende sanitarie.</p>
   <button class="primario">Salva</button>
 </form>"""
+
+    def opzioni_sede_vista(self, luoghi, z, scelto):
+        """Le opzioni di "Una sede trovata nei controlli": il valore e' la coppia [sede, comune] (ci sono sedi
+        omonime). Selezionata una sola: la prima col nome della zona "sede"."""
+        ordinati = sorted(luoghi, key=lambda l: (l.get("comune", ""), l["sede"]))
+        scelta = next((l for l in ordinati if scelto == "sede_vista" and l["sede"] == z["valore"]), None)
+        return "".join(
+            f'<option value="{e(json_sedi([l["sede"], l.get("comune", "")]))}"{" selected" if l is scelta else ""}>'
+            f'{e(botmod.titolo(l["sede"]))}{" · " + e(botmod.titolo(l["comune"])) if l.get("comune") else ""}</option>'
+            for l in ordinati)
 
     def foglio_dove_nuova(self, p, z, q):
         """Ricetta mai prenotata: nessuna sede di riferimento. Un comune, una provincia o una sede tra quelle
@@ -750,7 +815,7 @@ class App:
         comuni = sorted({l["comune"] for l in luoghi if l.get("comune")})
         scelto = {"comune": "altro", "sede": "sede_vista", "provincia": "provincia_vista"}.get(z["tipo"], z["tipo"])
         if z["tipo"] == "comuni" or "centro" in q:
-            scelto = "comuni"
+            scelto = "sedi" if q.get("tipo") == "sedi" else "comuni"
 
         def voce(tipo, testo, extra=""):
             return (f'<label class="scelta"><input type="radio" name="tipo" value="{tipo}"'
@@ -760,15 +825,13 @@ class App:
                           f'{e(botmod.titolo(z["valore"]) if scelto == "altro" else "")}" placeholder="es. Torino" '
                           f'list="comuni-{p["id"]}" autocomplete="off" maxlength="40">'))
         parti.append(self.voci_comuni(p, z, scelto, q))
+        parti.append(self.voci_sedi(p, z, scelto, q))
         if province:
             opzioni = "".join(f'<option value="{e(v)}"{" selected" if scelto == "provincia_vista" and v == z["valore"] else ""}>'
                               f'{e(v)}</option>' for v in province)
             parti.append(voce("provincia_vista", "In una provincia trovata nei controlli", f'<select name="prov">{opzioni}</select>'))
         if luoghi:
-            opzioni = "".join(
-                f'<option value="{e(l["sede"])}"{" selected" if scelto == "sede_vista" and l["sede"] == z["valore"] else ""}>'
-                f'{e(botmod.titolo(l["sede"]))}{" · " + e(botmod.titolo(l["comune"])) if l.get("comune") else ""}</option>'
-                for l in sorted(luoghi, key=lambda l: (l.get("comune", ""), l["sede"])))
+            opzioni = self.opzioni_sede_vista(luoghi, z, scelto)
             parti.append(voce("sede_vista", "Una sede trovata nei controlli", f'<select name="sede">{opzioni}</select>'))
         lista = "".join(f'<option value="{e(botmod.titolo(c))}">' for c in comuni)
         return f"""
@@ -778,10 +841,59 @@ class App:
 <form id="dove-{p['id']}" hx-post="/ui/r/{p['id']}/dove" hx-target="#ricette" hx-swap="innerMorph" class="scelte">
   {"".join(parti)}
   <datalist id="comuni-{p['id']}">{lista}</datalist>
-  <p class="nota">Comuni e provincia allargano la ricerca a tutto il Piemonte: il controllo è più lento
+  <p class="nota">Sedi scelte, comuni e provincia allargano la ricerca a tutto il Piemonte: il controllo è più lento
     ma vede anche le altre aziende sanitarie.</p>
   <button class="primario">Salva</button>
 </form>"""
+
+    def centro_dove(self, p, q):
+        """(comune scritto in "Centra qui", centro, [(comune, km)] di tutto il Piemonte dal centro). Centro:
+        quello scritto, altrimenti il comune della prenotazione, altrimenti Torino."""
+        att = botmod.attuale_di(p)
+        scritto = " ".join(q.get("centro", "").split())
+        proprio = "" if botmod.da_prenotare(p) else cup_http.comune(att.luogo)
+        for nome in (scritto, proprio, "TORINO"):
+            tutti = cup_http.vicini(nome, float("inf")) if nome else []
+            if tutti:
+                return scritto, tutti[0][0], tutti
+        return scritto, "", []
+
+    def voci_sedi(self, p, z, scelto, q):
+        """La scelta "Sedi scelte": le sedi del registro (Store.sedi_per_comune) nei comuni entro VICINI_MAX_KM
+        dal centro di "Questi comuni", dalla piu' vicina, piu' quelle gia' spuntate anche se lontane. Una sede e'
+        la coppia sede + comune (ci sono sedi omonime). Le spunte stanno nel campo nascosto "sedi" (coppie
+        [sede, comune] in JSON), che app.js aggiorna a ogni tocco."""
+        _, centro, tutti = self.centro_dove(p, q)
+        if "centro" in q:
+            scelte = cup_http.zona_norm({"tipo": "sedi", "valore": coppie_sedi(q.get("sedi", "")) or []})["valore"]
+        else:
+            scelte = z["valore"] if z["tipo"] == "sedi" else []
+        km = {cup_http._chiave_comune(n): d for n, d in tutti}
+        righe = {}  # chiave_sede -> (km, sede, comune)
+        for chiave, viste in self.store.sedi_per_comune().items():
+            if km.get(chiave, float("inf")) <= VICINI_MAX_KM:
+                for sede in viste:
+                    righe[(cup_http._norm(sede), chiave)] = (km[chiave], sede, cup_http.NOMI_COMUNI[chiave])
+        for x in scelte:
+            k = cup_http.chiave_sede(x["sede"], x["comune"])
+            righe[k] = (km.get(k[1], float("inf")), x["sede"], x["comune"])  # la coppia salvata, com'e'
+        spuntate = {cup_http.chiave_sede(x["sede"], x["comune"]) for x in scelte}
+        voci = "".join(
+            f'<label class="cm"><input type="checkbox" value="{e(json_sedi([sede, comune]))}"'
+            f'{" checked" if k in spuntate else ""}><span>{e(botmod.titolo(sede))}'
+            f'<em class="cm-sedi">{e(botmod.titolo(comune) or "comune non indicato")}</em></span>'
+            f'<small>{"" if d == float("inf") else "centro" if d == 0 else f"{d:.0f} km"}</small></label>'
+            for k, (d, sede, comune) in sorted(righe.items(), key=lambda x: (x[1][0], x[1][2], x[1][1])))
+        vuoto = "" if voci else (f'<p class="nota">Il bot non ha ancora visto sedi entro {VICINI_MAX_KM} km da '
+                                 f'{e(botmod.titolo(centro))}: dopo i primi controlli compaiono qui.</p>')
+        return f"""
+  <label class="scelta"><input type="radio" name="tipo" value="sedi"{" checked" if scelto == "sedi" else ""}>
+    <span>Sedi scelte<small>Spunta le sedi in cui cercare, al massimo {cup_http.SEDI_MAX}: quelle viste dai
+      controlli entro {VICINI_MAX_KM} km da {e(botmod.titolo(centro))}, più quelle già scelte.</small></span></label>
+  <div class="comuni-scelta">
+    <input type="hidden" name="sedi" value="{e(json_sedi([[x["sede"], x["comune"]] for x in scelte]))}">{vuoto}
+    <div class="cm-elenco">{voci}</div>
+  </div>"""
 
     def voci_comuni(self, p, z, scelto, q):
         """La scelta "Questi comuni": i comuni vicini a un centro, dal piu' vicino, da spuntare (entro VICINI_KM,
@@ -790,15 +902,7 @@ class App:
         qui", altrimenti il comune della prenotazione, altrimenti Torino. Solo i comuni con sedi nel registro
         (Store.sedi_per_comune, di tutte le ricette) e quelli gia' spuntati; i comuni del preset senza sedi
         sono righe nascoste che app.js mostra al tocco di "Torino e prima cintura"."""
-        att = botmod.attuale_di(p)
-        scritto = " ".join(q.get("centro", "").split())
-        proprio = "" if botmod.da_prenotare(p) else cup_http.comune(att.luogo)
-        centro, tutti = "", []
-        for nome in (scritto, proprio, "TORINO"):
-            tutti = cup_http.vicini(nome, float("inf")) if nome else []
-            if tutti:
-                centro = tutti[0][0]
-                break
+        scritto, centro, tutti = self.centro_dove(p, q)
         avviso = (f'<p class="errore">Non trovo «{e(scritto)}» tra i comuni del Piemonte: '
                   f'centro su {e(botmod.titolo(centro))}.</p>' if scritto and not cup_http.elenco_comuni([scritto])[0]
                   else "")

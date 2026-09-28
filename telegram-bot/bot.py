@@ -436,9 +436,29 @@ def nomi_comuni(elenco, massimo=4):
     return ", ".join(nomi[:massimo]) + (" e un altro" if resto == 1 else f" e altri {resto}")
 
 
+def quante_sedi(elenco):
+    return "1 sede scelta" if len(elenco) == 1 else f"{len(elenco)} sedi scelte"
+
+
+def nomi_sedi(elenco):
+    """Zona "sedi": i nomi delle sedi, col comune solo per quelle omonime ("Poliambulatorio (Alba)")."""
+    uguali = collections.Counter(cup_http._norm(x["sede"]) for x in elenco)
+    nomi = []
+    for x in elenco:
+        omonima = x["comune"] and uguali[cup_http._norm(x["sede"])] > 1
+        nomi.append(titolo(x["sede"]) + (f" ({titolo(x['comune'])})" if omonima else ""))
+    return nomi
+
+
 def descr_zona(zona, att):
     z = cup_http.zona_norm(zona)
     tipo, v = z["tipo"], z["valore"]
+    if tipo == "sedi":
+        if not v:
+            return "in nessuna sede"
+        nomi = nomi_sedi(v)
+        elenco = ", ".join(nomi) if len(nomi) <= 3 else f"{', '.join(nomi[:2])} e altre {len(nomi) - 2}"
+        return f"solo in {quante_sedi(v)}: {elenco}"
     if tipo == "comuni":
         return f"a {nomi_comuni(v)}" if v else "in nessun comune"
     if tipo == "sede":
@@ -459,6 +479,8 @@ def area_breve(zona, att):
         return f"a {titolo(z['valore'] or (cup_http.comune(att.luogo) if att else ''))}"
     if z["tipo"] == "comuni":
         return f"a {nomi_comuni(z['valore'])}" if z["valore"] else ""
+    if z["tipo"] == "sedi":
+        return f"in {quante_sedi(z['valore'])}" if z["valore"] else ""
     if z["tipo"] == "provincia":
         return f"in provincia ({z['valore'] or (cup_http.provincia(att.luogo) if att else '')})"
     return ""
@@ -871,13 +893,15 @@ class Bot:
                        "ind": x.luogo.indirizzo, "area": x.key() in area, "ok": x.key() in migliori,
                        "k": x.key(), "sel": bool(x.proposta or (x.seleziona_id and not res.get("solo_proposta")))}
                       for x in res["slots"][:MAX_VISTE]]
-        luoghi = {l["sede"]: l for l in p.get("luoghi", [])}
+        # per sede e comune: ci sono sedi omonime in comuni diversi ("POLIAMBULATORIO")
+        luoghi = {(l["sede"], l.get("comune", "")): l for l in p.get("luoghi", [])}
         for x in res["slots"]:
-            luoghi[x.luogo.sede] = {"sede": x.luogo.sede, "comune": cup_http.comune(x.luogo),
-                                    "prov": cup_http.provincia(x.luogo)}
-        p["luoghi"] = list(luoghi.values())[-MAX_LUOGHI:]
+            luoghi[(x.luogo.sede, cup_http.comune(x.luogo))] = {
+                "sede": x.luogo.sede, "comune": cup_http.comune(x.luogo), "prov": cup_http.provincia(x.luogo)}
+        con_comune = {s for s, co in luoghi if co}  # la stessa sede senza comune (vista prima) e' un doppione
+        p["luoghi"] = [l for (s, co), l in luoghi.items() if co or s not in con_comune][-MAX_LUOGHI:]
         ora = time.time()
-        self.registra_sedi([luoghi[x.luogo.sede] for x in res["slots"]], ora)
+        self.registra_sedi([luoghi[(x.luogo.sede, cup_http.comune(x.luogo))] for x in res["slots"]], ora)
         voce = {"t": ora, "a": nell_area[0].quando.isoformat() if nell_area else None,
                 "r": res["attuale"].quando.isoformat()}
         storico = [v for v in p.get("storico", []) if v["t"] > ora - STORICO_GIORNI * 86400]
@@ -1964,7 +1988,7 @@ class Bot:
                         # la zona era "quella della prenotazione": con la ricetta nuova vale quella di prima
                         z["valore"] = {"sede": vecchia.luogo.sede, "comune": cup_http.comune(vecchia.luogo),
                                        "provincia": cup_http.provincia(vecchia.luogo)}[z["tipo"]]
-                    if not att and z["tipo"] not in ("tutte", "comuni") and not z["valore"]:
+                    if not att and z["tipo"] not in ("tutte", "comuni", "sedi") and not z["valore"]:
                         z = {"tipo": "tutte", "valore": ""}  # senza prenotazione non c'e' una sede da cui ricavarla
                     f.update(nuovi, zona=z)
                     for k in ("libera", "viste", "storico", "riassunto", "ultimo", "luoghi"):

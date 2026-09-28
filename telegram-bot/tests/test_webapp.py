@@ -324,9 +324,34 @@ def test_sede_solo_tra_quelle_viste(app):
     b = app.bot
     fam = pratica(b, 1, 1)
     b.controlla(fam)
-    assert post(app, f"/ui/r/{fam['id']}/dove", {"tipo": "sede_vista", "sede": "OSPEDALE INVENTATO"})[0] == 400
-    post(app, f"/ui/r/{fam['id']}/dove", {"tipo": "sede_vista", "sede": "OSP ALBA"})
-    assert app.store.get(fam["id"])["zona"] == {"tipo": "sede", "valore": "OSP ALBA"}
+    dove = f"/ui/r/{fam['id']}/dove"
+    assert post(app, dove, {"tipo": "sede_vista", "sede": webapp.json_sedi(["OSPEDALE INVENTATO", "ALBA"])})[0] == 400
+    assert post(app, dove, {"tipo": "sede_vista", "sede": webapp.json_sedi(["OSP ALBA", "ASTI"])})[0] == 400
+    assert post(app, dove, {"tipo": "sede_vista", "sede": "OSP ALBA"})[0] == 400  # il valore e' la coppia
+    assert post(app, dove, {"tipo": "sede_vista", "sede": "[" * 5000})[0] == 400
+    post(app, dove, {"tipo": "sede_vista", "sede": webapp.json_sedi(["OSP ALBA", "ALBA"])})
+    assert app.store.get(fam["id"])["zona"] == {"tipo": "sede", "valore": "OSP ALBA"}  # nome unico: zona "sede"
+    t = get(app, dove)[2].decode()  # foglio con la zona "sede" salvata: selezionata l'opzione giusta
+    assert 'value="sede_vista" checked' in t
+    assert f'<option value="{webapp.e(webapp.json_sedi(["OSP ALBA", "ALBA"]))}" selected>Osp Alba · Alba</option>' in t
+
+
+def test_sede_vista_omonime_salva_la_coppia(app):
+    pid = pratica(app.bot, 1)["id"]
+    p = app.store.get(pid)
+    p["luoghi"] = [{"sede": "POLIAMBULATORIO", "comune": "ALBA", "prov": "CN"},
+                   {"sede": "POLIAMBULATORIO", "comune": "BRA", "prov": "CN"}]
+    p["zona"] = {"tipo": "sede", "valore": "POLIAMBULATORIO"}  # salvata prima: col solo nome
+    app.store.save(p)
+    t = get(app, f"/ui/r/{pid}/dove")[2].decode()
+    assert t.count(" selected>") == 1 and " selected>Poliambulatorio · Alba</option>" in t  # una sola selezionata
+    stato, _, corpo = post(app, f"/ui/r/{pid}/dove",
+                           {"tipo": "sede_vista", "sede": webapp.json_sedi(["POLIAMBULATORIO", "BRA"])})
+    assert stato == 200 and app.store.get(pid)["zona"] == {"tipo": "sedi",
+                                                           "valore": [{"sede": "POLIAMBULATORIO", "comune": "BRA"}]}
+    assert "cerco solo in 1 sede scelta: Poliambulatorio" in corpo.decode()
+    t = get(app, f"/ui/r/{pid}/dove")[2].decode()
+    assert 'value="sedi" checked' in t and " checked" in riga_sede(t, "POLIAMBULATORIO", "BRA")
 
 
 def test_admin_solo_per_admin_e_metriche(app, monkeypatch):
@@ -823,6 +848,118 @@ def test_foglio_dove_comuni_ricetta_mai_prenotata(b, monkeypatch):
     assert b.zone_viste[-1] == {"tipo": "comuni", "valore": ["TORINO", "MONCALIERI"]}
     assert "a Torino, Moncalieri" in get(app, "/ui/ricette")[2].decode()
 
+
+# --- zona "sedi scelte" -------------------------------------------------------------------
+def js(*coppie):
+    """Il campo nascosto "sedi" (e il valore di una casella): coppie [sede, comune] in JSON compatto."""
+    return webapp.json_sedi([list(x) for x in coppie])
+
+
+def e_js(sede, comune):
+    """Il valore della casella di una sede, come compare nell'HTML."""
+    return webapp.e(webapp.json_sedi([sede, comune]))
+
+
+def riga_sede(t, sede, comune):
+    return riga_comune(t, e_js(sede, comune))
+
+
+def test_sedi_scelte_salva_valida_e_spiega(app):
+    pid = pratica(app.bot, 1)["id"]  # prenotazione all'OSPEDALE A di Torino
+    app.bot.registra_sedi([{"sede": "OSPEDALE C", "comune": "MONCALIERI"},
+                           {"sede": "CASA DELLA SALUTE, NORD - EST", "comune": "TORINO"}], 1)
+    stato, _, corpo = post(app, f"/ui/r/{pid}/dove", {"tipo": "sedi", "sedi": js(
+        ("OSPEDALE C", "MONCALIERI"), (" CASA DELLA SALUTE, NORD - EST ", "TORINO"), ("OSPEDALE A", "TORINO"),
+        ("ospedale c", "Moncalieri"))})
+    zona = {"tipo": "sedi", "valore": [{"sede": "OSPEDALE C", "comune": "MONCALIERI"},
+                                       {"sede": "CASA DELLA SALUTE, NORD - EST", "comune": "TORINO"},
+                                       {"sede": "OSPEDALE A", "comune": "TORINO"}]}
+    assert stato == 200 and app.store.get(pid)["zona"] == zona
+    assert "cerco solo in 3 sedi scelte: Ospedale C, Casa della Salute, Nord - Est, Ospedale A" in corpo.decode()
+    stato, _, corpo = post(app, f"/ui/r/{pid}/dove", {"tipo": "sedi", "sedi": js(("OSPEDALE C", "MONCALIERI"),
+                                                                              ("<script>", "TORINO"))})
+    t = corpo.decode()
+    assert stato == 400 and "Non trovo tra le sedi viste nei controlli: &lt;script&gt; (TORINO)" in t
+    assert "<script>" not in t
+    stato, _, corpo = post(app, f"/ui/r/{pid}/dove", {"tipo": "sedi", "sedi": js(("OSPEDALE C", "TORINO"))})
+    assert stato == 400 and "OSPEDALE C (TORINO)" in corpo.decode()  # c'e', ma in un altro comune
+    assert post(app, f"/ui/r/{pid}/dove", {"tipo": "sedi", "sedi": js((" ", "TORINO"))})[0] == 400
+    assert post(app, f"/ui/r/{pid}/dove", {"tipo": "sedi", "sedi": "OSPEDALE C|OSPEDALE A"})[0] == 400
+    assert post(app, f"/ui/r/{pid}/dove", {"tipo": "sedi", "sedi": '[["OSPEDALE C"]]'})[0] == 400
+    stato, _, corpo = post(app, f"/ui/r/{pid}/dove", {"tipo": "sedi", "sedi": "x" * 5000})
+    assert stato == 400 and "elenco delle sedi è troppo lungo: al massimo 20 sedi" in corpo.decode()
+    molte = [(f"SEDE {i}", "TORINO") for i in range(21)]
+    app.bot.registra_sedi([{"sede": x, "comune": y} for x, y in molte], 1)
+    stato, _, corpo = post(app, f"/ui/r/{pid}/dove", {"tipo": "sedi", "sedi": js(*molte)})
+    assert stato == 400 and "Al massimo 20 sedi: ne hai spuntate 21" in corpo.decode()
+    assert app.store.get(pid)["zona"] == zona  # gli errori non toccano nulla
+
+
+def test_sedi_scelte_omonime_in_comuni_diversi(app):
+    pid = pratica(app.bot, 1)["id"]
+    app.bot.registra_sedi([{"sede": "POLIAMBULATORIO", "comune": "MONCALIERI"},
+                           {"sede": "POLIAMBULATORIO", "comune": "RIVOLI"}], 1)
+    t = get(app, f"/ui/r/{pid}/dove")[2].decode()
+    assert '<em class="cm-sedi">Moncalieri</em>' in riga_sede(t, "POLIAMBULATORIO", "MONCALIERI")
+    assert '<em class="cm-sedi">Rivoli</em>' in riga_sede(t, "POLIAMBULATORIO", "RIVOLI")  # due righe distinte
+    stato, _, corpo = post(app, f"/ui/r/{pid}/dove", {"tipo": "sedi", "sedi": js(("POLIAMBULATORIO", "RIVOLI"))})
+    assert stato == 200 and app.store.get(pid)["zona"]["valore"] == [{"sede": "POLIAMBULATORIO", "comune": "RIVOLI"}]
+    t = get(app, f"/ui/r/{pid}/dove")[2].decode()
+    assert " checked" in riga_sede(t, "POLIAMBULATORIO", "RIVOLI")
+    assert " checked" not in riga_sede(t, "POLIAMBULATORIO", "MONCALIERI")
+    post(app, f"/ui/r/{pid}/dove", {"tipo": "sedi", "sedi": js(("POLIAMBULATORIO", "RIVOLI"),
+                                                               ("POLIAMBULATORIO", "MONCALIERI"))})
+    assert ("solo in 2 sedi scelte: Poliambulatorio (Rivoli), Poliambulatorio (Moncalieri)"
+            in get(app, "/ui/ricette")[2].decode())
+
+
+def test_foglio_dove_sedi_da_spuntare(app):
+    pid = pratica(app.bot, 1)["id"]
+    t = get(app, f"/ui/r/{pid}/dove")[2].decode()
+    assert 'value="sedi">' in t and 'name="sedi" value="[]"' in t
+    assert "Il bot non ha ancora visto sedi entro 25 km da Torino" in t
+    app.bot.registra_sedi([{"sede": "OSPEDALE C", "comune": "MONCALIERI"}, {"sede": "OSP <B>", "comune": "TORINO"},
+                           {"sede": "PRESIDIO", "comune": "SUSA"}], 1)
+    t = get(app, f"/ui/r/{pid}/dove")[2].decode()
+    assert "<small>8 km</small>" in riga_sede(t, "OSPEDALE C", "MONCALIERI")
+    assert '<em class="cm-sedi">Moncalieri</em>' in riga_sede(t, "OSPEDALE C", "MONCALIERI")
+    assert "<small>centro</small>" in riga_sede(t, "OSP <B>", "TORINO") and "OSP <B>" not in t
+    assert not riga_sede(t, "PRESIDIO", "SUSA")  # oltre 25 km
+    assert t.index(e_js("OSP <B>", "TORINO")) < t.index(e_js("OSPEDALE C", "MONCALIERI"))  # dalla piu' vicina
+    post(app, f"/ui/r/{pid}/dove", {"tipo": "sedi", "sedi": js(("OSPEDALE C", "MONCALIERI"), ("PRESIDIO", "SUSA"))})
+    t = get(app, f"/ui/r/{pid}/dove")[2].decode()
+    campo = webapp.e(js(("OSPEDALE C", "MONCALIERI"), ("PRESIDIO", "SUSA")))
+    assert 'value="sedi" checked' in t and f'name="sedi" value="{campo}"' in t
+    assert " checked" in riga_sede(t, "PRESIDIO", "SUSA")  # lontana ma scelta
+    assert " checked" in riga_sede(t, "OSPEDALE C", "MONCALIERI")
+    assert " checked" not in riga_sede(t, "OSP <B>", "TORINO")
+    # "Centra qui" con "Sedi scelte" attiva: la scelta e le spunte restano
+    q = urlencode({"centro": "Susa", "tipo": "sedi", "sedi": js(("PRESIDIO", "SUSA")), "comuni": ""})
+    t = get(app, f"/ui/r/{pid}/dove?{q}")[2].decode()
+    assert 'value="sedi" checked' in t and 'value="comuni" checked' not in t
+    assert "<small>centro</small>" in riga_sede(t, "PRESIDIO", "SUSA")
+    assert " checked" in riga_sede(t, "PRESIDIO", "SUSA") and not riga_sede(t, "OSPEDALE C", "MONCALIERI")
+    q = urlencode({"centro": "Torino", "tipo": "comuni", "sedi": "rotto", "comuni": "RIVOLI"})
+    t = get(app, f"/ui/r/{pid}/dove?{q}")[2].decode()  # con "Questi comuni": come prima
+    assert 'value="comuni" checked' in t and 'value="sedi" checked' not in t and 'name="sedi" value="[]"' in t
+    assert "solo in 2 sedi scelte: Ospedale C, Presidio" in get(app, "/ui/ricette")[2].decode()
+
+
+def test_foglio_dove_sedi_ricetta_mai_prenotata(b, monkeypatch):
+    from test_bot import registra_nuova
+    monkeypatch.setattr(webapp, "PAUSA_AZIONI", 0)
+    b.token = TOKEN
+    registra_nuova(b)
+    app = webapp.App(b, b.store)
+    pid = pratica(b)["id"]
+    nord = js(("POLIAMBULATORIO NORD", "TORINO"))
+    assert post(app, f"/ui/r/{pid}/dove", {"tipo": "sedi", "sedi": nord})[0] == 400  # mai vista
+    b.controlla(b.store.get(pid))
+    t = get(app, f"/ui/r/{pid}/dove")[2].decode()
+    assert 'value="sedi">' in t and riga_sede(t, "POLIAMBULATORIO NORD", "TORINO")
+    stato, _, corpo = post(app, f"/ui/r/{pid}/dove", {"tipo": "sedi", "sedi": nord})
+    assert stato == 200 and "cerco solo in 1 sede scelta: Poliambulatorio Nord" in corpo.decode()
+    assert 'value="sedi" checked' in get(app, f"/ui/r/{pid}/dove")[2].decode()
 
 # --- prenotazione in corso, data da verificare, sorveglianza, rapporto guasti -------------------
 from datetime import datetime, timedelta  # noqa: E402

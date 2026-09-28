@@ -649,8 +649,9 @@ class CupSession:
 
 
 # --- API usata dal bot ------------------------------------------------------------------
-ZONE = ("sede", "comune", "comuni", "provincia", "tutte")  # dove l'utente accetta una data nuova
+ZONE = ("sede", "sedi", "comune", "comuni", "provincia", "tutte")  # dove l'utente accetta una data nuova
 COMUNI_MAX = 30  # comuni al massimo in una zona "comuni"
+SEDI_MAX = 20  # sedi al massimo in una zona "sedi"
 # Ricetta mai prenotata con piu' prestazioni: dal vivo (2026-09-25) con una data di "Altre disponibilita'"
 # il bot non e' arrivato al Riepilogo, mentre accettare la proposta del portale ("Avanti") ha prenotato tutto.
 SOLO_PROPOSTA = ("Con piu' prestazioni prenoto solo la data proposta dal portale per tutte insieme: "
@@ -738,14 +739,28 @@ def e_cintura(elenco):
     return {_chiave_comune(x) for x in elenco} == {_chiave_comune(x) for x in CINTURA_TORINO}
 
 
+def chiave_sede(sede, nome_comune):
+    """Una sede della zona "sedi" e' la coppia sede + comune (come lo legge comune()): ci sono sedi omonime
+    in comuni diversi ("POLIAMBULATORIO")."""
+    return _norm(sede), _chiave_comune(nome_comune)
+
+
 def zona_norm(zona):
-    """{"tipo": sede|comune|comuni|provincia|tutte, "valore": ...}: per "comuni" una lista di nomi, per gli
-    altri una stringa. Accetta anche i formati precedenti (True/False = stessa sede si'/no, oppure solo il
-    tipo come stringa)."""
+    """{"tipo": sede|sedi|comune|comuni|provincia|tutte, "valore": ...}: per "comuni" una lista di nomi, per
+    "sedi" una lista di {"sede", "comune"} (senza doppioni, al massimo SEDI_MAX), per gli altri una stringa.
+    Accetta anche i formati precedenti (True/False = stessa sede si'/no, oppure solo il tipo come stringa)."""
     if isinstance(zona, dict) and zona.get("tipo") in ZONE:
         v = zona.get("valore") or ""
         if zona["tipo"] == "comuni":
             v = [x for x in v if isinstance(x, str) and x] if isinstance(v, list) else []
+        elif zona["tipo"] == "sedi":
+            coppie = {}
+            for x in (v if isinstance(v, list) else []):
+                if (isinstance(x, dict) and isinstance(x.get("sede"), str) and isinstance(x.get("comune", ""), str)
+                        and _norm(x["sede"])):
+                    voce = {"sede": x["sede"].strip(), "comune": x.get("comune", "").strip()}
+                    coppie.setdefault(chiave_sede(voce["sede"], voce["comune"]), voce)
+            v = list(coppie.values())[:SEDI_MAX]
         elif not isinstance(v, str):
             v = ""
         return {"tipo": zona["tipo"], "valore": v}
@@ -756,9 +771,9 @@ def zona_norm(zona):
 
 
 def estensioni(zona):
-    """Per comune, comuni e provincia serve estendere l'area: le sedi fuori dall'azienda della prenotazione
+    """Per sedi, comune, comuni e provincia serve estendere l'area: le sedi fuori dall'azienda della prenotazione
     compaiono solo cosi'. "sede" e "tutte" restano nell'area proposta dal CUP."""
-    return ESTENDI_MAX if zona_norm(zona)["tipo"] in ("comune", "comuni", "provincia") else 0
+    return ESTENDI_MAX if zona_norm(zona)["tipo"] in ("sedi", "comune", "comuni", "provincia") else 0
 
 
 def ammesso(slot, attuale, zona="sede"):
@@ -771,6 +786,9 @@ def ammesso(slot, attuale, zona="sede"):
     if tipo == "sede":
         rif = rif or (attuale.luogo.sede if attuale else "")
         return bool(rif) and _norm(slot.luogo.sede) == _norm(rif)
+    if tipo == "sedi":
+        scelte = {chiave_sede(x["sede"], x["comune"]) for x in rif}
+        return chiave_sede(slot.luogo.sede, comune(slot.luogo)) in scelte
     if tipo == "comune":
         rif = rif or (comune(attuale.luogo) if attuale else "")
         return bool(rif) and _chiave_comune(comune(slot.luogo)) == _chiave_comune(rif)

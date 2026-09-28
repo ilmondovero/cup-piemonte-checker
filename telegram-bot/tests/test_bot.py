@@ -348,6 +348,32 @@ def test_offerta_e_prenotazione_nella_stessa_sessione(b):
     assert any(t.startswith("✅ Prenotazione spostata") and "OSPEDALE A" in t for t in inviati(b))
 
 
+def test_prenotazione_con_la_zona_riletta(b, monkeypatch):
+    """Sedi ristrette dalla Mini App mentre parte la prenotazione: la Conferma usa la zona del database."""
+    registra(b)
+    attiva_auto(b)
+    ristretta = {"tipo": "sedi", "valore": [{"sede": "OSPEDALE C", "comune": "MONCALIERI"}]}
+    dire = b.dire
+
+    def dire_e_cambia(p, testo, *a, **k):
+        if testo.startswith("Sposto la prenotazione a"):  # la Mini App salva proprio adesso
+            fresca = pratica(b)
+            fresca["zona"] = ristretta
+            b.store.save(fresca)
+        return dire(p, testo, *a, **k)
+    monkeypatch.setattr(b, "dire", dire_e_cambia)
+    zone = []
+
+    def prenota(cf, nre, slot, zona="sede", **k):
+        zone.append(zona)
+        if not c.ammesso(slot, ATT, zona):  # come il client vero
+            raise c.CupError("La data scelta e' fuori dalla zona in cui cerchi")
+        return "Prenotazione spostata."
+    monkeypatch.setattr(c, "prenota", prenota)
+    b.controlla(pratica(b))
+    assert zone == [ristretta] and not any(t.startswith("✅ Prenotazione spostata") for t in inviati(b))
+
+
 def test_familiare_con_nome_e_comune(b):
     registra(b)
     aggiungi_familiare(b)
@@ -1837,6 +1863,100 @@ def test_descrizione_zona_comuni():
     assert botmod.descr_zona({"tipo": "comuni", "valore": sei[:5]}, None).endswith("San Mauro Torinese e un altro")
     assert botmod.area_breve(tre, ATT) == "a Torino, Moncalieri, Rivoli"
     assert botmod.descr_zona({"tipo": "comuni", "valore": []}, None) == "in nessun comune"
+
+
+def sedi(*coppie):
+    return {"tipo": "sedi", "valore": [{"sede": x, "comune": y} for x, y in coppie]}
+
+
+def test_zona_sedi_scelte():
+    osp = c.Slot(datetime(2026, 12, 1), c.Luogo("Ospedale  A", "ESAME", "Via Po 1 - TORINO (TO)"), "a")
+    altro = c.Slot(datetime(2026, 12, 1), c.Luogo("OSP M", "ESAME", "Via Roma 2 - MONCALIERI (TO)"), "b")
+    senza = c.Slot(datetime(2026, 12, 1), c.Luogo("", "ESAME", "Via Po 1 - TORINO (TO)"), "c")
+    zona = sedi(("OSPEDALE A", "Torino"), ("OSP X", "TORINO"))
+    assert c.ammesso(osp, ATT, zona) and c.ammesso(osp, None, zona)  # confronto con _norm: spazi e maiuscole
+    assert not c.ammesso(altro, ATT, zona) and not c.ammesso(senza, None, zona)
+    assert not c.ammesso(osp, None, sedi())
+    assert c.estensioni(zona) == c.ESTENDI_MAX
+    # sedi omonime in comuni diversi: vale solo quella del comune scelto
+    alba = c.Slot(datetime(2026, 12, 1), c.Luogo("POLIAMBULATORIO", "ESAME", "Via X 1 - ALBA (CN)"), "d")
+    bra = c.Slot(datetime(2026, 12, 1), c.Luogo("POLIAMBULATORIO", "ESAME", "Via Y 2 - BRA (CN)"), "e")
+    solo_alba = sedi(("POLIAMBULATORIO", "ALBA"))
+    assert c.ammesso(alba, None, solo_alba) and not c.ammesso(bra, None, solo_alba)
+    # comune non leggibile: la coppia col comune vuoto, letto con la stessa comune()
+    ignoto = c.Slot(datetime(2026, 12, 1), c.Luogo("AMBULATORIO", "ESAME", "Via W - ()"), "f")
+    assert c.comune(ignoto.luogo) == "" and c.ammesso(ignoto, None, sedi(("AMBULATORIO", "")))
+    assert not c.ammesso(ignoto, None, sedi(("AMBULATORIO", "TORINO")))
+
+
+def test_zona_sedi_ripulita():
+    grezza = [{"sede": " OSP A ", "comune": "Mondovi'"}, {"sede": "osp a", "comune": "MONDOVÌ"},
+              {"sede": "OSP A", "comune": "ALBA"}, {"sede": " ", "comune": "ALBA"}, {"sede": " - ", "comune": "ALBA"},
+              "OSP B", 3, {"sede": 3}, {"sede": "OSP C"}]
+    # doppioni sulla coppia normalizzata; una voce senza comune vale col comune vuoto
+    attese = sedi(("OSP A", "Mondovi'"), ("OSP A", "ALBA"), ("OSP C", ""))
+    assert c.zona_norm({"tipo": "sedi", "valore": grezza}) == attese
+    assert c.zona_norm({"tipo": "sedi", "valore": "OSP A"}) == sedi()
+    molte = sedi(*[(f"S{i}", "TORINO") for i in range(30)])
+    assert len(c.zona_norm(molte)["valore"]) == c.SEDI_MAX
+
+
+def test_sedi_omonime_dal_controllo(b, monkeypatch):
+    registra(b)
+    poli = [c.Slot(ATT.quando - timedelta(days=d), c.Luogo("POLIAMBULATORIO", "AMB", f"Via X {d} - {nome} (TO)"), None,
+                   proposta=True) for d, nome in ((20, "TORINO"), (10, "RIVOLI"))]
+    monkeypatch.setattr(c, "check", lambda cf, nre, zona: {
+        "attuale": ATT, "slots": poli, "sessione": "S",
+        "migliori": [x for x in poli if c.ammesso(x, ATT, zona)]})
+    p = pratica(b)
+    p["zona"] = sedi(("POLIAMBULATORIO", "RIVOLI"))
+    b.store.save(p)
+    b.controlla(p)
+    sedi_viste = b.store.sedi_per_comune()
+    assert sedi_viste["TORINO"] == ["POLIAMBULATORIO"] and sedi_viste["RIVOLI"] == ["POLIAMBULATORIO"]
+    assert {(l["sede"], l["comune"]) for l in pratica(b)["luoghi"]} == {("POLIAMBULATORIO", "TORINO"),
+                                                                         ("POLIAMBULATORIO", "RIVOLI")}
+    p = pratica(b)
+    p["luoghi"] = [{"sede": "POLIAMBULATORIO", "comune": "", "prov": ""}, {"sede": "SOLO", "comune": "", "prov": ""}]
+    b.store.save(p)
+    b.controlla(p)  # la stessa sede vista prima senza comune: resta solo con il comune
+    assert {(l["sede"], l["comune"]) for l in pratica(b)["luoghi"]} == {("POLIAMBULATORIO", "TORINO"),
+                                                                         ("POLIAMBULATORIO", "RIVOLI"), ("SOLO", "")}
+    assert "2 date trovate in Piemonte, 1 in 1 sede scelta, ✅ 1 prima della tua" in pannello(b)  # solo Rivoli
+
+
+def test_descrizione_zona_sedi():
+    tre = sedi(("OSPEDALE A", "TORINO"), ("OSPEDALE B", "TORINO"), ("CASA DELLA SALUTE", "RIVOLI"))
+    assert botmod.descr_zona(tre, ATT) == "solo in 3 sedi scelte: Ospedale A, Ospedale B, Casa della Salute"
+    cinque = sedi(*[(x["sede"], x["comune"]) for x in tre["valore"]], ("OSP D", "ALBA"), ("OSP E", "ALBA"))
+    assert botmod.descr_zona(cinque, None) == "solo in 5 sedi scelte: Ospedale A, Ospedale B e altre 3"
+    assert botmod.descr_zona(sedi(("OSPEDALE A", "TORINO")), None) == "solo in 1 sede scelta: Ospedale A"
+    omonime = sedi(("POLIAMBULATORIO", "ALBA"), ("POLIAMBULATORIO", "BRA"), ("OSP", "BRA"))
+    assert botmod.descr_zona(omonime, None) == \
+        "solo in 3 sedi scelte: Poliambulatorio (Alba), Poliambulatorio (Bra), Osp"  # omonime: col comune
+    assert botmod.descr_zona(sedi(), None) == "in nessuna sede"
+    assert botmod.area_breve(tre, ATT) == "in 3 sedi scelte" and botmod.area_breve({"tipo": "sedi"}, ATT) == ""
+
+
+def test_chat_zona_sedi_scelte(b):
+    registra(b)
+    p = pratica(b)
+    p["zona"] = sedi(("OSPEDALE A", "TORINO"))
+    b.store.save(p)
+    b.controlla(p)
+    t = pannello(b)
+    assert "🔎 Cerco: solo in 1 sede scelta: Ospedale A" in t and "allargo la ricerca" in t
+    assert "3 date trovate in Piemonte, 1 in 1 sede scelta, ✅ 1 prima della tua" in t
+    p = pratica(b)
+    p["zona"] = sedi(("OSPEDALE A", "MONCALIERI"))  # omonima in un altro comune: non vale
+    b.store.save(p)
+    b.controlla(p)
+    assert "0 in 1 sede scelta" in pannello(b)
+    p = pratica(b)
+    p["zona"] = {"tipo": "boh", "valore": 3}  # tipo sconosciuto (versioni future): vale "questa sede"
+    b.store.save(p)
+    b.controlla(p)
+    assert "🔎 Cerco: solo in questa sede" in pannello(b)
 
 
 def test_comuni_vicini_per_distanza():

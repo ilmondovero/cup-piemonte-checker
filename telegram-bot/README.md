@@ -17,7 +17,7 @@ piccolo, senza Chromium.
    **dove cercare** (vedi "Dove cercare" qui sotto): stessa sede, un comune (quello della prenotazione o
    un altro, per esempio Novara), Torino e prima cintura, la provincia, oppure qualsiasi sede proposta
    dal CUP.
-   - Per comuni e provincia il bot preme "Estendi area di ricerca" del portale, fino a 4 volte: le
+   - Per sedi scelte, comuni e provincia il bot preme "Estendi area di ricerca" del portale, fino a 4 volte: le
      aziende sanitarie lontane compaiono solo così, e solo se hanno posti. Il controllo è più lento
      (anche un minuto e mezzo), ma vede tutta la regione.
    - **Più ricette per chat, senza limite** (`MAX_PRATICHE` lo reintroduce). Con `/aggiungi` si segue
@@ -82,18 +82,21 @@ Ogni ricetta ha la sua zona: una data va bene solo se la sede è lì.
   solo dalla Mini App: i comuni entro 25 km da un centro, dal più vicino, con i km in linea d'aria, da
   spuntare. Compaiono solo i comuni dove il bot ha già visto sedi del CUP, più quelli già scelti (anche
   lontani o senza sedi, per poterli togliere).
+- **Sedi scelte** (solo dalla Mini App): fino a 20 sedi precise, spuntate tra quelle del registro nei comuni
+  entro 25 km dal centro di "Questi comuni" (più quelle già scelte). Ogni sede è la coppia sede + comune,
+  perché ci sono sedi omonime in comuni diversi; nel modulo viaggiano come coppie `[sede, comune]` in JSON.
 - **La provincia**, oppure **ovunque proponga il CUP**.
 
 Il comune di una sede si legge dall'indirizzo del portale; se l'indirizzo non lo riporta, dal nome della
 sede ("PRESIDIO - SUSA"). Se non si legge, la data non viene proposta. I nomi si confrontano senza
 accenti e apostrofi ("Mondovì" = "MONDOVI'"). L'elenco dei 1180 comuni del Piemonte, con provincia e
-coordinate del centro, è in `comuni_piemonte.txt` (ISTAT). Per comune, comuni e provincia il bot estende
+coordinate del centro, è in `comuni_piemonte.txt` (ISTAT). Per sedi scelte, comune, comuni e provincia il bot estende
 l'area di ricerca del portale, come detto sopra.
 
 Le sedi viste nei controlli di tutte le ricette finiscono in un registro comune (tabella `sedi`: solo nome
 della sede, comune e ora dell'ultima volta che il portale l'ha mostrata, in chiaro perché sono dati
 pubblici del portale; niente codice fiscale, NRE o chat). All'avvio il bot lo completa con le sedi già
-salvate nelle ricette. Il registro decide quali comuni compaiono in "Questi comuni".
+salvate nelle ricette. Il registro decide quali comuni compaiono in "Questi comuni" e quali sedi in "Sedi scelte".
 
 ## Ricetta mai prenotata (sperimentale)
 
@@ -164,6 +167,7 @@ vecchia. Cosa si fa dall'app:
   solo i comuni entro 25 km dove il bot ha visto sedi del CUP, con "🏥" e il nome della sede (o quante
   sono), più quelli già spuntati, segnati "nessuna sede vista" se non ne hanno. Finché il bot non ha visto
   sedi vicine l'elenco lo dice. "＋ Torino e prima cintura" spunta il preset e mostra i suoi comuni.
+  Con **"Sedi scelte"** si spuntano le singole sedi viste, dalla più vicina allo stesso centro.
 - **Prenoto da solo** (si tocca la riga sulla scheda). La conferma automatica: sì o no.
 - **Calendario** (si tocca la riga "📅 Calendario" sulla scheda). Un mese alla volta, da quello
   corrente fino a 12 mesi dopo (◀ ▶). Ogni giorno è sì o no: un tocco lo cambia. Un tocco sul nome del

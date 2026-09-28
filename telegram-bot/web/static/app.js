@@ -249,21 +249,26 @@
     scriviCal(f, s);
   }, true);
 
-  // --- "Questi comuni" nel foglio "Dove cerco": le spunte stanno nel campo nascosto "comuni" (anche quelle
-  // dei comuni nascosti o fuori elenco), che il server legge al Salva e a "Centra qui". Le righe
-  // data-preset (comuni della cintura senza sedi viste) compaiono solo con "Torino e prima cintura"
+  // --- "Questi comuni" e "Sedi scelte" nel foglio "Dove cerco": le spunte stanno nel campo nascosto
+  // "comuni" (separati da virgola) o "sedi" (coppie [sede, comune] in JSON: nei nomi ci sono virgole),
+  // anche quelle dei comuni nascosti o fuori elenco, che il server legge al Salva e a "Centra qui". Le
+  // righe data-preset (comuni della cintura senza sedi viste) compaiono solo con "Torino e prima cintura"
   const spunte = (box, cambia) => {
-    const campo = box.querySelector('input[name="comuni"]');
-    const s = new Set(campo.value.split(",").filter(Boolean));
+    const campo = box.querySelector('input[type="hidden"]');
+    const sedi = campo.name === "sedi";
+    const s = new Set(sedi ? JSON.parse(campo.value || "[]").map((x) => JSON.stringify(x))
+                           : campo.value.split(",").filter(Boolean));
     cambia(s);
-    campo.value = [...s].join(",");
-    const scelta = box.closest("form").querySelector('input[name="tipo"][value="comuni"]');
+    campo.value = sedi ? `[${[...s].join(",")}]` : [...s].join(",");
+    const scelta = box.closest("form").querySelector(`input[name="tipo"][value="${campo.name}"]`);
     if (scelta) scelta.checked = true;
   };
   document.addEventListener("change", (e) => {
     const c = e.target;
     if (!c.matches || !c.matches('.comuni-scelta .cm input[type="checkbox"]')) return;
-    spunte(c.closest(".comuni-scelta"), (s) => (c.checked ? s.add(c.value) : s.delete(c.value)));
+    const box = c.closest(".comuni-scelta");
+    const v = box.querySelector('input[name="sedi"]') ? JSON.stringify(JSON.parse(c.value)) : c.value;
+    spunte(box, (s) => (c.checked ? s.add(v) : s.delete(v)));
   });
   document.addEventListener("click", (e) => {
     const b = e.target.closest && e.target.closest(".cm-preset, .cm-altri");
