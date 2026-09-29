@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import bot as botmod  # noqa: E402
 import webapp  # noqa: E402
 from store import Store  # noqa: E402
-from test_bot import CF, NRE, aggiungi_familiare, b, pratica, registra  # noqa: E402,F401
+from test_bot import ATT, ATT2, CF, CF2, NRE, NRE2, aggiungi_familiare, b, pratica, registra  # noqa: E402,F401
 from test_bot import CF3 as CF_NUOVA, NRE3 as NRE_NUOVA, COSA3  # noqa: E402
 
 TOKEN = "123456:TEST-token-per-i-test"
@@ -1056,3 +1056,38 @@ def test_pagina_admin_non_manda_avvisi_del_battito(app, monkeypatch):
 
 def test_polling_senza_richieste_sovrapposte(app):
     assert 'hx-sync="this:drop"' in app.pagina()
+
+
+# --- giorni che mancano e giorni guadagnati ----------------------------------------------------
+def test_scheda_giorni_mancanti_e_anticipo(app, monkeypatch):
+    monkeypatch.setattr(botmod, "adesso", lambda: ATT.quando - botmod.timedelta(days=9))
+    p = pratica(app.bot, 1)
+    t = app.scheda(p)
+    assert '<p class="mancano">Tra 9 giorni</p>' in t and "Anticipata" not in t
+    p["prima"] = {"quando": (ATT.quando + botmod.timedelta(days=3)).isoformat(), "sede": "<b>ALTRA</b>"}
+    t = app.scheda(p)
+    assert (f'<p class="mancano">Tra 9 giorni<small>Anticipata di 3 giorni (prima: '
+            f'{botmod.fmt(ATT.quando + botmod.timedelta(days=3))}, &lt;b&gt;altra&lt;/b&gt;)</small></p>') in t
+    assert "<b>" not in t.lower()
+    monkeypatch.setattr(botmod, "adesso", lambda: ATT.quando.replace(hour=0, minute=0))  # stesso giorno, a qualunque ora
+    assert '<p class="mancano">Oggi<small>' in app.scheda(p)
+    monkeypatch.setattr(botmod, "adesso", lambda: ATT.quando + botmod.timedelta(days=1))  # passata: nessuna riga
+    assert 'class="mancano"' not in app.scheda(p)
+
+
+def test_scheda_da_prenotare_senza_righe(app):
+    cerca_e_attendi(app, 3, {"cf": CF_NUOVA, "nre": NRE_NUOVA, "consenso": "1"})
+    [p] = app.store.della_chat(3)
+    post(app, f"/ui/r/{p['id']}/dove", {"tipo": "tutte"}, chat=3)
+    t = get(app, "/ui/ricette", chat=3)[2].decode()
+    assert "Non ancora prenotata" in t and 'class="mancano"' not in t and app.store.get(p["id"])["prima"] is None
+
+
+def test_cambia_ricetta_dall_app_e_la_prima(app):
+    fam = pratica(app.bot, 1, 1)
+    assert fam["prima"] == {"quando": ATT2.quando.isoformat(), "sede": "CLINICA ASTI"}
+    app.store.modifica(fam["id"], lambda f: f.update(prima={"quando": "2027-01-10", "sede": ""}))
+    cerca_e_attendi(app, 1, {"cf": CF2, "nre": NRE2}, percorso=f"/ui/r/{fam['id']}/modifica")  # la stessa
+    assert app.store.get(fam["id"])["prima"] == {"quando": "2027-01-10", "sede": ""}
+    cerca_e_attendi(app, 1, {"cf": CF3, "nre": NRE3}, percorso=f"/ui/r/{fam['id']}/modifica")  # un'altra
+    assert app.store.get(fam["id"])["prima"] == {"quando": ATT.quando.isoformat(), "sede": "OSPEDALE A"}

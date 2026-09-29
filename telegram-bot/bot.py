@@ -273,6 +273,98 @@ def descrivi_prenotazione(att, titolo="Prenotazione"):
     return f"{titolo}:\n🩺 {att.cosa}\n📅 {fmt(att.quando)}\n📍 {att.luogo}"
 
 
+def giorni_mancanti(attuale, oggi):
+    """"oggi", "domani", "tra 9 giorni" (giorni di calendario); "" se la data e' passata o non c'e'."""
+    if attuale >= SENZA_DATA:
+        return ""
+    n = (attuale.date() - oggi.date()).days
+    return "" if n < 0 else "oggi" if n == 0 else "domani" if n == 1 else f"tra {n} giorni"
+
+
+def risparmio(prima, attuale):
+    """Giorni di calendario guadagnati dalla prima prenotazione: negativo se ora e' piu' tardi; None se una
+    delle due non e' una data."""
+    try:
+        return (prima.date() - attuale.date()).days
+    except (AttributeError, TypeError):
+        return None
+
+
+def data_vera(quando):
+    """La data di un testo ISO ("2026-12-23T10:00:00" o "2026-12-23") se e' una prenotazione vera; None se
+    manca, e' scritta male o e' la data lontanissima di una ricetta da prenotare."""
+    try:
+        q = datetime.fromisoformat(quando)
+        return q if q < SENZA_DATA else None
+    except (TypeError, ValueError):
+        return None
+
+
+def prima_di(p):
+    """La prima prenotazione vista dal bot, {"quando": "2026-12-23T10:00:00" (o solo "2026-12-23"), "sede": nome
+    della sede o ""}; None se non ce n'e' ancora una o se e' scritta male. Le ricette
+    salvate prima che esistesse p["prima"] la ricavano dal punto piu' vecchio dell'andamento con una data,
+    o dalla prenotazione attuale; con p["prima"] = None (ricetta nuova) vale solo la prenotazione attuale."""
+    prima = p.get("prima")
+    if prima:
+        return prima if isinstance(prima, dict) and data_vera(prima.get("quando")) else None
+    att = p.get("attuale") or {}
+    storico = [] if "prima" in p else [v.get("r") for v in p.get("storico") or [] if isinstance(v, dict)]
+    for quando in storico + [att.get("quando")]:
+        if data_vera(quando):
+            return {"quando": quando, "sede": att.get("sede", "") if quando == att.get("quando") else ""}
+    return None
+
+
+def giorni(n):
+    return "1 giorno" if n == 1 else f"{n} giorni"
+
+
+def confronto_prima(p, att, sede=False):
+    """(giorni guadagnati, "gio 15/10/2026 ore 10:00, Ospedale X") rispetto alla prima prenotazione, con la
+    sede se diversa da quella attuale; None se non c'e' nulla da confrontare. Con sede=True (messaggi) la sede
+    sempre, e se ora o sede non sono note lo dice."""
+    prima = prima_di(p)
+    if not prima or att.quando >= SENZA_DATA:
+        return None
+    q = data_vera(prima["quando"])  # anche solo la data ("2026-12-23"): l'ora non si mostra
+    n = risparmio(q, att.quando)
+    if n is None:
+        return None
+    con_ora = "T" in prima["quando"]
+    quando = fmt(q) if con_ora else f"{GIORNI[q.weekday()]} {q:%d/%m/%Y}"
+    nome = prima.get("sede") if isinstance(prima.get("sede"), str) else ""
+    dove = titolo(nome) if sede or nome != att.luogo.sede else ""
+    ignote = [x for x, nota in (("ora", con_ora), ("sede", dove)) if not nota] if sede else []
+    ignote = " e ".join(ignote) + (" non registrate" if len(ignote) > 1 else " non registrata") if ignote else ""
+    return n, ", ".join(x for x in (quando, dove, ignote) if x)
+
+
+def riga_risparmio(p, att):
+    """"Anticipata di 5 giorni (prima: gio 15/10/2026 ore 10:00)"; "" se la data e' la stessa."""
+    r = confronto_prima(p, att)
+    if not r or not r[0]:
+        return ""
+    return f"{'Anticipata' if r[0] > 0 else 'Posticipata'} di {giorni(abs(r[0]))} (prima: {r[1]})"
+
+
+def in_tutto(p, att):
+    """Dopo uno spostamento: "In tutto hai anticipato di 5 giorni rispetto alla prima (…)", con la sede."""
+    r = confronto_prima(p, att, sede=True)
+    if not r or not r[0]:
+        return ""
+    return f"In tutto hai {'anticipato' if r[0] > 0 else 'posticipato'} di {giorni(abs(r[0]))} rispetto alla prima ({r[1]})."
+
+
+def prima_con(f, attuale, stessa=False):
+    """p["prima"] per la ricetta f (anche {} se nuova) che ora ha la prenotazione attuale (dict): resta
+    se e' la stessa ricetta o la stessa prenotazione, altrimenti riparte da quella nuova."""
+    vecchia = f.get("attuale") or {}
+    if stessa or (vecchia.get("quando"), vecchia.get("sede")) == (attuale["quando"], attuale["sede"]):
+        return prima_di(f)
+    return prima_di({"prima": None, "attuale": attuale})
+
+
 def descrivi(res):
     righe = [descrivi_prenotazione(res["attuale"]), "", "Date offerte dal CUP:"]
     if not res["slots"]:
@@ -733,6 +825,20 @@ class Bot:
             p.update(aggiornata)
         return aggiornata
 
+    def fissa_prima(self, p):
+        """Scrive p["prima"] la prima volta che c'e' una prenotazione: poi non cambia piu'. Decide sulla ricetta
+        riletta dal database (la Mini App puo' averla sostituita nel frattempo) e in p copia solo "prima"."""
+        if p.get("prima") or not prima_di(p):
+            return
+
+        def fissa(f):
+            prima = None if f.get("prima") else prima_di(f)
+            if prima:
+                f["prima"] = prima
+        fresca = self.store.modifica(p["id"], fissa)
+        if fresca and "prima" in fresca:
+            p["prima"] = fresca["prima"]
+
     def offerta_valida(self, pid):
         o = self.offerte.get(pid)
         return bool(o) and time.time() - o["ts"] <= TTL_OFFERTA
@@ -821,6 +927,7 @@ class Bot:
             return None
         zona = zona_di(p)
         nell_area = [x for x in res["slots"] if cup_http.ammesso(x, att, zona)]
+        self.fissa_prima(p)  # prima di registra_viste: una ricetta di prima la ricava dall'andamento
         self.registra_viste(p, res, nell_area)
         if p.get("errori", 0) >= AVVISA_ERRORI[0]:  # aveva avvisato dei problemi: ora che passano, lo dice
             self.dire(p, f"✅ Il portale CUP risponde di nuovo: torno a controllare ogni "
@@ -839,6 +946,7 @@ class Bot:
         ignorati = set(p.get("ignorati", []))
         self.salva(p, "errori", "attuale", "ultimo", "riassunto", "viste", "luoghi", "storico",
                    *(("prossimo",) if ripresa else ()))
+        self.fissa_prima(p)
         self.chiudi_incerta(p, att)
         auto = p.get("auto")  # appena riletta: se nel frattempo l'hanno spenta dall'app, niente prenotazione da solo
         if auto:
@@ -1173,6 +1281,7 @@ class Bot:
             self.dire(p, "🧪 " + esito)
             return "ok"
         # la nuova data diventa il riferimento dei prossimi controlli
+        self.fissa_prima(p)
         p.update(notificati={}, ignorati=[], tentati_auto=[])
         p["attuale"] = {**p.get("attuale", {}), "quando": slot.quando.isoformat(), "sede": slot.luogo.sede,
                         "ambulatorio": slot.luogo.ambulatorio, "indirizzo": slot.luogo.indirizzo}
@@ -1180,11 +1289,14 @@ class Bot:
         p.pop("da_prenotare", None)  # da qui e' una prenotazione come le altre: si cercano date prima
         p.pop("incerta", None)  # un esito incerto di prima non vale piu': ora la prenotazione e' questa
         self.salva(p, "notificati", "ignorati", "tentati_auto", "attuale", "prossimo", "da_prenotare", "incerta")
+        self.fissa_prima(p)  # la prima prenotazione fatta dal bot: da qui si contano i giorni guadagnati
+        anticipo = "" if nuova else in_tutto(p, attuale_di(p))
         self.dire(p, f"✅ Prenotazione {'fatta' if nuova else 'spostata'}{' (conferma automatica)' if automatica else ''}!\n"
                      f"📅 {fmt(slot.quando)}\n📍 {slot.luogo}\n\n"
                      "Arriveranno SMS/email dal CUP con il nuovo promemoria; controlla anche il codice di "
                      "pagamento del ticket. Se non si puo' andare, disdire o spostare almeno 2 giorni lavorativi "
-                     "prima. Continuo a cercare date ancora prima.\n\n" + self.regola(p))
+                     "prima. Continuo a cercare date ancora prima.\n\n" + (anticipo + "\n\n" if anticipo else "") +
+                     self.regola(p))
         self.aggiorna_pannello(chat)
         return "ok"
 
@@ -1201,6 +1313,7 @@ class Bot:
             p.update(notificati={}, ignorati=[], tentati_auto=[])
             self.scarta(p["id"])
             self.salva(p, "attuale", "da_prenotare", "notificati", "ignorati", "tentati_auto")
+            self.fissa_prima(p)
             self.aggiorna_pannello(p["chat_id"])
             return
         auto = bool(p.get("auto"))
@@ -1210,6 +1323,7 @@ class Bot:
         p.update(notificati={}, ignorati=[], tentati_auto=[], auto=None)
         self.scarta(p["id"])
         self.salva(p, "attuale", "da_prenotare", "notificati", "ignorati", "tentati_auto", "auto")
+        self.fissa_prima(p)
         self.dire(p, descrivi_prenotazione(att, "La ricetta risulta prenotata") +
                   "\n\nDa ora cerco date prima di questa." +
                   ("\nHo spento la conferma automatica: se vuoi, riattivala con /auto." if auto else "") +
@@ -1226,7 +1340,9 @@ class Bot:
         self.salva(p, "incerta")
         fatta = att.quando.isoformat() == inc["quando"] and att.luogo.key() == inc["luogo"]
         if fatta:
+            anticipo = in_tutto(p, att)
             self.dire(p, descrivi_prenotazione(att, "✅ Verificato: la conferma di prima e' andata a buon fine") +
+                      (f"\n\n{anticipo}" if anticipo else "") +
                       "\n\nArriveranno SMS/email dal CUP con il promemoria. La conferma automatica resta spenta: "
                       "riattivala con /auto se vuoi.")
         else:
@@ -1296,7 +1412,8 @@ class Bot:
                             "qualche minuto.")
             return
         altre = [x for x in self.store.della_chat(chat) if x["id"] != p["id"]]
-        p.update(nre=nre, attuale=pren_to_dict(att) if att else senza_prenotazione(cosa),
+        attuale = pren_to_dict(att) if att else senza_prenotazione(cosa)
+        p.update(nre=nre, prima=prima_con(p, attuale), attuale=attuale,
                  stato="nome" if altre and not p.get("nome") else "sede")
         if att:
             p.pop("da_prenotare", None)
@@ -1591,12 +1708,15 @@ class Bot:
                      "📅 da prenotare: cerco il primo appuntamento libero",
                      f"🔎 Cerco: {descr_zona(zona_di(p), att)}"]
         else:
+            mancano = giorni_mancanti(att.quando, adesso())
+            anticipo = riga_risparmio(p, att) if mancano else ""
             righe = [f"👤 {self.nome(p)} — {prestazione(att.cosa)}",
-                     f"📅 {fmt(att.quando)}",
+                     f"📅 {fmt(att.quando)}" + (f" · {mancano}" if mancano else ""),
+                     *([f"     {anticipo}"] if anticipo else []),
                      f"📍 {titolo(att.luogo.sede)}, {indirizzo(att.luogo)}",
                      f"🔎 Cerco: {descr_zona(zona_di(p), att)}"]
         if riga_sospesa(p):
-            righe.insert(2 if da_prenotare(p) else 3, riga_sospesa(p))
+            righe.insert(len(righe) - 1, riga_sospesa(p))
         if cup_http.estensioni(zona_di(p)):
             righe.append("     (allargo la ricerca a tutto il Piemonte, poi filtro)")
         righe.append(f"⚡ Prenoto da solo: {auto_descr(p)}")
@@ -1977,7 +2097,8 @@ class Bot:
                  "tentati_auto": [], "creato": time.time(), "errori": 0}
         try:
             if modo == "nuova":
-                p = {"chat_id": chat, "stato": "sede", "prossimo": 0, "nome": nome, **nuovi}
+                p = {"chat_id": chat, "stato": "sede", "prossimo": 0, "nome": nome, **nuovi,
+                     "prima": prima_con({}, nuovi["attuale"])}
                 if consenso:
                     p["consenso_ts"] = ora
                 self.store.save(p)  # "sede": l'app chiede subito dove cercare, poi diventa attiva
@@ -1990,7 +2111,7 @@ class Bot:
                                        "provincia": cup_http.provincia(vecchia.luogo)}[z["tipo"]]
                     if not att and z["tipo"] not in ("tutte", "comuni", "sedi") and not z["valore"]:
                         z = {"tipo": "tutte", "valore": ""}  # senza prenotazione non c'e' una sede da cui ricavarla
-                    f.update(nuovi, zona=z)
+                    f.update(nuovi, zona=z, prima=prima_con(f, nuovi["attuale"], stessa=f.get("nre") == nre))
                     for k in ("libera", "viste", "storico", "riassunto", "ultimo", "luoghi"):
                         f.pop(k, None)
                 p = self.store.modifica(pid, cambia)

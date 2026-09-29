@@ -54,6 +54,10 @@ piccolo, senza Chromium.
    - **Riavvio a metà.** Se il bot si ferma durante una prenotazione, all'avvio: Conferma già partita →
      esito incerto, automatica spenta e verifica al prossimo controllo (anticipato); Conferma non ancora
      partita → avvisa che la prenotazione non è cambiata.
+   - **Giorni guadagnati.** Il bot ricorda la prima prenotazione che ha visto (`prima`: data e sede; per
+     una ricetta mai prenotata, la prima prenotazione fatta). Scheda e pannello mostrano quanti giorni
+     mancano ("tra 9 giorni") e di quanto è anticipata (o posticipata, col calendario) rispetto alla
+     prima; il messaggio dopo uno spostamento lo ripete ("In tutto hai anticipato di N giorni…").
 5. **Conferma automatica (facoltativa, `/auto`).** Le date buone spariscono in pochi minuti. Chi la
    attiva lascia che il bot prenoti da solo la prima data migliore, senza aspettare il tocco.
    - È solo accesa o spenta. Rispetta le sedi scelte e il calendario dei giorni sì/no (vedi

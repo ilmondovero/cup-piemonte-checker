@@ -51,6 +51,8 @@ body {
 .cosa { color: var(--tenue); margin: 4px 0 12px; font-size: 14px; }
 .quando { font-size: 22px; line-height: 1.35; }
 .quando .giorno { text-transform: capitalize; color: var(--tenue); font-size: 16px; }
+.mancano { margin: 2px 0 0; color: var(--tenue); font-size: 15px; }
+.mancano small { display: block; color: var(--accento); font-size: 14px; }
 .dove { margin: 8px 0 12px; font-weight: 600; }
 .dove small { display: block; font-weight: 400; color: var(--tenue); font-size: 14px; margin-top: 2px; }
 

@@ -2341,3 +2341,217 @@ def test_ultimo_errore_senza_indirizzo(b, monkeypatch):
         requests.HTTPError(f"504 for url: https://cup.isan.csi.it/x?cf={CF}", response=r)))
     b.controlla(pratica(b))
     assert pratica(b)["ultimo"]["testo"] == "errore: HTTP 504, portale sovraccarico"
+
+
+# --- giorni che mancano e giorni guadagnati dalla prima prenotazione ----------------------
+def test_giorni_mancanti():
+    oggi = datetime(2026, 10, 1, 23, 30)
+    assert botmod.giorni_mancanti(datetime(2026, 10, 1, 8, 0), oggi) == "oggi"
+    assert botmod.giorni_mancanti(datetime(2026, 10, 2, 0, 15), oggi) == "domani"
+    assert botmod.giorni_mancanti(datetime(2026, 10, 10, 10, 0), oggi) == "tra 9 giorni"
+    assert botmod.giorni_mancanti(datetime(2026, 9, 30, 10, 0), oggi) == ""  # passata
+    assert botmod.giorni_mancanti(botmod.SENZA_DATA, oggi) == ""  # da prenotare
+
+
+def test_risparmio_in_giorni_di_calendario():
+    assert botmod.risparmio(datetime(2026, 11, 15, 8, 0), datetime(2026, 11, 10, 18, 0)) == 5
+    assert botmod.risparmio(datetime(2026, 11, 15, 8, 0), datetime(2026, 11, 15, 23, 59)) == 0  # stesso giorno
+    assert botmod.risparmio(datetime(2026, 11, 15, 23, 0), datetime(2026, 11, 16, 0, 30)) == -1
+    assert botmod.risparmio(datetime.fromisoformat("2026-11-15"), datetime(2026, 11, 14, 9, 0)) == 1
+
+
+def test_riga_risparmio_testi():
+    att = c.Prenotazione(datetime(2026, 11, 10, 9, 0), c.Luogo("OSPEDALE A", "AMB", ""), "VISITA")
+    p = {"attuale": botmod.pren_to_dict(att), "prima": {"quando": "2026-11-11T10:00:00", "sede": "OSPEDALE A"}}
+    assert botmod.riga_risparmio(p, att) == "Anticipata di 1 giorno (prima: mer 11/11/2026 ore 10:00)"
+    p["prima"] = {"quando": "2026-11-15T10:00:00", "sede": "OSPEDALE B"}  # altra sede: si dice quale
+    assert botmod.riga_risparmio(p, att) == "Anticipata di 5 giorni (prima: dom 15/11/2026 ore 10:00, Ospedale B)"
+    p["prima"] = {"quando": "2026-11-08T10:00:00", "sede": "OSPEDALE A"}  # giorno no: spostata piu' tardi
+    assert botmod.riga_risparmio(p, att) == "Posticipata di 2 giorni (prima: dom 08/11/2026 ore 10:00)"
+    p["prima"] = {"quando": "2026-11-10T18:00:00", "sede": "OSPEDALE B"}
+    assert botmod.riga_risparmio(p, att) == "" and botmod.in_tutto(p, att) == ""
+    # impostata a mano con la sola data: niente ora ne' sede
+    p["prima"] = {"quando": "2026-12-23", "sede": ""}
+    assert botmod.riga_risparmio(p, att) == "Anticipata di 43 giorni (prima: mer 23/12/2026)"
+    assert botmod.in_tutto(p, att) == ("In tutto hai anticipato di 43 giorni rispetto alla prima "
+                                       "(mer 23/12/2026, ora e sede non registrate).")
+    p["prima"] = {"quando": "2026-12-23", "sede": "OSPEDALE B"}
+    assert botmod.in_tutto(p, att).endswith("(mer 23/12/2026, Ospedale B, ora non registrata).")
+    p["prima"] = {"quando": "2026-12-23T08:00:00", "sede": ""}
+    assert botmod.in_tutto(p, att).endswith("(mer 23/12/2026 ore 08:00, sede non registrata).")
+    p["prima"] = {"quando": "2026-11-15T10:00:00", "sede": "OSPEDALE A"}  # stessa sede: nel messaggio c'e' sempre
+    assert botmod.in_tutto(p, att).endswith("(dom 15/11/2026 ore 10:00, Ospedale A).")
+    assert botmod.riga_risparmio({"attuale": botmod.pren_to_dict(att), "prima": None}, att) == ""
+
+
+def test_prima_scritta_una_volta_e_non_sovrascritta(b):
+    registra(b)
+    assert pratica(b)["prima"] == {"quando": ATT.quando.isoformat(), "sede": "OSPEDALE A"}
+    tocca_prenota(b)
+    p = pratica(b)
+    assert p["attuale"]["quando"] == MEGLIO.quando.isoformat()
+    assert p["prima"] == {"quando": ATT.quando.isoformat(), "sede": "OSPEDALE A"}
+    n = botmod.risparmio(ATT.quando, MEGLIO.quando)
+    [fatto] = [t for t in inviati(b) if t.startswith("✅ Prenotazione spostata")]
+    assert f"In tutto hai anticipato di {n} giorni rispetto alla prima ({botmod.fmt(ATT.quando)}, Ospedale A)." in fatto
+    assert f"Anticipata di {n} giorni (prima: {botmod.fmt(ATT.quando)})" in b.scheda(p)
+    b.controlla(pratica(b))  # il portale finto riporta ATT: la prima resta quella
+    assert pratica(b)["prima"]["quando"] == ATT.quando.isoformat()
+
+
+def test_scheda_in_chat_giorni_mancanti(b, monkeypatch):
+    registra(b)
+    monkeypatch.setattr(botmod, "adesso", lambda: ATT.quando - timedelta(days=9))
+    p = pratica(b)
+    s = b.scheda(p)
+    assert f"📅 {botmod.fmt(ATT.quando)} · tra 9 giorni" in s and "Anticipata" not in s
+    p["prima"] = {"quando": (ATT.quando + timedelta(days=3)).isoformat(), "sede": "OSPEDALE A"}
+    assert "     Anticipata di 3 giorni (prima:" in b.scheda(p)
+    monkeypatch.setattr(botmod, "adesso", lambda: ATT.quando + timedelta(days=1))  # passata: niente righe
+    s = b.scheda(p)
+    assert " · tra " not in s and "Anticipata" not in s
+
+
+def test_prima_migrata_dall_andamento(b):
+    registra(b)
+    p = pratica(b)
+    del p["prima"]  # ricetta salvata da una versione senza "prima"
+    vecchia = (ATT.quando + timedelta(days=12)).isoformat()
+    p["storico"] = [{"t": time.time() - 3600, "a": None, "r": botmod.SENZA_DATA.isoformat()},
+                    {"t": time.time() - 1800, "a": None, "r": vecchia}]
+    b.store.save(p)
+    assert botmod.prima_di(pratica(b)) == {"quando": vecchia, "sede": ""}
+    assert "Anticipata di 12 giorni" in b.scheda(pratica(b))  # letta anche senza il campo
+    b.controlla(pratica(b))
+    assert pratica(b)["prima"] == {"quando": vecchia, "sede": ""}
+    b.controlla(pratica(b))  # idempotente
+    assert pratica(b)["prima"] == {"quando": vecchia, "sede": ""}
+    # senza andamento: la prenotazione attuale del momento
+    p = pratica(b)
+    del p["prima"], p["storico"]
+    b.store.save(p)
+    b.controlla(pratica(b))
+    assert pratica(b)["prima"] == {"quando": ATT.quando.isoformat(), "sede": "OSPEDALE A"}
+
+
+def test_prima_impostata_a_mano_con_la_sola_data(b):
+    registra(b)
+    p = pratica(b)
+    giorno = (ATT.quando + timedelta(days=10)).date()
+    p["prima"] = {"quando": giorno.isoformat(), "sede": ""}
+    b.store.save(p)
+    b.controlla(pratica(b))
+    assert pratica(b)["prima"] == {"quando": giorno.isoformat(), "sede": ""}  # non sovrascritta
+    atteso = f"Anticipata di 10 giorni (prima: {botmod.GIORNI[giorno.weekday()]} {giorno:%d/%m/%Y})"
+    assert atteso in b.scheda(pratica(b))
+    tocca_prenota(b)
+    n = botmod.risparmio(datetime.fromisoformat(giorno.isoformat()), MEGLIO.quando)
+    assert any(f"In tutto hai anticipato di {n} giorni rispetto alla prima ({botmod.GIORNI[giorno.weekday()]} "
+               f"{giorno:%d/%m/%Y}, ora e sede non registrate)." in t for t in inviati(b))
+
+
+def test_ricetta_vecchia_senza_prima_ne_andamento(b):
+    registra(b)
+    p = pratica(b)
+    del p["prima"]
+    p.pop("storico", None)
+    assert botmod.prima_di(p)["quando"] == ATT.quando.isoformat()
+    assert "Anticipata" not in b.scheda(p) and "Posticipata" not in b.scheda(p)
+
+
+def test_prima_prenotazione_del_bot_non_e_un_risparmio(b):
+    registra_nuova(b)
+    assert pratica(b)["prima"] is None
+    b.controlla(pratica(b))
+    assert pratica(b)["prima"] is None and "Anticipata" not in b.scheda(pratica(b))
+    [cb, *_] = [x for x in pulsanti(b) if x.startswith("p:")]
+    b.on_callback(cq(1, cb))
+    p = pratica(b)
+    assert p["prima"] == {"quando": NUOVA_CN.quando.isoformat(), "sede": "OSPEDALE B"}
+    assert not any("In tutto" in t for t in inviati(b)) and "Anticipata" not in b.scheda(p)
+
+
+def test_prima_riparte_con_una_ricetta_nuova_non_con_la_stessa(b):
+    registra(b)
+    p = pratica(b)
+    p["prima"] = {"quando": (ATT.quando + timedelta(days=5)).isoformat(), "sede": "OSPEDALE A"}
+    b.store.save(p)
+    b.esegui("modifica", pratica(b))  # stessa ricetta, stessa prenotazione: la prima resta
+    b.on_message(msg(1, CF, mid=40))
+    b.on_message(msg(1, NRE, mid=41))
+    assert pratica(b)["prima"]["quando"] == (ATT.quando + timedelta(days=5)).isoformat()
+    b.esegui("modifica", pratica(b))  # un'altra ricetta: riparte dalla sua prenotazione
+    b.on_message(msg(1, CF2, mid=42))
+    b.on_message(msg(1, NRE2, mid=43))
+    assert pratica(b)["prima"] == {"quando": ATT2.quando.isoformat(), "sede": "CLINICA ASTI"}
+    b.esegui("modifica", pratica(b))  # un'altra ancora, da prenotare: nessuna prima (l'andamento non conta)
+    b.on_message(msg(1, CF3, mid=44))
+    b.on_message(msg(1, NRE3, mid=45))
+    p = pratica(b)
+    assert p["prima"] is None and botmod.prima_di(p) is None
+
+
+def test_esito_incerto_verificato_dice_quanto_hai_anticipato(b, monkeypatch):
+    registra(b)
+
+    def prenota(*a, fase=None, **k):
+        fase("conferma")
+        raise c.CupError("Conferma inviata, esito incerto: la prenotazione risulta non verificabile.")
+    monkeypatch.setattr(c, "prenota", prenota)
+    tocca_prenota(b)
+    fatta = c.Prenotazione(MEGLIO.quando, MEGLIO.luogo, ATT.cosa)
+    monkeypatch.setattr(c, "check", lambda cf, nre, zona: {"attuale": fatta, "slots": [], "sessione": "S",
+                                                           "migliori": []})
+    b.controlla(pratica(b))
+    n = botmod.risparmio(ATT.quando, MEGLIO.quando)
+    [t] = [t for t in inviati(b) if t.startswith("✅ Verificato")]
+    assert f"In tutto hai anticipato di {n} giorni rispetto alla prima ({botmod.fmt(ATT.quando)}, Ospedale A)." in t
+    assert pratica(b)["prima"]["quando"] == ATT.quando.isoformat()
+
+
+@pytest.mark.parametrize("prima", ["23/12/2026", {"quando": "23/12/2026", "sede": ""}, {"quando": None, "sede": None},
+                                   {"sede": "OSPEDALE A"}, {"quando": "2026-12-23T10:00:00+01:00", "sede": 7}, ["x"]])
+def test_prima_scritta_male_nessun_confronto_e_lo_spostamento_si_annuncia(b, prima):
+    registra(b)
+    p = pratica(b)
+    p["prima"] = prima
+    b.store.save(p)
+    assert botmod.prima_di(pratica(b)) is None
+    assert "Anticipata" not in b.scheda(pratica(b))
+    tocca_prenota(b)
+    [fatto] = [t for t in inviati(b) if t.startswith("✅ Prenotazione spostata")]
+    assert botmod.fmt(MEGLIO.quando) in fatto and "📍" in fatto and "In tutto" not in fatto
+    assert pratica(b)["prima"] == prima  # scritta a mano: il bot non la tocca
+
+
+def test_andamento_con_voci_rotte_si_salta(b):
+    registra(b)
+    p = pratica(b)
+    del p["prima"]
+    vecchia = (ATT.quando + timedelta(days=4)).isoformat()
+    p["storico"] = [{"t": time.time() - 90, "a": None, "r": "ieri"}, {"t": time.time() - 80, "a": None, "r": 5},
+                    {"t": time.time() - 70, "a": None}, {"t": time.time() - 60, "a": None, "r": vecchia}]
+    assert botmod.prima_di(p) == {"quando": vecchia, "sede": ""}
+    for rotto in ("x", ["x"], [{"r": "ieri"}]):
+        assert botmod.prima_di({"attuale": p["attuale"], "storico": rotto}) == {"quando": ATT.quando.isoformat(),
+                                                                               "sede": "OSPEDALE A"}
+    assert botmod.risparmio(None, ATT.quando) is None and botmod.risparmio("2026-12-23", ATT.quando) is None
+
+
+def test_prima_non_sovrascrive_una_ricetta_sostituita_durante_il_controllo(b, monkeypatch):
+    registra(b)
+    p = pratica(b)
+    del p["prima"]
+    b.store.save(p)
+    vecchia = pratica(b)  # la copia del controllo: ricetta di prima, senza "prima"
+    nuova = {"quando": ATT2.quando.isoformat(), "sede": "CLINICA ASTI"}
+    b.store.modifica(p["id"], lambda f: f.update(prima=nuova))  # intanto la Mini App la sostituisce
+    vecchia["attuale"]["cosa"] = "non salvata"
+    b.fissa_prima(vecchia)
+    assert pratica(b)["prima"] == nuova and vecchia["prima"] == nuova
+    assert vecchia["attuale"]["cosa"] == "non salvata"  # le altre modifiche in memoria restano
+    # ricetta nuova da prenotare (prima None nel database): la copia vecchia non ci scrive la sua data
+    b.store.modifica(p["id"], lambda f: f.update(prima=None, attuale=botmod.senza_prenotazione(COSA3)))
+    vecchia = {**pratica(b), "attuale": botmod.pren_to_dict(ATT)}
+    b.fissa_prima(vecchia)
+    assert pratica(b)["prima"] is None and vecchia["prima"] is None

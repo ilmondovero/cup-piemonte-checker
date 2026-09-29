@@ -637,8 +637,12 @@ class App:
             return ('<div class="quando da-prenotare"><strong>Non ancora prenotata</strong></div>'
                     '<div class="dove"><small>Cerco il primo appuntamento libero dove scegli tu.</small></div>')
         giorno, data, ora = botmod.GIORNI[att.quando.weekday()], f"{att.quando:%d/%m/%Y}", f"{att.quando:%H:%M}"
+        mancano = botmod.giorni_mancanti(att.quando, botmod.adesso())
+        anticipo = botmod.riga_risparmio(p, att) if mancano else ""
+        anticipo = f'<small>{e(anticipo)}</small>' if anticipo else ""
+        mancano = f'<p class="mancano">{e(mancano.capitalize())}{anticipo}</p>' if mancano else ""
         return (f'<div class="quando"><span class="unito"><span class="giorno">{e(giorno)}</span> <strong>{e(data)}</strong>'
-                f'</span> <span class="unito">· ore <strong>{e(ora)}</strong></span></div>'
+                f'</span> <span class="unito">· ore <strong>{e(ora)}</strong></span></div>{mancano}'
                 f'<div class="dove">{e(botmod.titolo(att.luogo.sede))}<small>{e(att.luogo.ambulatorio)}<br>'
                 f'{e(botmod.indirizzo(att.luogo))}</small></div>')
 
