@@ -638,6 +638,27 @@ def test_data_passata_cancella_la_pratica(b, monkeypatch):
     assert not b.store.della_chat(1)
 
 
+def test_appuntamento_finito_archivia_senza_chiamare_il_portale(b, monkeypatch):
+    registra(b)
+    p = pratica(b)
+    p["attuale"] = botmod.pren_to_dict(c.Prenotazione(botmod.adesso().replace(tzinfo=None) - timedelta(hours=3),
+                                                      ATT.luogo, ATT.cosa))
+    b.store.modifica(p["id"], lambda f: f.update(attuale=p["attuale"]))
+    monkeypatch.setattr(c, "check", lambda *a: pytest.fail("il portale non va interrogato"))
+    b.controlla(pratica(b))
+    assert not b.store.della_chat(1) and "e' passato: ho archiviato" in inviati(b)[-1]
+
+
+def test_pulizia_archivia_anche_in_pausa(b):
+    registra(b)
+    p = pratica(b)
+    att = botmod.pren_to_dict(c.Prenotazione(botmod.adesso().replace(tzinfo=None) - timedelta(hours=3), ATT.luogo, ATT.cosa))
+    b.store.modifica(p["id"], lambda f: f.update(attuale=att, stato="pausa"))
+    b.ultima_pulizia = 0
+    b.pulizia()
+    assert not b.store.della_chat(1)
+
+
 def test_errore_imprevisto_avvisa_admin_senza_dati(b, monkeypatch):
     registra(b)
 

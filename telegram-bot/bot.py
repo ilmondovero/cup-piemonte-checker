@@ -48,6 +48,7 @@ AVVISA_ERRORI = (3, 12, 40)  # un timeout isolato del portale e' normale: avvisa
 ASSENZE_PAUSA = 3  # "nessuna prenotazione" di fila prima di sospendere: il portale a volte lo dice per errore
 MIN_INTERVALLO = 30  # minuti: ogni controllo tiene bloccata una data per un po'
 MIN_INTERVALLO_ADMIN = 5  # solo per chi gestisce il bot: come una persona che aggiorna la pagina
+PASSATA_ORE = 2  # ore dopo l'inizio dell'appuntamento: poi la ricetta si archivia da sola
 PAUSA_CONTROLLA = 15 * 60  # secondi tra due /controlla della stessa ricetta
 MAX_RICERCHE_FALLITE = 5  # ricerche CF+NRE fallite per chat al giorno
 MAX_RICERCHE_APP = 10  # ricerche dalla Mini App per chat al giorno, riuscite o no: ognuna e' una sessione sul portale
@@ -266,6 +267,12 @@ def incerta_da(ic):
     luogo = luogo_di(ic)
     return {"quando": ic["quando"], "luogo": luogo.key(), "sede": luogo.sede, "ambulatorio": luogo.ambulatorio,
             "indirizzo": luogo.indirizzo}
+
+
+def passata(p):
+    """L'appuntamento c'e' ed e' finito da un po': la ricetta non serve piu'."""
+    att = attuale_di(p)
+    return bool(att) and not da_prenotare(p) and att.quando + timedelta(hours=PASSATA_ORE) < adesso()
 
 
 def descrivi_prenotazione(att, titolo="Prenotazione"):
@@ -887,8 +894,22 @@ class Bot:
             self.dire(p, f"⚠️ {motivo[0].upper()}{motivo[1:]}{coda}")
         return None
 
+    def archivia_passata(self, p):
+        """Appuntamento finito: via la ricetta (niente controlli sul portale) e un avviso con data, ora e luogo."""
+        att = attuale_di(p)
+        self.scarta(p["id"])
+        self.store.delete(p["id"])
+        log.info("pratica %s/%s archiviata: appuntamento passato", uid(p["chat_id"]), p["id"])
+        self.dire(p, f"✅ L'appuntamento di {self.nome(p)} ({fmt(att.quando)} – {titolo(att.luogo.sede)}, "
+                     f"{indirizzo(att.luogo)}) e' passato: ho archiviato la ricetta e i suoi controlli.\n"
+                     "Per seguirne un'altra: /aggiungi.")
+        self.aggiorna_pannello(p["chat_id"])
+
     def controlla(self, p, manuale=False):
         chat = p["chat_id"]
+        if passata(p):
+            self.archivia_passata(p)
+            return None
         nuova = da_prenotare(p)
         try:
             if nuova:
@@ -2224,6 +2245,9 @@ class Bot:
         if time.time() - self.ultima_pulizia < 3600:
             return
         self.ultima_pulizia = time.time()
+        for p in self.store.tutte():  # anche quelle in pausa, che i controlli non li rivedono
+            if p["stato"] in ("attivo", "pausa") and passata(p):
+                self.archivia_passata(p)
         for pid, chat in self.store.pulizia(time.time()):
             self.scarta(pid)
             log.info("pratica %s/%s cancellata: registrazione incompleta o pausa oltre 30 giorni", uid(chat), pid)
