@@ -45,6 +45,7 @@ log = logging.getLogger("cupbot")
 
 TTL_OFFERTA = 20 * 60  # secondi: oltre, la sessione che tiene lo slot potrebbe essere scaduta
 AVVISA_ERRORI = (3, 12, 40)  # un timeout isolato del portale e' normale: avvisa solo se continua
+ASSENZE_PAUSA = 3  # "nessuna prenotazione" di fila prima di sospendere: il portale a volte lo dice per errore
 MIN_INTERVALLO = 30  # minuti: ogni controllo tiene bloccata una data per un po'
 MIN_INTERVALLO_ADMIN = 5  # solo per chi gestisce il bot: come una persona che aggiorna la pagina
 PAUSA_CONTROLLA = 15 * 60  # secondi tra due /controlla della stessa ricetta
@@ -843,6 +844,44 @@ class Bot:
         o = self.offerte.get(pid)
         return bool(o) and time.time() - o["ts"] <= TTL_OFFERTA
 
+    def errore_controllo(self, p, e, manuale, *campi):
+        chat = p["chat_id"]
+        if not isinstance(e, (cup_http.CupError, requests.RequestException)):
+            log.error("controllo %s: errore imprevisto %s\n%s", uid(chat), type(e).__name__,
+                      "".join(traceback.format_tb(e.__traceback__)))
+            self.alert_admin(f"Errore imprevisto nel controllo di {uid(chat)}: {type(e).__name__}")
+        p["errori"] = p.get("errori", 0) + 1
+        p["ultimo"] = {"ts": time.time(), "testo": f"errore: {cup_http.descrivi(e)}"}
+        p["riassunto"] = {**(p.get("riassunto") or {}), "ts": time.time(), "errore": True}
+        # errori di fila: controlli sempre piu' radi (fino a MAX_RALLENTA), per non insistere su un portale
+        # in difficolta' e riprovare quando e' piu' probabile che risponda. Al primo successo, ritmo normale
+        iv = self.intervallo_di(chat)
+        rallenta = min(max(MAX_RALLENTA, iv), iv * 2 ** min(p["errori"] - 1, 10))
+        dopo = time.time() + rallenta * 60 * random.uniform(0.9, 1.1)
+        def rallenta_(f):
+            if f.get("errori", 0) == 0 and (f.get("prossimo") or 0) <= time.time():
+                return  # ripresa dalla Mini App durante il controllo: vale la sua scelta
+            f["prossimo"] = max(f.get("prossimo") or 0, dopo)
+        self.store.modifica(p["id"], rallenta_)
+        self.salva(p, "errori", "ultimo", "riassunto", *campi)  # rilegge anche prossimo
+        self.aggiorna_pannello(chat)
+        log.info("controllo %s/%s: errore %d: %s (prossimo tra %d min)", uid(chat), p["id"],
+                 p["errori"], type(e).__name__, (p.get("prossimo", dopo) - time.time()) / 60)
+        if manuale or p["errori"] in AVVISA_ERRORI:
+            if cup_http.tipo_errore(e) == "timeout":
+                motivo = "il portale CUP e' lento e non risponde in tempo"
+            elif isinstance(e, requests.RequestException) and cup_http.sovraccarico(e):
+                motivo = "il portale CUP e' sovraccarico e non risponde"
+            elif isinstance(e, requests.RequestException):
+                motivo = "il portale CUP ha dato una risposta inattesa"
+            else:
+                motivo = str(e)
+            self.dire(p, f"⚠️ {motivo[0].upper()}{motivo[1:]}" + (
+                "" if manuale else f" (da {p['errori']} controlli di fila). Riprovo da solo, piu' di rado "
+                                   f"finche' non si riprende: il prossimo controllo verso le "
+                                   f"{orario(p.get('prossimo', dopo)):%H:%M}."))
+        return None
+
     def controlla(self, p, manuale=False):
         chat = p["chat_id"]
         nuova = da_prenotare(p)
@@ -866,49 +905,23 @@ class Bot:
                 self.dire(p, f"{motivo} Ho sospeso i controlli.\n/modifica per un'altra ricetta, /riprendi per "
                              "riprovare, /cancella per eliminarla.")
                 return None
+            if isinstance(e, cup_http.NonTrovata) and p.get("assenze", 0) + 1 < ASSENZE_PAUSA:
+                # il portale ha risposto "nessun record" per prenotazioni che esistevano: si riprova a
+                # controlli radi e si sospende solo se lo ripete ASSENZE_PAUSA volte di fila
+                p["assenze"] = p.get("assenze", 0) + 1
+                dubbia = cup_http.CupError(f"il portale dice «{e}» per questa ricetta, ma a volte sbaglia: "
+                                           f"non sospendo, riprovo piu' tardi ({p['assenze']}/{ASSENZE_PAUSA - 1})")
+                return self.errore_controllo(p, dubbia, manuale, "assenze")
+            p.pop("assenze", None)
             p.update(stato="pausa", pausa_da=time.time(), libera=True)
-            self.salva(p, "stato", "pausa_da", "libera")
+            self.salva(p, "stato", "pausa_da", "libera", "assenze")
             self.aggiorna_pannello(chat)
             self.dire(p, f"Non trovo piu' una prenotazione attiva per questa ricetta ({e}): forse e' stata "
                          "disdetta, spostata altrove o gia' effettuata. Ho sospeso i controlli.\n"
                          "/modifica per un'altra ricetta, /riprendi per riprovare, /cancella per eliminarla.")
             return None
         except Exception as e:
-            if not isinstance(e, (cup_http.CupError, requests.RequestException)):
-                log.error("controllo %s: errore imprevisto %s\n%s", uid(chat), type(e).__name__,
-                          "".join(traceback.format_tb(e.__traceback__)))
-                self.alert_admin(f"Errore imprevisto nel controllo di {uid(chat)}: {type(e).__name__}")
-            p["errori"] = p.get("errori", 0) + 1
-            p["ultimo"] = {"ts": time.time(), "testo": f"errore: {cup_http.descrivi(e)}"}
-            p["riassunto"] = {**(p.get("riassunto") or {}), "ts": time.time(), "errore": True}
-            # errori di fila: controlli sempre piu' radi (fino a MAX_RALLENTA), per non insistere su un portale
-            # in difficolta' e riprovare quando e' piu' probabile che risponda. Al primo successo, ritmo normale
-            iv = self.intervallo_di(chat)
-            rallenta = min(max(MAX_RALLENTA, iv), iv * 2 ** min(p["errori"] - 1, 10))
-            dopo = time.time() + rallenta * 60 * random.uniform(0.9, 1.1)
-            def rallenta_(f):
-                if f.get("errori", 0) == 0 and (f.get("prossimo") or 0) <= time.time():
-                    return  # ripresa dalla Mini App durante il controllo: vale la sua scelta
-                f["prossimo"] = max(f.get("prossimo") or 0, dopo)
-            self.store.modifica(p["id"], rallenta_)
-            self.salva(p, "errori", "ultimo", "riassunto")  # rilegge anche prossimo
-            self.aggiorna_pannello(chat)
-            log.info("controllo %s/%s: errore %d: %s (prossimo tra %d min)", uid(chat), p["id"],
-                     p["errori"], type(e).__name__, (p.get("prossimo", dopo) - time.time()) / 60)
-            if manuale or p["errori"] in AVVISA_ERRORI:
-                if cup_http.tipo_errore(e) == "timeout":
-                    motivo = "il portale CUP e' lento e non risponde in tempo"
-                elif isinstance(e, requests.RequestException) and cup_http.sovraccarico(e):
-                    motivo = "il portale CUP e' sovraccarico e non risponde"
-                elif isinstance(e, requests.RequestException):
-                    motivo = "il portale CUP ha dato una risposta inattesa"
-                else:
-                    motivo = str(e)
-                self.dire(p, f"⚠️ {motivo[0].upper()}{motivo[1:]}" + (
-                    "" if manuale else f" (da {p['errori']} controlli di fila). Riprovo da solo, piu' di rado "
-                                       f"finche' non si riprende: il prossimo controllo verso le "
-                                       f"{orario(p.get('prossimo', dopo)):%H:%M}."))
-            return None
+            return self.errore_controllo(p, e, manuale)
 
         if nuova:  # nessuna prenotazione: il riferimento resta la data lontanissima, con la prestazione letta
             p["attuale"] = {**senza_prenotazione(""), **(p.get("attuale") or {}), "quando": SENZA_DATA.isoformat()}
@@ -935,6 +948,7 @@ class Bot:
         ripresa = bool(p.get("errori"))
         if ripresa:  # dopo errori di fila i controlli si erano diradati: di nuovo al ritmo normale
             p["prossimo"] = min(p.get("prossimo") or float("inf"), time.time() + self.intervallo_di(chat) * 60)
+        p.pop("assenze", None)
         p.update(errori=0, attuale=pren_to_dict(att), ultimo={"ts": time.time(), "testo": descrivi(res)},
                  riassunto={"ts": time.time(), "viste": len(res["slots"]), "area": len(nell_area),
                             "migliori": len(res["migliori"]), "estesa": bool(cup_http.estensioni(zona)),
@@ -944,7 +958,7 @@ class Bot:
         if isinstance(notificati, list):
             notificati = dict.fromkeys(notificati, 0)
         ignorati = set(p.get("ignorati", []))
-        self.salva(p, "errori", "attuale", "ultimo", "riassunto", "viste", "luoghi", "storico",
+        self.salva(p, "errori", "assenze", "attuale", "ultimo", "riassunto", "viste", "luoghi", "storico",
                    *(("prossimo",) if ripresa else ()))
         self.fissa_prima(p)
         self.chiudi_incerta(p, att)

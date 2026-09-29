@@ -600,6 +600,36 @@ def test_prenotazione_non_piu_attiva_mette_in_pausa(b, monkeypatch):
     assert pratica(b)["stato"] == "pausa"
 
 
+def test_nessun_record_isolato_non_mette_in_pausa(b, monkeypatch):
+    registra(b)
+    vero = c.check
+
+    def nessun_record(*a):
+        raise c.NonTrovata("Nessun record trovato")
+    monkeypatch.setattr(c, "check", nessun_record)
+    b.controlla(pratica(b))
+    b.controlla(pratica(b))
+    assert pratica(b)["stato"] != "pausa" and pratica(b)["assenze"] == 2
+    monkeypatch.setattr(c, "check", vero)  # il portale si ricorda della prenotazione
+    b.controlla(pratica(b))
+    assert pratica(b)["stato"] != "pausa" and "assenze" not in pratica(b)
+    monkeypatch.setattr(c, "check", nessun_record)
+    b.controlla(pratica(b))
+    assert pratica(b)["assenze"] == 1  # il conteggio riparte da capo
+
+
+def test_nessun_record_ripetuto_mette_in_pausa(b, monkeypatch):
+    registra(b)
+
+    def nessun_record(*a):
+        raise c.NonTrovata("Nessun record trovato")
+    monkeypatch.setattr(c, "check", nessun_record)
+    for _ in range(botmod.ASSENZE_PAUSA):
+        b.controlla(pratica(b))
+    assert pratica(b)["stato"] == "pausa" and "assenze" not in pratica(b)
+    assert "Non trovo piu' una prenotazione" in inviati(b)[-1]
+
+
 def test_data_passata_cancella_la_pratica(b, monkeypatch):
     registra(b)
     passata = c.Prenotazione(datetime.now() - timedelta(days=1), ATT.luogo, ATT.cosa)
@@ -1044,7 +1074,8 @@ def test_ricetta_non_piu_trovata_non_resta_occupata(b, monkeypatch):
     def gone(*a):
         raise c.NonTrovata("Non esistono richieste")
     monkeypatch.setattr(c, "check", gone)
-    b.controlla(pratica(b))
+    for _ in range(botmod.ASSENZE_PAUSA):
+        b.controlla(pratica(b))
     registra(b, chat=2)  # stessa ricetta, altra chat: ora si puo'
     assert pratica(b, 2)["stato"] == "attivo"
 
