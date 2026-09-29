@@ -876,10 +876,15 @@ class Bot:
                 motivo = "il portale CUP ha dato una risposta inattesa"
             else:
                 motivo = str(e)
-            self.dire(p, f"⚠️ {motivo[0].upper()}{motivo[1:]}" + (
-                "" if manuale else f" (da {p['errori']} controlli di fila). Riprovo da solo, piu' di rado "
-                                   f"finche' non si riprende: il prossimo controllo verso le "
-                                   f"{orario(p.get('prossimo', dopo)):%H:%M}."))
+            quando = f"{orario(p.get('prossimo', dopo)):%H:%M}"
+            if manuale:
+                coda = ""
+            elif "assenze" in campi:
+                coda = f" Il prossimo controllo verso le {quando}."
+            else:
+                coda = (f" (da {p['errori']} controlli di fila). Riprovo da solo, piu' di rado finche' non si "
+                        f"riprende: il prossimo controllo verso le {quando}.")
+            self.dire(p, f"⚠️ {motivo[0].upper()}{motivo[1:]}{coda}")
         return None
 
     def controlla(self, p, manuale=False):
