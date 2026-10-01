@@ -1172,3 +1172,20 @@ def test_dashboard_solo_admin_e_contenuto(app):
     assert stato == 200 and "raggiungibile" in t and "Quando è stato giù" in t and "mai cancellate" in t
     assert "barra ko" in t and "disponibile, 24 ore" in t
     assert get(app, "/ui/portale", chat=2)[0] == 404  # gli altri utenti non la vedono
+
+
+def test_disdici_dalla_mini_app_con_data_ora_e_luogo(app):
+    fam = pratica(app.bot, 1, 1)
+    _, _, corpo = get(app, f"/ui/r/{fam['id']}/altro")
+    html = corpo.decode()
+    assert "Disdici questa prenotazione" in html and "data-conferma=" in html and "non si torna indietro" in html
+    quando = botmod_attuale(app, fam).quando.isoformat()
+    assert post(app, f"/ui/r/{fam['id']}/disdici", {"att": "2020-01-01T09:00:00"})[0] == 409  # data cambiata
+    assert post(app, f"/ui/r/{fam['id']}/disdici", {"att": quando}, auth_date=time.time() - 3 * 3600)[0] == 401
+    assert post(app, f"/ui/r/{fam['id']}/disdici", {"att": quando})[0] == 200
+    assert app.bot.coda.get_nowait()[:3] == ("disdici", 1, fam["id"])
+
+
+def botmod_attuale(app, p):
+    import bot as botmod
+    return botmod.attuale_di(app.bot.store.get(p["id"]))

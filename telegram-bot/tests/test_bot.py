@@ -1026,6 +1026,8 @@ def test_pulsante_vecchio_non_vale_dopo_modifica(b):
 def test_date_senza_seleziona_non_si_offrono(tmp_path, monkeypatch):
     # check() vero, con una sessione finta: la data senza pulsante non e' tra le migliori
     class Finta:
+        prenotate, n_prenotate = [ATT], 1
+
         def __init__(self, cf, nre):
             pass
 

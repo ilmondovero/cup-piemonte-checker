@@ -384,6 +384,7 @@ class CupSession:
         self.nomi = []  # prestazioni dell'ultimo carrello letto
         self.prenotate = []  # tutte le righe in stato PRENOTATO dell'elenco (una per prestazione, se piu' d'una)
         self.n_prenotate = 0  # righe PRENOTATO, anche quelle di cui non si legge la data
+        self.righe_prenotate = []
         self.s = requests.Session()
         self.s.headers["User-Agent"] = UA
         self.s.hooks["response"].append(_misura)
@@ -420,11 +421,41 @@ class CupSession:
                           f"date prenotate diverse {len({x.quando for x in self.prenotate})}, "
                           f"descrizioni vuote {sum(1 for x in self.prenotate if not x.cosa)}")
         self.riga = pren[0]
+        # (indice della riga, data) di ogni riga PRENOTATO: la disdetta sceglie quella che l'utente ha confermato
+        self.righe_prenotate = [(i, d) for i in pren if (d := _date(_text(righe[i])))]
         riga = righe[self.riga]
         quando = _date(_text(riga))
         if not quando:
             raise CupError("Data dell'appuntamento attuale non leggibile")
         return Prenotazione(quando, _luogo(riga), _cosa(riga))
+
+    def disdici_dialogo(self, quando):
+        """Preme "Disdici" sulla riga PRENOTATO di questa data (attuale() va chiamato prima) e ritorna l'id del
+        pulsante "Sì" del dialogo di conferma. Il portale lo numera a ogni apertura (_t289 in una sessione):
+        va sempre letto dal dialogo, mai fissato. CupError se il dialogo non e' riconoscibile con certezza."""
+        righe = [i for i, d in self.righe_prenotate if d == quando]
+        if len(righe) != 1:
+            raise CupError("Non trovo un'unica prenotazione a quella data: non disdico")
+        bottone = re.search(r'id="(%s:[^"]*:%d:disdiciButton)"' % (re.escape(L), righe[0]), self.lista_xml)
+        if not bottone:
+            raise CupError("Pulsante 'Disdici' non presente")
+        _passo("disdetta")
+        xml = self.lista.post({**self.search, **_event(bottone.group(1), "activate")})
+        vs = re.search(r'<update id="[^"]*javax\.faces\.ViewState[^"]*"[^>]*><!\[CDATA\[(.*?)\]\]>', xml, re.S)
+        if vs:
+            self.lista.vs = vs.group(1)
+        testo = html.unescape(xml)
+        si = set()
+        for m in re.finditer(r'<(?:a|button|input|span)\b[^>]*\sid="(%s:_t\d+)"[^>]*>' % re.escape(L), testo):
+            valore = re.search(r'\svalue="([^"]*)"', m.group(0))
+            etichetta = valore.group(1) if valore else _text(testo[m.end():m.end() + 300].split("<", 1)[0])
+            if _chiave_comune(etichetta) == "SI":  # "Sì" (anche "Si'"): senza accento, come i comuni
+                si.add(m.group(1))
+        if len(si) != 1:
+            ids = sorted({_id(b) for b in re.findall(r'id="([^"]*:_t\d+)"', testo)})[:12]
+            DIARIO.append(f"disdetta: dialogo non riconosciuto, pulsanti Si' {len(si)}, componenti {ids}")
+            raise CupError("Dialogo di conferma della disdetta non riconosciuto: non disdico")
+        return si.pop()
 
     def alternative(self, estendi=0):
         """Slot offerti da "Sposta appuntamento": la proposta e gli "Appuntamenti Disponibili".
@@ -842,9 +873,51 @@ def check(cf, nre, zona="sede"):
     La sessione tiene lo slot proposto: se c'e' una data migliore la prenotazione deve continuare li'."""
     cup = CupSession(cf, nre)
     att = cup.attuale()
+    doppio = doppione(cup.prenotate)
+    if doppio and cup.n_prenotate == len(cup.prenotate):  # due prenotazioni: prima si sistema, poi si cerca
+        return {"attuale": att, "slots": [], "sessione": cup, "migliori": [], "doppione": doppio}
     slots = cup.alternative(estendi=estensioni(zona))
     return {"attuale": att, "slots": slots, "sessione": cup,
             "migliori": [x for x in slots if candidata(x, att, zona)]}
+
+
+def doppione(prenotate):
+    """(da tenere, da disdire) se la stessa prestazione e' prenotata in due appuntamenti diversi (data o luogo): si
+    tiene il piu' vicino e si disdice il piu' lontano. None se non c'e' un doppione. Righe con prestazioni
+    diverse nello stesso appuntamento, o la stessa prestazione ripetuta nello stesso appuntamento (quantita'
+    maggiore di uno), non sono doppioni."""
+    gruppi = collections.defaultdict(list)
+    for x in prenotate:
+        if _norm(x.cosa):
+            gruppi[_norm(x.cosa)].append(x)
+    trovati = []
+    for righe in gruppi.values():
+        diversi = {(x.quando, x.luogo.key()) for x in righe}
+        if len(diversi) > 1:
+            ordinati = sorted(righe, key=lambda x: x.quando)
+            trovati.append((ordinati[0], ordinati[-1]))
+    return max(trovati, key=lambda t: t[1].quando) if trovati else None
+
+
+def elimina_doppione(cf, nre, dry_run=True, fase=None):
+    """Se la ricetta ha due prenotazioni disdice la piu' lontana. Il doppione deve risultare uguale in due
+    letture con sessioni diverse (il portale a volte sbaglia): altrimenti non si disdice nulla. Ritorna
+    (prenotazione tenuta, prenotazione disdetta), o None se non c'e' un doppione. CupError se qualcosa non torna;
+    "Disdetta inviata" nel messaggio: esito incerto."""
+    prima = CupSession(cf, nre)
+    prima.attuale()
+    d1 = doppione(prima.prenotate)
+    if not d1 or prima.n_prenotate != len(prima.prenotate):
+        return None
+    time.sleep(3)
+    seconda = CupSession(cf, nre)
+    seconda.attuale()
+    d2 = doppione(seconda.prenotate)
+    chiave = lambda d: [(x.quando, x.luogo.key(), _norm(x.cosa)) for x in d] if d else None  # noqa: E731
+    if chiave(d1) != chiave(d2):
+        raise CupError("Le due letture dell'elenco non concordano: non disdico")
+    disdici(cf, nre, d1[1].quando, dry_run=dry_run, fase=fase)
+    return d1
 
 
 def nuova(cf, nre):
@@ -962,6 +1035,14 @@ def _prenota(cf, nre, slot, sessione, zona, dry_run, libera, nuova, tappa, calen
             att = CupSession(cf, nre).attuale()
         except NonTrovata:
             att = None  # il portale dice che non ci sono prenotazioni: si puo' prenotare
+            # ma a volte sbaglia ("Nessun record" per ricette prenotate): una seconda lettura, con una sessione nuova
+            time.sleep(3)
+            try:
+                att2 = CupSession(cf, nre).attuale()
+            except (NonTrovata, NonAttiva):
+                att2 = None
+            if att2:
+                raise GiaPrenotata(f"Nel frattempo la ricetta risulta prenotata al {att2.quando:%d/%m/%Y %H:%M}")
         except NonAttiva as e:
             if not e.solo_disdette():  # erogata, in corso...: meglio non aggiungere un appuntamento
                 raise CupError(f"{e}: non prenoto, verifica sul portale")
@@ -1097,4 +1178,57 @@ def _prenota(cf, nre, slot, sessione, zona, dry_run, libera, nuova, tappa, calen
     tappa("verifica")
     stato = f"al {nuova_att.quando:%d/%m/%Y %H:%M}" if nuova_att else "non verificabile"
     raise CupError(f"Conferma inviata, esito incerto: la prenotazione risulta {stato}. "
+                   f"Controlla subito su {LISTA_URL} o al {CALL_CENTER}.")
+
+
+def disdici(cf, nre, quando, dry_run=True, fase=None):
+    """Disdice la prenotazione di questa data (datetime): elenco, "Disdici", dialogo, "Sì", messaggio del portale
+    e verifica con una sessione nuova. Con dry_run si ferma al dialogo, senza il "Sì". Ritorna un messaggio;
+    CupError se un controllo fallisce. fase: come in prenota ("conferma" prima del "Sì", poi "verifica").
+    Dopo il "Sì" qualunque problema e' "esito incerto": la disdetta puo' essere partita lo stesso."""
+    cup = CupSession(cf, nre)
+    try:
+        cup.attuale()
+    except NonTrovata:
+        raise CupError("Il portale non mostra prenotazioni per questa ricetta: non c'e' niente da disdire")
+    si = cup.disdici_dialogo(quando)
+    if dry_run:
+        return "PROVA: arrivato al dialogo di conferma della disdetta, non confermo."
+    if fase:
+        fase("conferma")
+    esito = ""
+    try:
+        esito = _text(html.unescape(cup.lista.post({**cup.search, **_event(si, "activate")})))
+    except Exception as e:
+        DIARIO.append(f"disdetta: {descrivi(e)}, verifico con una sessione nuova")
+    if fase:
+        fase("verifica")
+    if re.search(r"disdett\w* con successo", esito, re.I):
+        return "Prenotazione disdetta."
+    # nessun messaggio (timeout, pagina diversa): si guarda il portale con sessioni nuove, pause crescenti
+    global SCADENZA
+    SCADENZA = time.monotonic() + VERIFICA_MAX
+    ancora = None
+    try:
+        for pausa in VERIFICA_PAUSE:
+            if SCADENZA - time.monotonic() - pausa < VERIFICA_MIN:
+                break
+            time.sleep(pausa)
+            try:
+                verifica = CupSession(cf, nre)
+                verifica.passo_elenco = "verifica"
+                verifica.attuale()
+                ancora = quando in [d for _, d in verifica.righe_prenotate]
+                if not ancora and verifica.n_prenotate <= len(verifica.righe_prenotate):
+                    return "Prenotazione disdetta."
+            except (NonTrovata, NonAttiva):
+                return "Prenotazione disdetta."
+            except (CupError, requests.RequestException):
+                DIARIO.append("verifica: pagina non letta")
+    except Exception:
+        pass
+    finally:
+        SCADENZA = None
+    stato = "ancora presente" if ancora else "non verificabile"
+    raise CupError(f"Disdetta inviata, esito incerto: la prenotazione risulta {stato}. "
                    f"Controlla subito su {LISTA_URL} o al {CALL_CENTER}.")

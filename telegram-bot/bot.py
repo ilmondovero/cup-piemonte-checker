@@ -44,6 +44,7 @@ from store import REGISTRAZIONE, Store
 log = logging.getLogger("cupbot")
 
 TTL_OFFERTA = 20 * 60  # secondi: oltre, la sessione che tiene lo slot potrebbe essere scaduta
+DOPPIONE_AVVISO = 6 * 3600  # secondi tra due avvisi "prenotata due volte, non riesco a disdire"
 AVVISA_ERRORI = (3, 12, 40)  # un timeout isolato del portale e' normale: avvisa solo se continua
 ASSENZE_PAUSA = 3  # "nessuna prenotazione" di fila prima di sospendere: il portale a volte lo dice per errore
 MIN_INTERVALLO = 30  # minuti: ogni controllo tiene bloccata una data per un po'
@@ -954,6 +955,9 @@ class Bot:
             if res.get("cosa"):
                 p["attuale"]["cosa"] = res["cosa"]
             res["attuale"] = attuale_di(p)
+        if res.get("doppione"):
+            self.risolvi_doppione(p)
+            return None
         att = res["attuale"]
         res["migliori"] = migliori(p, res)  # da qui in poi (avvisi, automatica, app) valgono solo queste
         self.sessioni[p["id"]] ={"ts": time.time(), "sessione": res["sessione"], "slots": res["slots"]}
@@ -1163,6 +1167,85 @@ class Bot:
         self.scarta(p["id"])
         return self.prenota(p, slot, s["sessione"], libera=True, trovata=s["ts"])
 
+    def risolvi_doppione(self, p):
+        """La ricetta ha due prenotazioni (il portale non ne ammette): si tiene la piu' vicina e si disdice la piu'
+        lontana, poi data, ora e luogo di entrambe all'utente. Se non si riesce, un avviso ogni DOPPIONE_AVVISO."""
+        chat = p["chat_id"]
+        self.scarta(p["id"])
+        try:
+            esito = self.portale(cup_http.elimina_doppione, p["cf"], p["nre"], dry_run=self.prova, pid=p["id"],
+                                 paziente=True)
+        except (cup_http.CupError, requests.RequestException) as e:
+            incerta = "Disdetta inviata" in str(e)
+            if incerta:
+                self.sospendi_auto(p)
+                self.alert_admin(f"Esito incerto dopo la disdetta di un doppione per {uid(chat)}")
+            if incerta or time.time() - p.get("doppione_avvisato", 0) > DOPPIONE_AVVISO:
+                p["doppione_avvisato"] = time.time()
+                self.salva(p, "doppione_avvisato")
+                self.dire(p, ("🚨 " if incerta else "⚠️ ") + "Questa ricetta risulta prenotata due volte e non sono "
+                             f"riuscito a disdire quella più lontana: {cup_http.descrivi(e)}\nControlla su "
+                             f"{cup_http.LISTA_URL} o al {cup_http.CALL_CENTER} e disdici quella più lontana.")
+            log.info("doppione %s/%s non risolto%s: %s", uid(chat), p["id"], " (esito incerto)" if incerta else "",
+                     type(e).__name__)
+            return "incerta" if incerta else "fallita"
+        if not esito:
+            return None
+        tenuta, disdetta = esito
+        if self.prova:
+            self.dire(p, "🧪 Prova: due prenotazioni, mi fermo al dialogo di conferma senza disdire.")
+            return "ok"
+        p["attuale"] = pren_to_dict(tenuta)
+        p.pop("doppione_avvisato", None)
+        p.update(notificati={}, ignorati=[], tentati_auto=[])
+        self.salva(p, "attuale", "doppione_avvisato", "notificati", "ignorati", "tentati_auto")
+        log.info("doppione %s/%s risolto", uid(chat), p["id"])
+        self.dire(p, "✅ Questa ricetta risultava prenotata due volte: ho tenuto la più vicina e disdetto l'altra.\n\n"
+                     f"Tenuta:\n📅 {fmt(tenuta.quando)}\n📍 {tenuta.luogo}\n\n"
+                     f"Disdetta:\n📅 {fmt(disdetta.quando)}\n📍 {disdetta.luogo}")
+        self.aggiorna_pannello(chat)
+        return "ok"
+
+    def disdici(self, p, attuale_vista=""):
+        """Disdice la prenotazione di p, quella che l'utente aveva sullo schermo (attuale_vista, ISO) quando ha
+        confermato. Ritorna "ok", "fallita" o "incerta" (disdetta inviata ma esito non verificato). Dopo la
+        disdetta la ricetta torna "da prenotare" e in pausa: niente prenotazione automatica al posto della
+        disdetta, riprende solo quando l'utente la riattiva."""
+        att = attuale_di(p)
+        if da_prenotare(p) or not att or att.quando.isoformat() != attuale_vista:
+            self.dire(p, "La prenotazione è cambiata nel frattempo: riapri la ricetta e riprova.")
+            return "fallita"
+        dove = f"📅 {fmt(att.quando)}\n📍 {att.luogo}"
+        self.scarta(p["id"])  # un'offerta aperta riguarda una prenotazione che sta per sparire
+        self.dire(p, f"Disdico la prenotazione:\n{dove}…")
+        try:
+            self.portale(cup_http.disdici, p["cf"], p["nre"], att.quando, dry_run=self.prova, pid=p["id"],
+                         paziente=True)
+        except (cup_http.CupError, requests.RequestException) as e:
+            incerta = "Disdetta inviata" in str(e)
+            self.dire(p, ("🚨 " if incerta else "❌ Non disdetta: ") + cup_http.descrivi(e) +
+                      ("" if incerta else "\nLa prenotazione resta com'era."))
+            if incerta:
+                self.alert_admin(f"Esito incerto dopo la disdetta per {uid(p['chat_id'])}")
+                self.sospendi_auto(p)
+            log.info("disdetta %s/%s fallita%s: %s", uid(p["chat_id"]), p["id"], " (esito incerto)" if incerta else "",
+                     type(e).__name__)
+            return "incerta" if incerta else "fallita"
+        if self.prova:
+            self.dire(p, "🧪 Prova: arrivato al dialogo di conferma, non ho disdetto.")
+            return "ok"
+        p["attuale"] = senza_prenotazione(att.cosa)
+        p.update(da_prenotare=True, stato="pausa", pausa_da=time.time(), libera=True, auto=None, notificati={},
+                 ignorati=[], tentati_auto=[])
+        p.pop("incerta", None)
+        self.salva(p, "attuale", "da_prenotare", "stato", "pausa_da", "libera", "auto", "notificati", "ignorati",
+                   "tentati_auto", "incerta")
+        log.info("disdetta %s/%s riuscita", uid(p["chat_id"]), p["id"])
+        self.dire(p, f"✅ Prenotazione disdetta:\n{dove}\n\nI controlli di questa ricetta sono in pausa e la conferma "
+                     "automatica è spenta. Per prenotare di nuovo: ▶️ Riprendi.")
+        self.aggiorna_pannello(p["chat_id"])
+        return "ok"
+
     def prenota(self, p, slot, sessione, automatica=False, libera=False, trovata=None):
         """Ritorna "ok", "fallita" o "incerta" (conferma inviata ma esito non verificato). Durante la
         prenotazione p["in_corso"] dice a pannello e Mini App cosa sta succedendo; alla fine si toglie sempre.
@@ -1221,6 +1304,10 @@ class Bot:
         chat = p["chat_id"]
         self.sessioni.pop(p["id"], None)  # la sessione va al Riepilogo: nessun'altra data la riusa
         nuova = da_prenotare(p)
+        if nuova and p.get("incerta"):  # una conferma di prima potrebbe essere andata: prima si verifica quella
+            self.dire(p, "Una conferma di prima ha ancora un esito incerto: aspetto la verifica del prossimo controllo "
+                         "per non prenotare due volte.")
+            return "fallita"
         self.dire(p, f"{'Prenoto' if nuova else 'Sposto la prenotazione a'}:\n📅 {fmt(slot.quando)}\n📍 {slot.luogo}…")
         attuale_db = self.store.get(p["id"])
         if not attuale_db:
@@ -2209,6 +2296,8 @@ class Bot:
                     self.usa_offerta(p, *altro)
                 elif azione == "vista":
                     self.prenota_vista(p, *altro)
+                elif azione == "disdici":
+                    self.disdici(p, *altro)
             except Exception as e:
                 log.error("coda: errore imprevisto %s\n%s", type(e).__name__, "".join(traceback.format_tb(e.__traceback__)))
                 self.alert_admin(f"Errore imprevisto in un'azione dalla Mini App: {type(e).__name__}")

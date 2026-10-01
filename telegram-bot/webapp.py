@@ -75,9 +75,9 @@ CSP = (f"default-src 'self'; script-src 'self' {TELEGRAM_JS}; style-src 'self' '
        "img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'; "
        "frame-ancestors https://web.telegram.org https://*.telegram.org")
 ATTIVE = ("attivo", "pausa")
-AZIONI_POST = ("dove", "auto", "calendario", "pausa", "riprendi", "controlla", "offerta", "vista", "nome", "cancella", "modifica")
+AZIONI_POST = ("dove", "auto", "calendario", "pausa", "riprendi", "controlla", "offerta", "vista", "nome", "cancella", "modifica", "disdici")
 FOGLI_GET = ("dove", "auto", "calendario", "date", "storico", "altro")
-AZIONI_SENSIBILI = ("offerta", "vista", "cancella", "modifica")  # vogliono una firma recente
+AZIONI_SENSIBILI = ("offerta", "vista", "cancella", "modifica", "disdici")  # vogliono una firma recente
 MAX_NO_CAL = 400  # date segnate no al massimo nel calendario
 GIORNI_CAL = 400  # il calendario arriva fino a tanti giorni da oggi
 MESI_CAL = 12  # mesi dopo quello corrente sfogliabili nel calendario
@@ -513,6 +513,14 @@ class App:
         self._in_coda("vista", chat, p["id"], chiave, attuale_vista)
         return (f"{self.bot.nome(p)}: {'sto prenotando' if botmod.da_prenotare(p) else 'sto spostando la prenotazione'}"
                 ", ti scrivo nel bot l'esito.")
+
+    def azione_disdici(self, chat, p, dati):
+        att = botmod.attuale_di(p)
+        if botmod.da_prenotare(p) or not att or dati.get("att", "") != att.quando.isoformat():
+            raise Richiesta(409, "La prenotazione è cambiata: riapri la ricetta e riprova.")
+        # la data che l'utente ha confermato viaggia con la richiesta: il bot disdice solo quella
+        self._in_coda("disdici", chat, p["id"], att.quando.isoformat())
+        return f"{self.bot.nome(p)}: sto disdicendo la prenotazione, ti scrivo nel bot l'esito."
 
     def azione_nome(self, chat, p, dati):
         nome = nome_valido(dati.get("nome", ""))
@@ -1302,6 +1310,22 @@ class App:
   </svg>
 </figure>"""
 
+    def _disdetta(self, p):
+        """Il modulo "Disdici" della prenotazione attuale, con data, ora e luogo nella conferma."""
+        att = botmod.attuale_di(p)
+        if botmod.da_prenotare(p) or not att or botmod.passata(p):
+            return ""
+        dove = f"{botmod.fmt(att.quando)}, {botmod.titolo(att.luogo.sede)}"
+        conferma = f"Disdico la prenotazione di {self.bot.nome(p)}: {dove}? Il CUP la libera e non si torna indietro."
+        return f"""<h3>Disdici la prenotazione</h3>
+<p class="nota">Prenotata: {e(dove)}. Dopo la disdetta i controlli di questa ricetta restano in pausa: per prenotare di
+  nuovo la riprendi tu.</p>
+<form action="/ui/r/{p['id']}/disdici" method="post" data-conferma="{e(conferma)}">
+  <input type="hidden" name="att" value="{e(att.quando.isoformat())}">
+  <button class="pericolo">Disdici questa prenotazione</button>
+</form>
+"""
+
     def foglio_altro(self, p):
         pid = p["id"]
         conferma = f"Cancello i dati di {self.bot.nome(p)}? I suoi controlli si fermano."
@@ -1322,7 +1346,7 @@ class App:
     autocapitalize="characters" spellcheck="false" required></label>
   <button class="primario">Cerca e sostituisci</button>
 </form>
-<h3>Elimina</h3>
+{self._disdetta(p)}<h3>Elimina</h3>
 <form action="/ui/r/{pid}/cancella" method="post" data-conferma="{e(conferma)}">
   <button class="pericolo">Cancella questa ricetta</button>
 </form>"""

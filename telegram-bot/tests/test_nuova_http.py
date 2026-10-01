@@ -219,6 +219,8 @@ def sessioni_finte(monkeypatch, attuali, riep=RIEP, n=1, cosa="ECOGRAFIA ADDOME 
     """CupSession con i passi del portale sostituiti: registra Ricerca e Conferma."""
     log = {"ricetta": 0, "conferma": 0}
     coda = list(attuali)
+    if coda and isinstance(coda[0], c.NonTrovata):  # prima di prenotare, "nessun record" si legge due volte
+        coda.insert(1, coda[0])
 
     def attuale(self):
         v = coda.pop(0) if len(coda) > 1 else coda[0]
@@ -707,7 +709,7 @@ def test_verifica_con_attese_crescenti(monkeypatch):
     sessioni_finte(monkeypatch, [c.NonTrovata("Non esistono prenotazioni"), c.CupError("x"), c.CupError("x"), FATTA])
     ora, pause = orologio_finto(monkeypatch)
     assert prenota_nuova() == "Prenotazione fatta."
-    assert pause == [2, 5, 10]  # riuscita al terzo tentativo
+    assert pause[1:] == [2, 5, 10]  # (la prima pausa e' la seconda lettura di "nessun record") riuscita al terzo tentativo
 
 
 def test_verifica_senza_esito_resta_incerta_in_tempo_limitato(monkeypatch):
@@ -715,7 +717,7 @@ def test_verifica_senza_esito_resta_incerta_in_tempo_limitato(monkeypatch):
     ora, pause = orologio_finto(monkeypatch)
     with pytest.raises(c.CupError, match="esito incerto"):
         prenota_nuova()
-    assert pause == list(c.VERIFICA_PAUSE) and log["conferma"] == 1
+    assert pause[1:] == list(c.VERIFICA_PAUSE) and log["conferma"] == 1
 
 
 def test_verifica_lenta_si_ferma_entro_il_massimo(monkeypatch):
@@ -735,10 +737,10 @@ def test_verifica_lenta_si_ferma_entro_il_massimo(monkeypatch):
     monkeypatch.setattr(c, "ATTESE", {"verifica": 150})
     with pytest.raises(c.CupError, match="esito incerto"):
         prenota_nuova()
-    assert passi[0] == "elenco" and set(passi[1:]) == {"verifica"}
+    assert passi[:2] == ["elenco", "elenco"] and set(passi[2:]) == {"verifica"}
     # due tentativi; al terzo (dopo 2 + 80 + 5 + 80 s) resterebbero 13 s meno la pausa: meno di VERIFICA_MIN
-    assert pause == [2, 5] and ora[0] == 2 + 80 + 5 + 80 <= c.VERIFICA_MAX
-    assert attese[1:] == [150, 180 - 87]  # ogni richiesta aspetta al massimo il tempo che resta
+    assert pause[1:] == [2, 5] and ora[0] == 3 + 2 + 80 + 5 + 80 <= c.VERIFICA_MAX + 3
+    assert attese[2:] == [150, 180 - 87]  # ogni richiesta aspetta al massimo il tempo che resta
     assert c.ATTESE == {"verifica": 150} and c.SCADENZA is None
 
 

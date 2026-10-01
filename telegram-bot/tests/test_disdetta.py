@@ -1,0 +1,301 @@
+"""Disdetta di una prenotazione: il dialogo del portale (pagine sintetiche, nessuna rete) e il bot."""
+import sys
+from datetime import datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import cup_http as c  # noqa: E402
+from test_bot import ATT, b, inviati, pratica, registra  # noqa: E402,F401
+
+L = c.L
+QUANDO = datetime(2026, 12, 3, 12, 40)
+
+
+class ListaFinta:
+    def __init__(self, risposte):
+        self.risposte, self.inviati, self.vs = list(risposte), [], "vs1"
+
+    def post(self, campi, form=None):
+        self.inviati.append(campi)
+        return self.risposte.pop(0)
+
+
+def sessione(risposte, xml=None):
+    s = c.CupSession("RSSMRA80A01H501U", "010A00000000003")
+    s.righe_prenotate = [(0, QUANDO)]
+    s.lista_xml = xml or f'<span id="{L}:j_idt61:0:disdiciButton"></span>'
+    s.lista = ListaFinta(risposte)
+    return s
+
+
+def dialogo(*bottoni):
+    corpo = "".join(bottoni)
+    return f'<partial-response><changes><update id="x"><![CDATA[<div>Vuoi disdire?{corpo}</div>]]></update></changes></partial-response>'
+
+
+def test_trova_il_si_del_dialogo_e_preme_disdici_sulla_riga_giusta():
+    s = sessione([dialogo(f'<a id="{L}:_t289" href="#">S&igrave;</a>', f'<a id="{L}:_t290" href="#">No</a>')])
+    assert s.disdici_dialogo(QUANDO) == f"{L}:_t289"
+    campi = s.lista.inviati[0]
+    assert campi["javax.faces.source"] == f"{L}:j_idt61:0:disdiciButton"
+    assert campi["javax.faces.behavior.event"] == "activate"
+    assert campi[L + ":IDSearchValueInput"] == "010A00000000003"
+
+
+def test_il_si_con_input_value_e_l_id_cambia_a_ogni_apertura():
+    s = sessione([dialogo(f'<input type="button" id="{L}:_t7" value="Sì"/>', f'<input type="button" id="{L}:_t8" value="No"/>')])
+    assert s.disdici_dialogo(QUANDO) == f"{L}:_t7"
+
+
+def test_dialogo_non_riconosciuto_non_disdice():
+    s = sessione([dialogo(f'<a id="{L}:_t1">Annulla</a>')])
+    try:
+        s.disdici_dialogo(QUANDO)
+        assert False
+    except c.CupError as e:
+        assert "non riconosciuto" in str(e)
+    assert any("dialogo non riconosciuto" in x for x in c.DIARIO)
+
+
+def test_data_non_prenotata_o_doppia_non_disdice():
+    s = sessione([])
+    try:
+        s.disdici_dialogo(datetime(2026, 12, 4, 9, 0))
+        assert False
+    except c.CupError as e:
+        assert "unica prenotazione" in str(e)
+    assert s.lista.inviati == []  # nessuna richiesta al portale
+    s.righe_prenotate = [(0, QUANDO), (1, QUANDO)]
+    try:
+        s.disdici_dialogo(QUANDO)
+        assert False
+    except c.CupError:
+        pass
+
+
+def test_con_due_prenotazioni_si_disdice_solo_quella_scelta():
+    s = sessione([dialogo(f'<a id="{L}:_t5">Sì</a>')], f'<b id="{L}:j_idt61:0:disdiciButton"></b><b id="{L}:j_idt61:1:disdiciButton"></b>')
+    s.righe_prenotate = [(0, datetime(2026, 11, 1, 9, 0)), (1, QUANDO)]
+    s.disdici_dialogo(QUANDO)
+    assert s.lista.inviati[0]["javax.faces.source"].endswith(":1:disdiciButton")
+
+
+def prova_disdici(monkeypatch, risposte, dopo=None):
+    """c.disdici con la sessione finta: risposte = quelle del portale (dialogo, poi conferma)."""
+    s = sessione(risposte)
+    monkeypatch.setattr(c, "CupSession", lambda cf, nre: s if not s.__dict__.get("usata") else dopo(cf, nre))
+    monkeypatch.setattr(s, "attuale", lambda: s.__dict__.update(usata=True) or None)
+    monkeypatch.setattr(c.time, "sleep", lambda x: None)
+    return s
+
+
+def test_disdici_riuscita_col_messaggio_del_portale(monkeypatch):
+    s = prova_disdici(monkeypatch, [dialogo(f'<a id="{L}:_t289">Sì</a>'),
+                                    "<p>La prenotazione è stata disdetta con successo.</p>"])
+    fasi = []
+    assert c.disdici("RSSMRA80A01H501U", "010A00000000003", QUANDO, dry_run=False, fase=fasi.append) == "Prenotazione disdetta."
+    assert s.lista.inviati[1]["javax.faces.source"] == f"{L}:_t289" and fasi == ["conferma", "verifica"]
+
+
+def test_disdici_in_prova_si_ferma_al_dialogo(monkeypatch):
+    s = prova_disdici(monkeypatch, [dialogo(f'<a id="{L}:_t289">Sì</a>')])
+    assert "PROVA" in c.disdici("RSSMRA80A01H501U", "010A00000000003", QUANDO, dry_run=True)
+    assert len(s.lista.inviati) == 1
+
+
+def test_senza_messaggio_si_verifica_con_una_sessione_nuova(monkeypatch):
+    class Nuova:
+        def __init__(self, cf, nre):
+            pass
+
+        def attuale(self):
+            raise c.NonAttiva("La prenotazione risulta in stato DISDETTA", ["DISDETTA"])
+    prova_disdici(monkeypatch, [dialogo(f'<a id="{L}:_t289">Sì</a>'), "<p>pagina diversa</p>"], dopo=Nuova)
+    assert c.disdici("RSSMRA80A01H501U", "010A00000000003", QUANDO, dry_run=False) == "Prenotazione disdetta."
+
+
+def test_prenotazione_ancora_presente_dopo_la_disdetta_e_esito_incerto(monkeypatch):
+    class Nuova:
+        n_prenotate = 1
+        righe_prenotate = [(0, QUANDO)]
+
+        def __init__(self, cf, nre):
+            pass
+
+        def attuale(self):
+            return None
+    prova_disdici(monkeypatch, [dialogo(f'<a id="{L}:_t289">Sì</a>'), "<p>pagina diversa</p>"], dopo=Nuova)
+    try:
+        c.disdici("RSSMRA80A01H501U", "010A00000000003", QUANDO, dry_run=False)
+        assert False
+    except c.CupError as e:
+        assert "Disdetta inviata, esito incerto" in str(e) and "ancora presente" in str(e)
+
+
+# --- il bot -------------------------------------------------------------------------------------
+def test_bot_dopo_la_disdetta_la_ricetta_torna_da_prenotare_e_in_pausa(b, monkeypatch):
+    registra(b)
+    p = pratica(b)
+    p["auto"] = {"on": True}
+    b.salva(p, "auto")
+    chiamate = []
+    monkeypatch.setattr(c, "disdici", lambda cf, nre, quando, **k: chiamate.append(quando) or "Prenotazione disdetta.")
+    assert b.disdici(pratica(b), ATT.quando.isoformat()) == "ok"
+    p = pratica(b)
+    assert chiamate == [ATT.quando] and p["stato"] == "pausa" and p["da_prenotare"] and not p.get("auto")
+    ultimo = inviati(b)[-1]
+    assert "Prenotazione disdetta" in ultimo and "OSPEDALE A" in ultimo and f"{ATT.quando:%d/%m/%Y}" in ultimo
+
+
+def test_bot_non_disdice_se_la_prenotazione_e_cambiata(b, monkeypatch):
+    registra(b)
+    monkeypatch.setattr(c, "disdici", lambda *a, **k: (_ for _ in ()).throw(AssertionError("non va chiamata")))
+    assert b.disdici(pratica(b), "2020-01-01T09:00:00") == "fallita"
+    assert pratica(b)["stato"] == "attivo" and not pratica(b).get("da_prenotare")
+
+
+def test_bot_disdetta_fallita_lascia_tutto_com_e(b, monkeypatch):
+    registra(b)
+
+    def fallisce(*a, **k):
+        raise c.CupError("Dialogo di conferma della disdetta non riconosciuto: non disdico")
+    monkeypatch.setattr(c, "disdici", fallisce)
+    assert b.disdici(pratica(b), ATT.quando.isoformat()) == "fallita"
+    assert pratica(b)["stato"] == "attivo" and "La prenotazione resta com'era" in inviati(b)[-1]
+
+
+def test_bot_esito_incerto_non_cambia_lo_stato_e_avvisa_l_admin(b, monkeypatch):
+    registra(b)
+
+    def incerto(*a, **k):
+        raise c.CupError("Disdetta inviata, esito incerto: la prenotazione risulta non verificabile.")
+    monkeypatch.setattr(c, "disdici", incerto)
+    assert b.disdici(pratica(b), ATT.quando.isoformat()) == "incerta"
+    assert any(x.startswith("🚨") for x in inviati(b)) and pratica(b)["stato"] == "attivo"
+
+
+# --- doppioni: due prenotazioni per la stessa ricetta --------------------------------------------
+def pren(giorni, cosa="VISITA - 11.11", sede="OSPEDALE A"):
+    return c.Prenotazione(datetime(2026, 12, 1, 9, 0) + __import__("datetime").timedelta(days=giorni),
+                          c.Luogo(sede, "AMB 1", "Via Roma, 1 - TORINO (TO)"), cosa)
+
+
+def test_doppione_tiene_la_piu_vicina_e_disdice_la_piu_lontana():
+    vicina, lontana, mezzo = pren(0), pren(40), pren(10)
+    assert c.doppione([lontana, vicina]) == (vicina, lontana)
+    assert c.doppione([mezzo, lontana, vicina]) == (vicina, lontana)
+
+
+def test_non_sono_doppioni_prestazioni_diverse_o_la_stessa_nello_stesso_appuntamento():
+    assert c.doppione([pren(0, "ECO ADDOME"), pren(40, "VISITA")]) is None  # prestazioni diverse
+    assert c.doppione([pren(0), pren(0)]) is None  # quantita' due, stesso appuntamento
+    assert c.doppione([pren(0)]) is None and c.doppione([]) is None
+    assert c.doppione([pren(0, ""), pren(40, "")]) is None  # senza descrizione non si decide
+
+
+def test_stessa_data_in_due_sedi_e_un_doppione():
+    a, b2 = pren(5), pren(5, sede="OSPEDALE B")
+    assert c.doppione([a, b2]) is not None
+
+
+def sessioni_finte(monkeypatch, letture, disdetta=None):
+    """CupSession che a ogni lettura restituisce l'elenco successivo; c.disdici registrato."""
+    elenchi, disdette = list(letture), []
+
+    class S:
+        def __init__(self, cf, nre):
+            self.prenotate, self.n_prenotate = list(elenchi.pop(0)), 0
+
+        def attuale(self):
+            self.n_prenotate = len(self.prenotate)
+            return self.prenotate[0]
+    monkeypatch.setattr(c, "CupSession", S)
+    monkeypatch.setattr(c.time, "sleep", lambda x: None)
+    monkeypatch.setattr(c, "disdici", lambda cf, nre, quando, **k: disdette.append(quando) or "Prenotazione disdetta.")
+    return disdette
+
+
+def test_elimina_doppione_disdice_la_piu_lontana_dopo_due_letture_uguali(monkeypatch):
+    vicina, lontana = pren(0), pren(40)
+    disdette = sessioni_finte(monkeypatch, [[lontana, vicina], [vicina, lontana]])
+    assert c.elimina_doppione("CF", "NRE", dry_run=False) == (vicina, lontana)
+    assert disdette == [lontana.quando]
+
+
+def test_letture_che_non_concordano_non_disdicono(monkeypatch):
+    vicina, lontana = pren(0), pren(40)
+    disdette = sessioni_finte(monkeypatch, [[vicina, lontana], [vicina]])
+    try:
+        c.elimina_doppione("CF", "NRE", dry_run=False)
+        assert False
+    except c.CupError as e:
+        assert "non concordano" in str(e)
+    assert disdette == []
+
+
+def test_nessun_doppione_nessuna_disdetta(monkeypatch):
+    disdette = sessioni_finte(monkeypatch, [[pren(0)]])
+    assert c.elimina_doppione("CF", "NRE", dry_run=False) is None and disdette == []
+
+
+def test_prima_prenotazione_con_nessun_record_falso_non_prenota_due_volte(monkeypatch):
+    letture = [c.NonTrovata("Nessun record"), pren(3)]
+
+    class S:
+        def __init__(self, cf, nre):
+            pass
+
+        def attuale(self):
+            x = letture.pop(0)
+            if isinstance(x, Exception):
+                raise x
+            return x
+    monkeypatch.setattr(c, "CupSession", S)
+    monkeypatch.setattr(c.time, "sleep", lambda x: None)
+    slot = c.Slot(datetime(2027, 1, 1, 9, 0), c.Luogo("OSPEDALE A", "AMB 1", "Via Roma, 1 - TORINO (TO)"), "id")
+    try:
+        c.prenota("CF", "NRE", slot, dry_run=False, nuova=True)
+        assert False
+    except c.GiaPrenotata as e:
+        assert "risulta prenotata" in str(e)
+
+
+def test_bot_risolve_il_doppione_e_dice_cosa_tiene_e_cosa_disdice(b, monkeypatch):
+    registra(b)
+    vicina, lontana = pren(0), pren(40)
+    monkeypatch.setattr(c, "check", lambda *a, **k: {"attuale": lontana, "slots": [], "sessione": None, "migliori": [],
+                                                    "doppione": (vicina, lontana)})
+    monkeypatch.setattr(c, "elimina_doppione", lambda *a, **k: (vicina, lontana))
+    b.controlla(pratica(b))
+    assert c.attuale_di if False else True
+    import bot as botmod
+    assert botmod.attuale_di(pratica(b)).quando == vicina.quando
+    t = inviati(b)[-1]
+    assert "prenotata due volte" in t and f"{vicina.quando:%d/%m/%Y}" in t and f"{lontana.quando:%d/%m/%Y}" in t
+    assert "Tenuta" in t and "Disdetta" in t
+
+
+def test_bot_doppione_non_risolto_avvisa_una_volta_ogni_sei_ore(b, monkeypatch):
+    registra(b)
+    vicina, lontana = pren(0), pren(40)
+    monkeypatch.setattr(c, "check", lambda *a, **k: {"attuale": lontana, "slots": [], "sessione": None, "migliori": [],
+                                                    "doppione": (vicina, lontana)})
+
+    def no(*a, **k):
+        raise c.CupError("Dialogo di conferma della disdetta non riconosciuto: non disdico")
+    monkeypatch.setattr(c, "elimina_doppione", no)
+    b.controlla(pratica(b))
+    b.controlla(pratica(b))
+    assert sum("prenotata due volte" in x for x in inviati(b)) == 1
+
+
+def test_bot_non_prenota_una_nuova_con_una_conferma_incerta_in_sospeso(b, monkeypatch):
+    registra(b)
+    p = pratica(b)
+    p["da_prenotare"] = True
+    p["incerta"] = {"quando": datetime(2027, 1, 1, 9, 0).isoformat(), "luogo": "OSPEDALE A"}
+    b.salva(p, "da_prenotare", "incerta")
+    monkeypatch.setattr(c, "prenota", lambda *a, **k: (_ for _ in ()).throw(AssertionError("non va chiamata")))
+    slot = c.Slot(datetime(2027, 1, 2, 9, 0), c.Luogo("OSPEDALE A", "AMB 1", "Via Roma, 1 - TORINO (TO)"), "id")
+    assert b._prenota(pratica(b), slot, None) == "fallita"
