@@ -136,6 +136,35 @@
     if (ctx && ctx.sourceElement === formDelFoglio) formDelFoglio = null;
   });
 
+  // --- promemoria PDF della ricetta: il file parte com'e' (corpo grezzo), il server lo legge e lo butta, e
+  // risponde con il modulo gia' compilato da controllare
+  const MAX_PDF = 3 * 1024 * 1024;
+  document.addEventListener("change", (e) => {
+    const campo = e.target;
+    if (!campo.matches || !campo.matches("input[data-pdf]") || !campo.files || !campo.files[0]) return;
+    const file = campo.files[0];
+    if (file.size > MAX_PDF) {
+      campo.value = "";
+      avvisa("Il PDF è troppo grande: al massimo 3 MB.");
+      return;
+    }
+    campo.disabled = true;
+    fetch("/ui/ricetta-pdf", {
+      method: "POST",
+      headers: { Authorization: firma, "Content-Type": "application/pdf" },
+      body: file,
+    }).then(async (r) => {
+      const testo = await r.text();
+      if (!r.ok) throw new Error(testoDi(testo));
+      foglio.innerHTML = testo;
+      if (window.htmx) window.htmx.process(foglio);
+    }).catch((err) => {
+      campo.disabled = false;
+      campo.value = "";
+      avvisa((err && err.message) || "Non sono riuscito a inviare il PDF: controlla la connessione.");
+    });
+  });
+
   // --- calendario dei giorni sì/no: lo stato sta nei campi nascosti del form, ogni tocco lo cambia qui
   // (niente richiesta per tocco: il server accetta un'azione ogni 1,5 s) e "Salva" lo manda tutto insieme.
   // Stessa regola di cup_http.giorno_si: no se entro "no fino al", dopo "si_fino", giorno della settimana no

@@ -245,6 +245,40 @@ def cerca_e_attendi(app, chat, dati, percorso="/ui/nuova"):
     return get(app, f"/ui/esito/{token.group(1)}", chat=chat), token.group(1)
 
 
+def completa_guida(app, pid, chat=3):
+    """Gli ultimi due passi del percorso guidato: giorni (tutti si') e prenotazione automatica spenta."""
+    post(app, f"/ui/r/{pid}/calendario", {}, chat=chat)
+    post(app, f"/ui/r/{pid}/auto", {"on": "0"}, chat=chat)
+
+
+def pdf(app, dati, chat=1):
+    return app.gestisci("POST", webapp.PERCORSO_PDF, {"authorization": "tma " + firma(chat)}, dati)
+
+
+def test_pdf_riempie_il_modulo(app, monkeypatch):
+    letto = {"cf": "RSSMRA80A01H501U", "nre": "010A31234567890", "prestazione": "ECOGRAFIA", "priorita": "Programmabile",
+             "data": "29-09-2026", "quesito": "", "paziente": "ROSSI MARIA", "problemi": []}
+    monkeypatch.setattr(webapp.ricetta_pdf, "leggi", lambda dati: letto)
+    stato, _, corpo = pdf(app, b"%PDF-1.4 finto")
+    t = corpo.decode()
+    assert stato == 200 and 'value="RSSMRA80A01H501U"' in t and 'value="010A31234567890"' in t
+    assert "Ho letto il promemoria" in t and "ECOGRAFIA" in t and "Passo 1 di 4" in t
+
+
+def test_pdf_non_leggibile_e_campi_mancanti(app, monkeypatch):
+    _, _, corpo = pdf(app, b"non sono un pdf")
+    assert "non è un PDF" in corpo.decode() and "data-pdf" in corpo.decode()  # si puo' riprovare
+    monkeypatch.setattr(webapp.ricetta_pdf, "leggi", lambda dati: {
+        "cf": "", "nre": "", "prestazione": "", "priorita": "", "data": "", "quesito": "", "paziente": "",
+        "problemi": ["codice fiscale", "numero ricetta (NRE)"]})
+    _, _, corpo = pdf(app, b"%PDF-1.4 finto")
+    assert "Non sono riuscito a leggere: codice fiscale, numero ricetta (NRE)" in corpo.decode()
+
+
+def test_pdf_senza_firma_e_troppo_grande(app):
+    assert app.gestisci("POST", webapp.PERCORSO_PDF, {}, b"%PDF")[0] == 401
+
+
 def test_nuovo_utente_serve_il_consenso(app):
     stato, _, corpo = post(app, "/ui/nuova", {"cf": CF3, "nre": NRE3}, chat=3)
     assert "consenso" in corpo.decode() and not app.store.della_chat(3)
@@ -256,9 +290,17 @@ def test_aggiungi_ricetta_dall_app(app):
     assert stato == 200 and "Ho trovato la prenotazione" in t and 'name="tipo"' in t
     [p] = app.store.della_chat(3)
     assert p["stato"] == "sede" and p["cf"] == CF3 and CF3 not in t and NRE3 not in t
-    post(app, f"/ui/r/{p['id']}/dove", {"tipo": "altro", "comune": "Alba"}, chat=3)
+    assert p["guida"] and "Passo 2 di 4" in t
+    _, _, t = post(app, f"/ui/r/{p['id']}/dove", {"tipo": "altro", "comune": "Alba"}, chat=3)
     p = app.store.get(p["id"])
-    assert p["stato"] == "attivo" and p["zona"] == {"tipo": "comune", "valore": "ALBA"}
+    assert p["stato"] == "sede" and "Passo 3 di 4" in t.decode()  # il controllo parte solo all'ultimo passo
+    assert p["zona"] == {"tipo": "comune", "valore": "ALBA"}
+    _, _, t = post(app, f"/ui/r/{p['id']}/calendario", {"no_settimana": "5,6"}, chat=3)
+    assert "Passo 4 di 4" in t.decode() and "Riepilogo: cerco" in t.decode()
+    assert app.store.get(p["id"])["stato"] == "sede"
+    post(app, f"/ui/r/{p['id']}/auto", {"on": "0"}, chat=3)
+    p = app.store.get(p["id"])
+    assert p["stato"] == "attivo" and "guida" not in p and p["calendario"]["no_settimana"] == [5, 6]
     assert get(app, f"/ui/esito/{token}", chat=3)[0] == 404  # esito gia' consegnato
 
 
@@ -564,6 +606,7 @@ def test_ricetta_mai_prenotata_dall_app(app):
     assert botmod.da_prenotare(p)
     assert post(app, f"/ui/r/{p['id']}/dove", {"tipo": "sede"}, chat=3)[0] == 400  # nessuna sede di riferimento
     post(app, f"/ui/r/{p['id']}/dove", {"tipo": "tutte"}, chat=3)
+    completa_guida(app, p["id"])
     t = get(app, "/ui/ricette", chat=3)[2].decode()
     assert "Da prenotare" in t and "Non ancora prenotata" in t and "2100" not in t and "nessuna (da prenotare)" not in t
 
@@ -573,6 +616,7 @@ def test_ricetta_mai_prenotata_date_dove_e_andamento(app):
     (stato, _, _), _ = cerca_e_attendi(app, 3, {"cf": CF_NUOVA, "nre": NRE_NUOVA, "consenso": "1"})
     [p] = app.store.della_chat(3)
     post(app, f"/ui/r/{p['id']}/dove", {"tipo": "tutte"}, chat=3)
+    completa_guida(app, p["id"])
     b.controlla(b.store.get(p["id"]))
     b.offerte.clear()
     t = get(app, f"/ui/r/{p['id']}/date", chat=3)[2].decode()
@@ -1091,3 +1135,23 @@ def test_cambia_ricetta_dall_app_e_la_prima(app):
     assert app.store.get(fam["id"])["prima"] == {"quando": "2027-01-10", "sede": ""}
     cerca_e_attendi(app, 1, {"cf": CF3, "nre": NRE3}, percorso=f"/ui/r/{fam['id']}/modifica")  # un'altra
     assert app.store.get(fam["id"])["prima"] == {"quando": ATT.quando.isoformat(), "sede": "OSPEDALE A"}
+
+
+def test_guida_ultimo_passo_chiude_il_foglio_e_serve_dove(app):
+    cerca_e_attendi(app, 3, {"cf": CF3.lower(), "nre": NRE3, "consenso": "1"})
+    [p] = app.store.della_chat(3)
+    _, _, t = get(app, f"/ui/r/{p['id']}/auto", chat=3)
+    assert 'hx-target="#ricette"' in t.decode() and "data-resta" not in t.decode() and "Avvia la ricerca" in t.decode()
+    assert post(app, f"/ui/r/{p['id']}/auto", {"on": "0"}, chat=3)[0] == 400  # senza aver scelto dove
+    assert app.store.get(p["id"])["stato"] == "sede"
+
+
+def test_guida_non_resta_se_la_ricetta_si_attiva_dalla_chat(app):
+    cerca_e_attendi(app, 3, {"cf": CF3.lower(), "nre": NRE3, "consenso": "1"})
+    p = app.store.della_chat(3)[0]
+    assert p["guida"]
+    app.bot.imposta_zona(p, {"tipo": "tutte", "valore": ""})
+    q = app.store.get(p["id"])
+    assert q["stato"] == "attivo" and "guida" not in q
+    t = get(app, f"/ui/r/{p['id']}/dove", chat=3)[2].decode()
+    assert "Passo 2 di 4" not in t and "Avanti" not in t

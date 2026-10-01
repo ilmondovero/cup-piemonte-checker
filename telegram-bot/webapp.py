@@ -26,6 +26,7 @@ from urllib.parse import parse_qsl
 
 import bot as botmod
 import cup_http
+import ricetta_pdf
 from store import Store
 
 log = logging.getLogger("cupbot.web")
@@ -66,6 +67,7 @@ AUTO_NUOVA = ("La ricetta non è ancora prenotata: la prima data libera dove cer
               "la prestazione.")
 MAX_ETA_PRENOTA = 2 * 3600  # per spostare o cancellare dati la firma dev'essere recente
 MAX_CORPO = 8192  # il calendario puo' mandare fino a MAX_NO_CAL date
+PERCORSO_PDF = "/ui/ricetta-pdf"  # il PDF arriva come corpo grezzo: l'unico a poter superare MAX_CORPO
 PAUSA_AZIONI = 1.5  # secondi minimi tra due azioni della stessa chat
 TELEGRAM_JS = "https://telegram.org/js/telegram-web-app.js"
 CSP = (f"default-src 'self'; script-src 'self' {TELEGRAM_JS}; style-src 'self' 'unsafe-inline'; "
@@ -81,6 +83,7 @@ MESI_CAL = 12  # mesi dopo quello corrente sfogliabili nel calendario
 PASSI = {"elenco": "Elenco prenotazioni", "ricerca": "Ricerca ricetta", "appuntamenti": "Appuntamenti",
          "estendi": "Estendi area", "riepilogo": "Riepilogo", "conferma": "Conferma",
          "verifica": "Verifica dopo la conferma"}  # passi del portale, nell'ordine del flusso
+PASSI_GUIDA = {2: "Dove cercare", 3: "Giorni", 4: "Prenotazione automatica"}
 ESITI = {"ok": "riuscita", "incerta": "esito incerto", "fallita": "non riuscita"}
 e = html.escape
 
@@ -206,6 +209,9 @@ class App:
             chat = verifica_init_data(firma, self.bot.token)
             if chat is None:
                 raise Richiesta(401, "Apri l'app dal pulsante del bot su Telegram.")
+            if metodo == "POST" and percorso == PERCORSO_PDF:
+                self._limita(chat)
+                return self._html(200, self.azione_pdf(chat, corpo))
             dati = dict(parse_qsl(corpo.decode("utf-8", "replace"))) if corpo else {}
             if metodo == "GET":
                 dati = dict(parse_qsl(query))  # solo il foglio "dove" li usa ("Centra qui")
@@ -237,7 +243,8 @@ class App:
             pid, azione = int(m.group(1)), m.group(2)
             p = self.store.get(pid)
             # "dove" vale anche per la ricetta appena aggiunta dall'app, che aspetta proprio questa scelta
-            stati = ATTIVE + ("sede",) if azione in ("dove", "cancella") else ATTIVE
+            guidata = azione in ("calendario", "auto") and App._guidata(p)
+            stati = ATTIVE + ("sede",) if azione in ("dove", "cancella") or guidata else ATTIVE
             if not p or p["chat_id"] != chat or p["stato"] not in stati:
                 raise Richiesta(404, "Ricetta non trovata.")
             if metodo == "GET":
@@ -368,11 +375,14 @@ class App:
             f.update(zona=zona)
             f.pop("stessa_sede", None)
             f.pop("attende_comune", None)
-            if f["stato"] == "sede":  # ricetta appena aggiunta dall'app: da qui parte il primo controllo
+            if f["stato"] == "sede":  # ricetta appena aggiunta dall'app
                 if not self._posto_libero(chat):  # connessione di questo thread, non quella del bot
                     raise Richiesta(409, "Mi dispiace, nel frattempo i posti sono finiti.")
-                f.update(stato="attivo", prossimo=time.time() + 30)
+                if not f.get("guida"):  # da qui parte il primo controllo (in guida solo all'ultimo passo)
+                    f.update(stato="attivo", prossimo=time.time() + 30)
         self._modifica(chat, p, imposta, stati=ATTIVE + ("sede",))
+        if self._guidata(p):  # il controllo parte solo all'ultimo passo
+            return ("foglio", self.foglio_calendario(self.store.get(p["id"])))
         return f"{self.bot.nome(p)}: cerco {botmod.descr_zona(zona, att)}."
 
     def _posto_libero(self, chat):
@@ -387,7 +397,18 @@ class App:
         def imposta(f):
             botmod.fissa_calendario(f)  # i giorni minimi di prima restano nel calendario
             f["auto"] = {"on": True} if attiva else None
-        self._modifica(chat, p, imposta)
+            if f.get("guida"):  # ultimo passo del percorso guidato: da qui parte il primo controllo
+                if f["stato"] == "sede":
+                    if not f.get("zona"):
+                        raise Richiesta(400, "Prima scegli dove cercare.")
+                    if not self._posto_libero(chat):
+                        raise Richiesta(409, "Mi dispiace, nel frattempo i posti sono finiti.")
+                    f.update(stato="attivo", prossimo=time.time() + 30)
+                f.pop("guida")
+        self._modifica(chat, p, imposta, stati=ATTIVE + ("sede",))
+        if self._guidata(p):
+            return (f"{self.bot.nome(p)}: cerco il primo appuntamento libero" +
+                    (" e lo prenoto da solo." if attiva else " e ti avviso con il pulsante Prenota."))
         return f"{self.bot.nome(p)}: " + ("conferma automatica attiva." if attiva else "conferma automatica spenta.")
 
     def azione_calendario(self, chat, p, dati):
@@ -430,7 +451,9 @@ class App:
             # Salva senza cambiare niente non toglie "solo anticipare" a un calendario delle regole di prima
             f["calendario"] = ({**cal, "solo_prima": True} if prima.pop("solo_prima", False) and prima == cal
                                else cal)
-        self._modifica(chat, p, imposta)
+        self._modifica(chat, p, imposta, stati=ATTIVE + ("sede",))
+        if self._guidata(p):
+            return ("foglio", self.foglio_auto(self.store.get(p["id"])))
         descr = botmod.descr_calendario({"calendario": cal})
         return f"{self.bot.nome(p)}: " + (f"giorni {descr}." if descr.startswith("no:") else "tutti i giorni sì.")
 
@@ -752,6 +775,26 @@ class App:
   </section>"""
 
     # --- fogli dal basso -------------------------------------------------------------
+    @staticmethod
+    def _guidata(p):
+        """Percorso guidato in corso: ricetta nuova dall'app, ancora in "sede" (dopo l'ultimo passo e' attiva)."""
+        return bool(p and p.get("guida") and p.get("stato") == "sede")
+
+    def _passo(self, p, n):
+        """Nel percorso guidato di una ricetta nuova (p["guida"]): il numero del passo."""
+        return f'<p class="passo">Passo {n} di 4 · {PASSI_GUIDA[n]}</p>' if self._guidata(p) else ""
+
+    def _dest(self, p, ultimo=False):
+        """Dove va la risposta del form: nel percorso guidato resta nel foglio (il passo dopo), altrimenti
+        aggiorna le schede e il foglio si chiude."""
+        # l'ultimo passo risponde con le schede: il foglio si chiude
+        if self._guidata(p) and not ultimo:
+            return 'hx-target="#foglio" data-resta'
+        return 'hx-target="#ricette" hx-swap="innerMorph"'
+
+    def _avanti(self, p, ultimo):
+        return ("Avvia la ricerca" if ultimo else "Avanti") if self._guidata(p) else "Salva"
+
     def foglio_dove(self, p, q=None):
         """q: i campi del foglio quando lo ricarica "Centra qui" (centro e spunte di "Questi comuni")."""
         q = q or {}
@@ -788,8 +831,9 @@ class App:
     <span>Una sede trovata nei controlli<select name="sede">{opzioni}</select></span></label>"""
         return f"""
 <h2>🔎 Dove cercare · {e(self.bot.nome(p))}</h2>
+{self._passo(p, 2)}
 <p class="nota">Prenotazione attuale: {e(botmod.titolo(att.luogo.sede))}, {e(botmod.indirizzo(att.luogo))}</p>
-<form id="dove-{p['id']}" hx-post="/ui/r/{p['id']}/dove" hx-target="#ricette" hx-swap="innerMorph" class="scelte">
+<form id="dove-{p['id']}" hx-post="/ui/r/{p['id']}/dove" {self._dest(p)} class="scelte">
   {voci}{sede_vista}
   <label class="scelta"><input type="radio" name="tipo" value="altro"{" checked" if scelto == "altro" else ""}>
     <span>Un altro comune <input type="text" name="comune" value="{e(altro_val)}" placeholder="es. Torino"
@@ -798,7 +842,7 @@ class App:
   <datalist id="comuni-{p['id']}">{lista_comuni}</datalist>
   <p class="nota">Sedi scelte, comuni e provincia allargano la ricerca a tutto il Piemonte: il controllo è più lento
     ma vede anche le altre aziende sanitarie.</p>
-  <button class="primario">Salva</button>
+  <button class="primario">{self._avanti(p, False)}</button>
 </form>"""
 
     def opzioni_sede_vista(self, luoghi, z, scelto):
@@ -840,14 +884,15 @@ class App:
         lista = "".join(f'<option value="{e(botmod.titolo(c))}">' for c in comuni)
         return f"""
 <h2>🔎 Dove cercare · {e(self.bot.nome(p))}</h2>
+{self._passo(p, 2)}
 <p class="nota">Ricetta non ancora prenotata: scegli dove cercare il primo appuntamento.{"" if luoghi else
   " Dopo il primo controllo qui compaiono anche le sedi e le province trovate."}</p>
-<form id="dove-{p['id']}" hx-post="/ui/r/{p['id']}/dove" hx-target="#ricette" hx-swap="innerMorph" class="scelte">
+<form id="dove-{p['id']}" hx-post="/ui/r/{p['id']}/dove" {self._dest(p)} class="scelte">
   {"".join(parti)}
   <datalist id="comuni-{p['id']}">{lista}</datalist>
   <p class="nota">Sedi scelte, comuni e provincia allargano la ricerca a tutto il Piemonte: il controllo è più lento
     ma vede anche le altre aziende sanitarie.</p>
-  <button class="primario">Salva</button>
+  <button class="primario">{self._avanti(p, False)}</button>
 </form>"""
 
     def centro_dove(self, p, q):
@@ -976,11 +1021,12 @@ class App:
             f'<span>{e(t)}</span></label>' for v, t in voci)
         return f"""
 <h2>⚡ Prenoto da solo · {e(self.bot.nome(p))}</h2>
+{self._passo(p, 4)}
 <p class="nota">{e(AUTO_NUOVA if botmod.da_prenotare(p) else AUTO_SPOSTA)}</p>
-<form hx-post="/ui/r/{p['id']}/auto" hx-target="#ricette" hx-swap="innerMorph" class="scelte">
+<form hx-post="/ui/r/{p['id']}/auto" {self._dest(p, True)} class="scelte">
   {scelte}
-  <p class="nota">Calendario: {e(botmod.descr_calendario(p))}.</p>
-  <button class="primario">Salva</button>
+  <p class="nota">{"Riepilogo: cerco " + e(botmod.descr_zona(botmod.zona_di(p), botmod.attuale_di(p))) + ". " if self._guidata(p) else ""}Calendario: {e(botmod.descr_calendario(p))}.</p>
+  <button class="primario">{self._avanti(p, True)}</button>
 </form>"""
 
     def foglio_calendario(self, p):
@@ -1045,8 +1091,9 @@ class App:
                   "va bene anche un giorno sì più tardi.")
         return f"""
 <h2>📅 Calendario · {e(self.bot.nome(p))}</h2>
+{self._passo(p, 3)}
 <p class="nota">{e(spiega)} La prenotazione automatica non prenota mai per oggi.</p>
-<form hx-post="/ui/r/{p['id']}/calendario" hx-target="#ricette" hx-swap="innerMorph" class="calendario"
+<form hx-post="/ui/r/{p['id']}/calendario" {self._dest(p)} class="calendario"
   data-oggi="{oggi.isoformat()}" data-ultimo="{ultimo.isoformat()}">
   <input type="hidden" name="no" value="{e(",".join(no))}">
   <input type="hidden" name="no_settimana" value="{e(",".join(map(str, sett)))}">
@@ -1063,7 +1110,7 @@ class App:
     {"<span>📌 la tua prenotazione</span>" if att else ""}
     <span><i class="vista buona" aria-hidden="true"></i> data buona trovata</span>
     <span><i class="vista" aria-hidden="true"></i> altra data trovata</span></p>
-  <button class="primario">Salva</button>
+  <button class="primario">{self._avanti(p, False)}</button>
 </form>"""
 
     def foglio_date(self, p):
@@ -1274,9 +1321,11 @@ class App:
   <button class="pericolo">Cancella questa ricetta</button>
 </form>"""
 
-    def _form_ricetta(self, chat, modo, p=None, errore=""):
+    def _form_ricetta(self, chat, modo, p=None, errore="", valori=None, letto=None):
+        """valori: cf e nre da mettere nei campi; letto: i dati letti dal PDF, mostrati da controllare."""
         if modo == "modifica" and p:
             return f'<p class="errore">{e(errore)}</p>' + self.foglio_altro(p)
+        valori = valori or {}
         pratiche = self.store.della_chat(chat)
         consenso = "" if pratiche else f"""
   <details class="informativa"><summary>Informativa sui dati</summary><p>{e(self.bot.privacy()).replace(chr(10), "<br>")}</p></details>
@@ -1285,18 +1334,48 @@ class App:
         nome = "" if not pratiche else """
   <label class="campo">Nome nei messaggi<input type="text" name="nome" maxlength="20" placeholder="es. Papà"
     autocomplete="off"></label>"""
+        if letto:
+            righe = [("Prestazione", letto.get("prestazione")), ("Paziente", letto.get("paziente")),
+                     ("Priorità", letto.get("priorita")), ("Data della ricetta", letto.get("data")),
+                     ("Quesito", letto.get("quesito"))]
+            dettagli = "".join(f"<li><span>{t}</span> {e(v)}</li>" for t, v in righe if v)
+            mancano = letto.get("problemi") or []
+            avviso = (f'<p class="errore">Non sono riuscito a leggere: {e(", ".join(mancano))}. Scrivilo tu qui sotto.</p>'
+                      if mancano else '<p class="avviso" role="status">Ho letto il promemoria. Controlla che i dati siano giusti.</p>')
+            carica = (f'{avviso}<ul class="elenco letta">{dettagli}</ul>'
+                      '<label class="campo carica">Un altro PDF?<input type="file" accept="application/pdf" data-pdf></label>')
+        else:
+            carica = """
+<label class="campo carica">📄 Carica il promemoria PDF della ricetta
+  <input type="file" accept="application/pdf" data-pdf><small>Lo leggo e lo butto: non lo conservo. Se non hai il PDF
+  scrivi i dati qui sotto.</small></label>"""
         return f"""
 <h2>＋ Nuova ricetta</h2>
+<p class="passo">Passo 1 di 4 · La ricetta</p>
 {f'<p class="errore">{e(errore)}</p>' if errore else ''}
-<p class="nota">Tua o di un familiare che ti ha autorizzato. Codice fiscale e NRE li trovi sul promemoria della
-  prenotazione; li uso solo per il portale CUP e li conservo cifrati.</p>
+{carica}
+<p class="nota">Tua o di un familiare che ti ha autorizzato. Codice fiscale e NRE li uso solo per il portale CUP e li
+  conservo cifrati.</p>
 <form hx-post="/ui/nuova" hx-target="#foglio" class="scelte" data-resta>
   <label class="campo">Codice fiscale<input type="text" name="cf" maxlength="16" autocomplete="off"
-    autocapitalize="characters" spellcheck="false" required></label>
+    autocapitalize="characters" spellcheck="false" value="{e(valori.get("cf", ""))}" required></label>
   <label class="campo">Numero ricetta (NRE)<input type="text" name="nre" maxlength="15" autocomplete="off"
-    autocapitalize="characters" spellcheck="false" placeholder="010A…" required></label>{nome}{consenso}
+    autocapitalize="characters" spellcheck="false" placeholder="010A…" value="{e(valori.get("nre", ""))}" required></label>{nome}{consenso}
   <button class="primario">Cerca la prenotazione</button>
 </form>"""
+
+    def azione_pdf(self, chat, corpo):
+        """Il promemoria PDF caricato dall'app (corpo grezzo): il modulo dei dati, gia' compilato da controllare."""
+        if self.bot.piena(len(self.store.della_chat(chat))):
+            return f'<p class="errore">Puoi seguire al massimo {self.bot.max_pratiche} ricette.</p>'
+        try:
+            letto = ricetta_pdf.leggi(corpo)
+        except ricetta_pdf.PdfNonLeggibile as ex:
+            return self._form_ricetta(chat, "nuova", None, str(ex))
+        except Exception:
+            log.error("webapp: lettura PDF fallita")
+            return self._form_ricetta(chat, "nuova", None, "Non riesco a leggere questo PDF: scrivi i dati a mano.")
+        return self._form_ricetta(chat, "nuova", None, "", {"cf": letto["cf"], "nre": letto["nre"]}, letto)
 
     def foglio_nuova(self, chat):
         if self.bot.piena(len(self.store.della_chat(chat))):
@@ -1509,10 +1588,14 @@ class _Gestore(BaseHTTPRequestHandler):
             lunghezza = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             lunghezza = -1
-        if lunghezza < 0 or lunghezza > MAX_CORPO:
+        intestazioni = {k.lower(): v for k, v in self.headers.items()}
+        e_pdf = self.path.split("?")[0] == PERCORSO_PDF
+        if lunghezza < 0 or lunghezza > (ricetta_pdf.MAX_BYTE if e_pdf else MAX_CORPO):
             self.send_error(413)
             return
-        intestazioni = {k.lower(): v for k, v in self.headers.items()}
+        if e_pdf and verifica_init_data(firma_da(intestazioni), self.app.bot.token) is None:
+            lunghezza = 0  # niente firma valida: i 3 MB non si leggono nemmeno
+            self.close_connection = True
         try:
             corpo = self.rfile.read(lunghezza) if lunghezza else b""
             stato, h, testo = self.app.gestisci(metodo, self.path, intestazioni, corpo)

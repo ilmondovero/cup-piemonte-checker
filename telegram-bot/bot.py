@@ -1541,7 +1541,8 @@ class Bot:
         p.pop("attende_comune", None)
         if nuova:
             p.update(stato="attivo", prossimo=time.time() + 60)
-        self.salva(p, "zona", "stessa_sede", "attende_comune", "stato", "prossimo")
+            p.pop("guida", None)  # attivata dalla chat: il percorso guidato dell'app non vale piu'
+        self.salva(p, "zona", "stessa_sede", "attende_comune", "stato", "prossimo", "guida")
         quale = "data libera" if da_prenotare(p) else f"data prima del {fmt(att.quando)}"
         self.dire(p, f"Ok: cerco {descr_zona(zona, att)}." +
                   (f"\n\nFatto! Controllo ogni {self.intervallo_di(p['chat_id'])} minuti e ti scrivo appena esce una "
@@ -2137,7 +2138,7 @@ class Bot:
                  "tentati_auto": [], "creato": time.time(), "errori": 0}
         try:
             if modo == "nuova":
-                p = {"chat_id": chat, "stato": "sede", "prossimo": 0, "nome": nome, **nuovi,
+                p = {"chat_id": chat, "stato": "sede", "prossimo": 0, "nome": nome, **nuovi, "guida": True,
                      "prima": prima_con({}, nuovi["attuale"])}
                 if consenso:
                     p["consenso_ts"] = ora
@@ -2152,6 +2153,7 @@ class Bot:
                     if not att and z["tipo"] not in ("tutte", "comuni", "sedi") and not z["valore"]:
                         z = {"tipo": "tutte", "valore": ""}  # senza prenotazione non c'e' una sede da cui ricavarla
                     f.update(nuovi, zona=z, prima=prima_con(f, nuovi["attuale"], stessa=f.get("nre") == nre))
+                    f.pop("guida", None)
                     for k in ("libera", "viste", "storico", "riassunto", "ultimo", "luoghi"):
                         f.pop(k, None)
                 p = self.store.modifica(pid, cambia)
