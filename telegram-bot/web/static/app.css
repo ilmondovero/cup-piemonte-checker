@@ -290,3 +290,13 @@ button.g.oggi { box-shadow: inset 0 0 0 2px var(--accento); }
 .carica { border: 1px dashed var(--separatore); border-radius: var(--raggio); padding: 12px; margin-bottom: 12px; }
 .carica small { color: var(--tenue); font-size: 13px; }
 .letta li span { display: inline-block; min-width: 7.5em; color: var(--tenue); font-size: 13px; }
+
+/* dashboard del portale (solo admin) */
+.barre { display: flex; align-items: flex-end; gap: 2px; height: 90px; margin: 8px 0; }
+.barre .barra { flex: 1; background: var(--bottone); border-radius: 2px 2px 0 0; min-width: 3px; }
+.barre .barra.ko { background: var(--pericolo); }
+.barre .barra.vuota { background: var(--separatore); }
+.per-ora li { display: grid; grid-template-columns: 2em 1fr; gap: 4px 8px; align-items: center; font-size: 13px; }
+.per-ora .fascia { display: block; height: 6px; background: var(--separatore); border-radius: 3px; overflow: hidden; }
+.per-ora .fascia i { display: block; height: 100%; background: var(--bottone); }
+.per-ora .val { grid-column: 2; color: var(--tenue); }

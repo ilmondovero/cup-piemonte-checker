@@ -27,6 +27,7 @@ from urllib.parse import parse_qsl
 import bot as botmod
 import cup_http
 import ricetta_pdf
+import sonda as sonda_mod
 from store import Store
 
 log = logging.getLogger("cupbot.web")
@@ -232,6 +233,10 @@ class App:
             if metodo == "POST" and percorso == "/ui/cancella-tutto":
                 self._firma_recente(firma)
                 return self._html(200, self.ricette(chat, self.azione_cancella_tutto(chat)))
+            if metodo == "GET" and percorso == "/ui/portale":
+                if not self.bot.admin or str(chat) != self.bot.admin:
+                    raise Richiesta(404, "Pagina non trovata.")
+                return self._html(200, self.foglio_portale())
             if metodo == "GET" and percorso == "/ui/admin":
                 if not self.bot.admin or str(chat) != self.bot.admin:
                     raise Richiesta(404, "Pagina non trovata.")
@@ -623,6 +628,7 @@ class App:
             pulsanti.append('<button type="button" hx-get="/ui/nuova" hx-target="#foglio" aria-label="Aggiungi una ricetta">＋<span class="lungo"> Aggiungi</span></button>')
         pulsanti.append('<button type="button" hx-get="/ui/dati" hx-target="#foglio" aria-label="Dati e privacy">🔒</button>')
         if self.bot.admin and str(chat) == self.bot.admin:
+            pulsanti.append('<button type="button" hx-get="/ui/portale" hx-target="#foglio" aria-label="Stato del portale">📈</button>')
             pulsanti.append('<button type="button" hx-get="/ui/admin" hx-target="#foglio" aria-label="Admin">⚙️</button>')
         return f'<header class="barra"><h1>Le tue ricette</h1><nav>{"".join(pulsanti)}</nav></header>'
 
@@ -1464,6 +1470,76 @@ class App:
 </div>
 {self.sorveglianza(ora)}
 {self.rapporto_guasti(ora, giorni)}"""
+
+    def foglio_portale(self, ora=None):
+        """Dashboard del portale CUP (solo admin): stato e velocita' dalle sonde (sonda.py), mai cancellate."""
+        ora = ora or time.time()
+        s = self.store
+        sonde = s.sonde(ora - 30 * 86400)
+        giorno = [x for x in sonde if x[0] > ora - 86400]
+        settimana = [x for x in sonde if x[0] > ora - 7 * 86400]
+        n_tot, ok_tot, prima = s.sonde_totali()
+        episodi = s.episodi()
+
+        def perc(v):
+            return "–" if v is None else f"{v:.1f}%".replace(".", ",")
+
+        def sec(v):
+            return "–" if v is None else f"{v:.1f} s".replace(".", ",")
+
+        def tile(valore, nome, nota=""):
+            return f'<div class="tile"><strong>{e(str(valore))}</strong><span>{e(nome)}</span><small>{e(nota)}</small></div>'
+        if not sonde:
+            return ('<h2>📈 Portale CUP</h2><p class="nota">Ancora nessuna sonda: la prima parte pochi secondi dopo '
+                    'l’avvio del bot e poi una ogni 5 minuti.</p>')
+        ultima = sonde[-1]
+        aperto = next((x for x in episodi if x[1] is None), None)
+        if aperto:
+            stato = f"⚠️ giù dal {botmod.orario(aperto[0]):%d/%m %H:%M}"
+        elif ultima[3] != sonda_mod.OK:
+            stato = "⚠️ ultima sonda fallita"
+        else:
+            stato = "✅ raggiungibile"
+        dall = f"Dati dal {botmod.orario(prima):%d/%m/%Y}, {n_tot} sonde, mai cancellate." if prima else ""
+        ore = sonda_mod.ultime_ore(sonde, ora, botmod.TZ)
+        massimo = max([o[3] for o in ore if o[3]] or [1])
+        barre = "".join(
+            f'<span class="barra{" ko" if o[2] else ""}{" vuota" if not o[1] else ""}" '
+            f'style="height:{max(4, min(100, (o[3] or 0) / massimo * 100)):.0f}%" '
+            f'title="{o[0]:%d/%m %H}:00 · {o[1]} sonde, {o[2]} fallite, mediana {sec(o[3])}"></span>' for o in ore)
+        per_ora = sonda_mod.per_ora_del_giorno(sonde, botmod.TZ)
+        massimo_ora = max([v[3] for v in per_ora.values() if v[3]] or [1])
+        righe_ora = "".join(
+            f'<li><span class="ora">{h:02d}</span><span class="fascia"><i style="width:{(v[3] or 0) / massimo_ora * 100:.0f}%"></i></span>'
+            f'<span class="val">{sec(v[2])} · picchi {sec(v[3])}'
+            + (f' · {v[0] - v[1]} giù' if v[0] > v[1] else "") + "</span></li>"
+            for h, v in per_ora.items() if v[0])
+
+        def durata(inizio, fine):
+            minuti = max(1, round(((fine or ora) - inizio) / 60))
+            return f"{minuti // 60} h {minuti % 60} min" if minuti >= 60 else f"{minuti} min"
+        righe_ep = "".join(
+            f'<li><strong>{botmod.orario(i):%d/%m %H:%M}</strong> – '
+            f'{"ancora giù" if f is None else f"{botmod.orario(f):%d/%m %H:%M}"} · {durata(i, f)}<small>{e(m)}</small></li>'
+            for i, f, m in episodi) or "<li>Nessun episodio registrato.</li>"
+        return f"""
+<h2>📈 Portale CUP</h2>
+<div class="tiles">
+  {tile(stato, "stato ora", f"ultima sonda {botmod.orario(ultima[0]):%H:%M}, {sec(ultima[1])}")}
+  {tile(perc(sonda_mod.disponibilita(giorno)), "disponibile, 24 ore", f"{len(giorno)} sonde")}
+  {tile(perc(sonda_mod.disponibilita(settimana)), "disponibile, 7 giorni", f"{len(settimana)} sonde")}
+  {tile(perc(sonda_mod.disponibilita(sonde)), "disponibile, 30 giorni", f"{len(sonde)} sonde")}
+  {tile(perc(100 * ok_tot / n_tot if n_tot else None), "disponibile, da sempre", f"{n_tot} sonde")}
+</div>
+<p class="nota">{e(dall)} Una sonda è una richiesta leggera alla pagina iniziale ogni 5 minuti: non tiene occupata nessuna data.</p>
+<h3>Ultime 24 ore · tempo di risposta per ora</h3>
+<div class="barre" role="img" aria-label="Tempo di risposta del portale nelle ultime 24 ore">{barre}</div>
+<p class="nota">Barre rosse: nell’ora c’è stata almeno una sonda fallita. L’altezza è la mediana dei tempi.</p>
+<h3>Per ora del giorno · ultimi 30 giorni</h3>
+<ul class="elenco per-ora">{righe_ora}</ul>
+<h3>Quando è stato giù</h3>
+<p class="nota">Un episodio inizia dopo {s.SONDA_SOGLIA} sonde fallite di fila e finisce alla prima riuscita.</p>
+<ul class="elenco">{righe_ep}</ul>"""
 
     def sorveglianza(self, ora):
         """Stato del ciclo del bot (battito) e del portale (ultima sessione riuscita, guasto segnalato)."""

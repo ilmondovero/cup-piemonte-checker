@@ -1155,3 +1155,20 @@ def test_guida_non_resta_se_la_ricetta_si_attiva_dalla_chat(app):
     assert q["stato"] == "attivo" and "guida" not in q
     t = get(app, f"/ui/r/{p['id']}/dove", chat=3)[2].decode()
     assert "Passo 2 di 4" not in t and "Avanti" not in t
+
+
+def test_dashboard_solo_admin_e_contenuto(app):
+    b = app.bot
+    b.admin = "1"
+    assert "Ancora nessuna sonda" in get(app, "/ui/portale", chat=1)[2].decode()
+    ora = time.time()
+    for i in range(6):
+        b.store.sonda(ora - 3600 + i * 300, 0.5 + i / 10, 200, "ok")
+    for i in range(3):
+        b.store.sonda(ora - 1800 + i * 300, 30.0, None, "timeout")
+    b.store.sonda(ora - 600, 0.4, 200, "ok")
+    stato, _, corpo = get(app, "/ui/portale", chat=1)
+    t = corpo.decode()
+    assert stato == 200 and "raggiungibile" in t and "Quando è stato giù" in t and "mai cancellate" in t
+    assert "barra ko" in t and "disponibile, 24 ore" in t
+    assert get(app, "/ui/portale", chat=2)[0] == 404  # gli altri utenti non la vedono

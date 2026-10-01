@@ -45,6 +45,18 @@ CREATE TABLE IF NOT EXISTS metriche_passi (  -- ogni richiesta al portale, per p
     codice  INTEGER                      -- codice HTTP, se c'e'
 );
 CREATE INDEX IF NOT EXISTS ix_metriche_passi_ts ON metriche_passi(ts);
+CREATE TABLE IF NOT EXISTS sonda (          -- una richiesta leggera al portale ogni pochi minuti: mai cancellata
+    ts      REAL NOT NULL,
+    secondi REAL NOT NULL,
+    codice  INTEGER,
+    esito   TEXT NOT NULL                -- ok | timeout | rete | http
+);
+CREATE INDEX IF NOT EXISTS ix_sonda_ts ON sonda(ts);
+CREATE TABLE IF NOT EXISTS episodi (        -- portale giu': dopo SONDA_SOGLIA sonde fallite di fila, fino alla prima riuscita
+    inizio REAL NOT NULL,                -- la prima sonda fallita dell'episodio
+    fine   REAL,                         -- la prima sonda riuscita dopo (NULL: ancora giu')
+    motivo TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS tempi_prenotazioni (  -- solo tempi ed esito, mai la data o la ricetta
     ts         REAL NOT NULL,            -- inizio della prenotazione
     esito      TEXT NOT NULL,            -- ok | incerta | fallita
@@ -230,10 +242,9 @@ class Store:
             self._vacuum()
         return via
 
-    def metrica(self, ts, durata, riuscita, lenta=None, timeout=False, tieni_giorni=7):
+    def metrica(self, ts, durata, riuscita, lenta=None, timeout=False):
         self.db.execute("INSERT INTO metriche (ts, durata, riuscita, lenta, timeout) VALUES (?, ?, ?, ?, ?)",
                         (ts, durata, int(riuscita), lenta, int(timeout)))
-        self.db.execute("DELETE FROM metriche WHERE ts < ?", (ts - tieni_giorni * 86400,))
         self.db.commit()
 
     def metriche(self, dal):
@@ -243,19 +254,61 @@ class Store:
         prima = self.db.execute("SELECT MIN(ts) FROM metriche").fetchone()[0]
         return righe, prima
 
-    def metrica_passi(self, righe, tieni_giorni=7):
+    def metrica_passi(self, righe):
         """righe: [(ts, passo, secondi, esito, codice)] delle richieste di una sessione (cup_http.RICHIESTE)."""
         if not righe:
             return
         self.db.executemany("INSERT INTO metriche_passi (ts, passo, secondi, esito, codice) VALUES (?, ?, ?, ?, ?)",
                             righe)
-        self.db.execute("DELETE FROM metriche_passi WHERE ts < ?", (max(r[0] for r in righe) - tieni_giorni * 86400,))
         self.db.commit()
 
     def metriche_passi(self, dal):
         """[(ts, passo, secondi, esito, codice)] dal momento indicato."""
         return [tuple(r) for r in self.db.execute(
             "SELECT ts, passo, secondi, esito, codice FROM metriche_passi WHERE ts >= ? ORDER BY ts", (dal,))]
+
+    SONDA_SOGLIA = 3  # sonde fallite di fila che aprono un episodio di portale giu'
+    SONDA_BUCO = 900  # secondi: tra due sonde, oltre, il bot era fermo e non sappiamo cosa e' successo
+
+    def sonda(self, ts, secondi, codice, esito):
+        """Registra una sonda e tiene gli episodi di portale giu': si apre dopo SONDA_SOGLIA fallite di fila
+        (inizio = la prima), si chiude alla prima riuscita. Se tra due sonde c'e' un buco (bot fermo) l'episodio
+        aperto si chiude all'ultima sonda vista e le fallite di prima non contano: niente giu' non osservati.
+        Niente si cancella."""
+        with self.db:  # un errore a meta' non lascia aperta la transazione
+            prec = self.db.execute("SELECT ts FROM sonda ORDER BY rowid DESC LIMIT 1").fetchone()
+            self.db.execute("INSERT INTO sonda (ts, secondi, codice, esito) VALUES (?, ?, ?, ?)",
+                            (ts, secondi, codice, esito))
+            aperto = self.db.execute("SELECT rowid FROM episodi WHERE fine IS NULL").fetchone()
+            if aperto and prec and ts - prec["ts"] > self.SONDA_BUCO:
+                self.db.execute("UPDATE episodi SET fine = ? WHERE rowid = ?", (prec["ts"], aperto[0]))
+                aperto = None
+            if esito == "ok":
+                if aperto:
+                    self.db.execute("UPDATE episodi SET fine = ? WHERE rowid = ?", (ts, aperto[0]))
+            elif not aperto:
+                ultime = self.db.execute("SELECT ts, esito FROM sonda ORDER BY rowid DESC LIMIT ?",
+                                         (self.SONDA_SOGLIA,)).fetchall()
+                di_fila = len(ultime) == self.SONDA_SOGLIA and all(r["esito"] != "ok" for r in ultime) and all(
+                    ultime[i]["ts"] - ultime[i + 1]["ts"] <= self.SONDA_BUCO for i in range(len(ultime) - 1))
+                if di_fila:  # inizio e motivo sono della prima sonda fallita
+                    self.db.execute("INSERT INTO episodi (inizio, fine, motivo) VALUES (?, NULL, ?)",
+                                    (ultime[-1]["ts"], ultime[-1]["esito"]))
+
+    def sonde(self, dal):
+        """[(ts, secondi, codice, esito)] dal momento indicato."""
+        return [tuple(r) for r in self.db.execute(
+            "SELECT ts, secondi, codice, esito FROM sonda WHERE ts >= ? ORDER BY ts", (dal,))]
+
+    def sonde_totali(self):
+        """(sonde, riuscite, la piu' vecchia): su tutto lo storico."""
+        n, ok, prima = self.db.execute("SELECT COUNT(*), SUM(esito = 'ok'), MIN(ts) FROM sonda").fetchone()
+        return n, ok or 0, prima
+
+    def episodi(self, limite=15):
+        """[(inizio, fine o None, motivo)], dal piu' recente."""
+        return [tuple(r) for r in self.db.execute(
+            "SELECT inizio, fine, motivo FROM episodi ORDER BY inizio DESC LIMIT ?", (limite,))]
 
     def tempo_prenotazione(self, ts, esito, dalla_data, fasi, tieni_giorni=30):
         self.db.execute("INSERT INTO tempi_prenotazioni (ts, esito, dalla_data, fasi) VALUES (?, ?, ?, ?)",

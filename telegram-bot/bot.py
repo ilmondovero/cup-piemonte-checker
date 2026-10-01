@@ -2326,6 +2326,8 @@ def main():
         import webapp
         webapp.avvia(bot, os.environ.get("DB_PATH", "data/cup.db"), os.environ.get("CUP_BOT_KEY"),
                      porta=env_int("WEBAPP_PORTA", 8095))
+    import sonda
+    sonda.avvia(os.environ.get("DB_PATH", "data/cup.db"), os.environ.get("CUP_BOT_KEY"))
     try:
         bot.run()
     except KeyboardInterrupt:
