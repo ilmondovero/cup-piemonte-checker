@@ -64,7 +64,7 @@ def analizza(testo):
     if not cf:
         problemi.append("codice fiscale")
     # il NRE e' stampato a pezzi: "*010A3*" (regione e ASL) e "*1234567890*" (10 cifre)
-    m = re.search(r"\*([0-9A-Z]{5})\*[^*]{0,80}?\*(\d{10})\*", testo)
+    m = re.search(r"\*([0-9A-Z]{5})\*[^*]{0,300}?\*(\d{10})\*", testo)
     nre = m.group(1) + m.group(2) if m else ""
     if not nre:
         m = re.search(r"\b(0\d{2}[A-Z0-9]\d{11})\b", testo)

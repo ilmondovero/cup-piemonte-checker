@@ -62,3 +62,9 @@ def test_testi_enormi_restano_veloci():
 def test_il_codice_fiscale_del_medico_non_e_quello_dell_assistito():
     testo = "ASSISTITO: ROSSI MARIA INDIRIZZO: x CODICE FISCALE DEL MEDICO: RSSMRA80A01H501U " + "x" * 50
     assert r.analizza(testo)["cf"] == ""
+
+
+def test_nre_con_i_codici_lontani_nel_testo():
+    # alcuni lettori di PDF mettono l'indirizzo tra i due pezzi del NRE
+    testo = TESTO.replace("*1234567890* *1234567890*", "x" * 150 + " *1234567890* *1234567890*")
+    assert r.analizza(testo)["nre"] == "010A31234567890"

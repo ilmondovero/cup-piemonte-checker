@@ -300,3 +300,5 @@ button.g.oggi { box-shadow: inset 0 0 0 2px var(--accento); }
 .per-ora .fascia { display: block; height: 6px; background: var(--separatore); border-radius: 3px; overflow: hidden; }
 .per-ora .fascia i { display: block; height: 100%; background: var(--bottone); }
 .per-ora .val { grid-column: 2; color: var(--tenue); }
+.letta li { display: grid; grid-template-columns: 7.5em 1fr; gap: 8px; }
+.letta li span { min-width: 0; }
