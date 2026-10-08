@@ -508,3 +508,51 @@ def test_un_altro_controllo_dello_stesso_cf_non_libera_la_data_offerta(b, monkey
 def botmod_ttl():
     import bot as botmod
     return botmod.TTL_OFFERTA
+
+
+# --- "Conferma presa visione" delle note, prima della Conferma ----------------------------------
+PAGINA_NOTE = f'<div id="{L}:_t5">x</div><div id="{c.RIEPILOGO}:_t217" onmouseover="y"><span aria-describedby="Conferma presa visione"></span></div>'
+RISPOSTA_OK = ('<partial-response><changes><update id="j_id1:javax.faces.ViewState:0"><![CDATA[vs-nuovo]]></update>'
+               '<update id="x"><![CDATA[<i class="icon-check" style="m"></i><span id="a">Presa visione delle note</span>]]></update>'
+               '</changes></partial-response>')
+
+
+class FormFinto:
+    inviati, risposta = [], RISPOSTA_OK
+
+    def __init__(self, s, page, form):
+        self.vs = "vs-vecchio"
+
+    def post(self, campi, form=None):
+        FormFinto.inviati.append((campi, self.vs))
+        return FormFinto.risposta
+
+
+def sessione_note(monkeypatch, risposta=RISPOSTA_OK):
+    FormFinto.inviati, FormFinto.risposta = [], risposta
+    monkeypatch.setattr(c, "_Form", FormFinto)
+    return c.CupSession("RSSMRA80A01H501U", "010A00000000003")
+
+
+def test_presa_visione_clicca_il_pulsante_letto_dalla_pagina_e_tiene_il_viewstate_nuovo(monkeypatch):
+    s = sessione_note(monkeypatch)
+    s.presa_visione(PAGINA_NOTE)
+    assert FormFinto.inviati[0][0]["javax.faces.source"] == f"{c.RIEPILOGO}:_t217" and s.vs_riepilogo == "vs-nuovo"
+    s.conferma(PAGINA_NOTE)
+    assert FormFinto.inviati[1][1] == "vs-nuovo"  # la Conferma parte con il ViewState dopo la presa visione
+
+
+def test_presa_visione_senza_note_non_fa_nulla(monkeypatch):
+    s = sessione_note(monkeypatch)
+    s.presa_visione("<div>Riepilogo senza note</div>")
+    assert FormFinto.inviati == [] and s.vs_riepilogo is None
+
+
+def test_presa_visione_non_registrata_non_conferma(monkeypatch):
+    s = sessione_note(monkeypatch, '<partial-response><changes><update id="x"><![CDATA[<i class="icon-check-empty"></i>'
+                                   '<span>Presa visione delle note</span>]]></update></changes></partial-response>')
+    try:
+        s.presa_visione(PAGINA_NOTE)
+        assert False
+    except c.CupError as e:
+        assert "presa visione" in str(e)

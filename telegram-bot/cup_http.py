@@ -678,12 +678,36 @@ class CupSession:
             return t, None, "", page
         return t, _date(m.group(0)), t[m.end():m.end() + 250], page
 
+    @staticmethod
+    def _campi_riepilogo(riepilogo_page):
+        return {k: v for k, v in _form_fields(riepilogo_page, RIEPILOGO).items()
+                if k not in (RIEPILOGO, "javax.faces.encodedURL", "ice.window", "ice.view", "javax.faces.ViewState")}
+
+    def presa_visione(self, riepilogo_page):
+        """Se l'appuntamento ha delle note il Riepilogo chiede "Conferma presa visione" prima di "Conferma": senza
+        questo click il portale risponde "Non e' stata effettuata la presa visione delle note" e non prenota (dal
+        vivo, 2026-10-08, conferme da 0,1 s). L'id del pulsante cambia a ogni pagina: si legge dalla pagina.
+        CupError se il click non risulta registrato: si e' ancora prima della Conferma, niente e' partito."""
+        i = riepilogo_page.find('aria-describedby="Conferma presa visione"')
+        self.vs_riepilogo = None
+        if i < 0:
+            return
+        ids = re.findall(r'id="(%s:_t\d+)"' % re.escape(RIEPILOGO), riepilogo_page[max(0, i - 900):i])
+        if not ids:
+            raise CupError("Pulsante 'Conferma presa visione' non riconosciuto: non confermo")
+        _passo("conferma")
+        xml = _Form(self.s, riepilogo_page, RIEPILOGO).post({**self._campi_riepilogo(riepilogo_page), **_event(ids[-1])})
+        if "alert-danger" in xml or not re.search(r'icon-check"[^>]*></i>\s*<span[^>]*>\s*Presa visione delle note', xml):
+            raise CupError("Il portale non ha registrato la presa visione delle note: non confermo")
+        vs = re.search(r'<update id="[^"]*javax\.faces\.ViewState[^"]*"[^>]*><!\[CDATA\[(.*?)\]\]>', xml, re.S)
+        self.vs_riepilogo = vs.group(1) if vs else None
+
     def conferma(self, riepilogo_page):
         _passo("conferma")
         form = _Form(self.s, riepilogo_page, RIEPILOGO)
-        campi = {k: v for k, v in _form_fields(riepilogo_page, RIEPILOGO).items()
-                 if k not in (RIEPILOGO, "javax.faces.encodedURL", "ice.window", "ice.view", "javax.faces.ViewState")}
-        return form.post({**campi, **_event(RIEPILOGO + ":riepilogo-nextButton-bottom")})
+        if getattr(self, "vs_riepilogo", None):  # dopo la presa visione il portale ha dato un ViewState nuovo
+            form.vs = self.vs_riepilogo
+        return form.post({**self._campi_riepilogo(riepilogo_page), **_event(RIEPILOGO + ":riepilogo-nextButton-bottom")})
 
 
 # --- API usata dal bot ------------------------------------------------------------------
@@ -1155,6 +1179,7 @@ def _prenota(cf, nre, slot, sessione, zona, dry_run, libera, nuova, tappa, calen
 
     # da qui la Conferma e' partita: qualunque problema e' "esito incerto", mai "non spostata". La fase si
     # segna PRIMA di inviarla: se il bot si ferma durante l'invio, al riavvio l'esito e' incerto, non "non fatta"
+    cup.presa_visione(page)  # prima di "conferma": se fallisce non e' partito niente
     fase("conferma")
     nuova_att = None
     try:
