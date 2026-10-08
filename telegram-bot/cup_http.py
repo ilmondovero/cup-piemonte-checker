@@ -1158,7 +1158,12 @@ def _prenota(cf, nre, slot, sessione, zona, dry_run, libera, nuova, tappa, calen
     fase("conferma")
     nuova_att = None
     try:
-        cup.conferma(page)
+        risposta = cup.conferma(page)
+        # la risposta del portale alla Conferma: senza questa riga non si capisce perche' una conferma da 0,1 s
+        # non prenota (solo le frasi con un esito, mai il resto della pagina)
+        esito = re.findall(r"[^.!?<>]{0,80}(?:success|errore|attenzione|non e' stato|non è stato|confermat|"
+                           r"effettuat)[^.!?<>]{0,120}", _text(html.unescape(str(risposta))), re.I)
+        DIARIO.append("conferma: risposta " + (" | ".join(x.strip() for x in esito[:3]) or "senza messaggi")[:300])
     except Exception as e:
         # nessuna risposta (timeout, 504...): la Conferma puo' essere arrivata lo stesso, si verifica comunque.
         # Dal vivo (2026-09-28) la risposta e' scaduta dopo 180 s ma la prenotazione era fatta

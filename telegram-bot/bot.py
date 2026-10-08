@@ -858,6 +858,16 @@ class Bot:
         o = self.offerte.get(pid)
         return bool(o) and time.time() - o["ts"] <= TTL_OFFERTA
 
+    def offerta_valida_stesso_cf(self, p):
+        """Un'altra ricetta dello stesso codice fiscale ha una data offerta e ancora valida: la sua sessione la
+        tiene bloccata sul portale, e una sessione nuova per lo stesso paziente (un altro controllo) la libera."""
+        for pid in list(self.offerte):
+            if pid != p["id"] and self.offerta_valida(pid):
+                altra = self.store.get(pid)
+                if altra and altra.get("cf") == p.get("cf"):
+                    return True
+        return False
+
     def errore_controllo(self, p, e, manuale, *campi):
         chat = p["chat_id"]
         if not isinstance(e, (cup_http.CupError, requests.RequestException)):
@@ -2425,6 +2435,8 @@ class Bot:
             if self.offerta_valida(pid):
                 continue  # la sua sessione tiene la data offerta: un nuovo controllo non la vedrebbe
             p = self.store.get(pid)
+            if self.offerta_valida_stesso_cf(p):
+                continue  # resta in scadenza: parte appena l'altra offerta e' presa o scaduta
             p["prossimo"] = time.time() + self.intervallo_di(p["chat_id"]) * 60 * random.uniform(0.9, 1.1)
             self.salva(p, "prossimo")
             self.controlla(p)

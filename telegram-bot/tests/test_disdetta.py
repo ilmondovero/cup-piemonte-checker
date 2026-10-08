@@ -480,3 +480,31 @@ def test_data_sparita_fa_partire_subito_un_altro_controllo(b, monkeypatch):
     assert b._prenota(pratica(b), slot, None) == "fallita"
     assert pratica(b)["prossimo"] <= __import__("time").time()
     assert "Cerco subito un'altra data" in inviati(b)[-1]
+
+
+def test_un_altro_controllo_dello_stesso_cf_non_libera_la_data_offerta(b, monkeypatch):
+    import time as _t
+    registra(b)
+    p = pratica(b)
+    p["prossimo"] = 0
+    b.salva(p, "prossimo")
+    b.distanza = 0
+    altra = {"id": 999, "cf": p["cf"], "chat_id": p["chat_id"]}
+    orig = b.store.get
+    monkeypatch.setattr(b.store, "get", lambda pid: altra if pid == 999 else orig(pid))
+    controlli = []
+    monkeypatch.setattr(b, "controlla", lambda q, manuale=False: controlli.append(q["id"]))
+
+    b.offerte[999] = {"ts": _t.time(), "token": "t", "sessione": None, "slots": []}
+    assert b.offerta_valida_stesso_cf(pratica(b)) and not b.controllo_pianificato() and controlli == []
+
+    altra["cf"] = "ALTRO"  # un altro paziente: nessun legame
+    assert not b.offerta_valida_stesso_cf(pratica(b))
+    altra["cf"] = p["cf"]
+    b.offerte[999]["ts"] = _t.time() - botmod_ttl() - 1  # offerta scaduta
+    assert not b.offerta_valida_stesso_cf(pratica(b)) and b.controllo_pianificato() and controlli == [p["id"]]
+
+
+def botmod_ttl():
+    import bot as botmod
+    return botmod.TTL_OFFERTA
