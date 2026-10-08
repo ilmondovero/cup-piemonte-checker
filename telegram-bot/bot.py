@@ -1421,7 +1421,12 @@ class Bot:
                 self.dire(p, f"❌ Non {'prenotata' if nuova else 'spostata'} al {fmt(slot.quando)}, "
                              f"{titolo(slot.luogo.sede)}: {motivo}. La prenotazione resta com'era.")
             else:
-                self.dire(p, ("🚨 " if urgente else ("❌ Non prenotata: " if nuova else "❌ Non spostata: ")) + str(e))
+                sparita = not urgente and "non piu' disponibile" in str(e)
+                self.dire(p, ("🚨 " if urgente else ("❌ Non prenotata: " if nuova else "❌ Non spostata: ")) + str(e) +
+                          ("\n\n🔎 Cerco subito un'altra data." if sparita else ""))
+                if sparita:  # la data e' stata presa da altri: il prossimo controllo parte ora, non tra qualche minuto
+                    p["prossimo"] = time.time()
+                    self.salva(p, "prossimo")
             if urgente:
                 self.alert_admin(f"Esito incerto dopo la conferma per {uid(chat)}")
                 self.sospendi_auto(p)

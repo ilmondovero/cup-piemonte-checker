@@ -465,3 +465,18 @@ def test_conferma_incerta_fatta_lascia_spenta_la_conferma_automatica(b, monkeypa
     b.sospendi_auto(pratica(b))
     assert b.chiudi_incerta(pratica(b), ATT) is True
     assert not pratica(b).get("auto") and not pratica(b).get("auto_sospesa")
+
+
+def test_data_sparita_fa_partire_subito_un_altro_controllo(b, monkeypatch):
+    registra(b)
+    p = pratica(b)
+    p["prossimo"] = __import__("time").time() + 3600
+    b.salva(p, "prossimo")
+
+    def sparita(*a, **k):
+        raise c.CupError("Slot 27/10/2026 12:00 non piu' disponibile (tentativo nella sessione originale: rifiutata)")
+    monkeypatch.setattr(c, "prenota", sparita)
+    slot = c.Slot(datetime(2026, 10, 27, 12, 0), c.Luogo("OSPEDALE A", "AMB 1", "Via Roma, 1 - TORINO (TO)"), "id")
+    assert b._prenota(pratica(b), slot, None) == "fallita"
+    assert pratica(b)["prossimo"] <= __import__("time").time()
+    assert "Cerco subito un'altra data" in inviati(b)[-1]
