@@ -10,6 +10,8 @@ from test_bot import ATT, b, inviati, pratica, registra  # noqa: E402,F401
 
 L = c.L
 QUANDO = datetime(2026, 12, 3, 12, 40)
+LUOGO = c.Luogo("OSPEDALE A", "AMB 1", "Via Roma, 1 - TORINO (TO)")
+ALTRO = c.Luogo("OSPEDALE B", "AMB 2", "Via Po, 2 - TORINO (TO)")
 
 
 class ListaFinta:
@@ -23,7 +25,7 @@ class ListaFinta:
 
 def sessione(risposte, xml=None):
     s = c.CupSession("RSSMRA80A01H501U", "010A00000000003")
-    s.righe_prenotate = [(0, QUANDO)]
+    s.righe_prenotate = [(0, QUANDO, LUOGO)]
     s.lista_xml = xml or f'<span id="{L}:j_idt61:0:disdiciButton"></span>'
     s.lista = ListaFinta(risposte)
     return s
@@ -66,7 +68,7 @@ def test_data_non_prenotata_o_doppia_non_disdice():
     except c.CupError as e:
         assert "unica prenotazione" in str(e)
     assert s.lista.inviati == []  # nessuna richiesta al portale
-    s.righe_prenotate = [(0, QUANDO), (1, QUANDO)]
+    s.righe_prenotate = [(0, QUANDO, LUOGO), (1, QUANDO, LUOGO)]
     try:
         s.disdici_dialogo(QUANDO)
         assert False
@@ -76,7 +78,7 @@ def test_data_non_prenotata_o_doppia_non_disdice():
 
 def test_con_due_prenotazioni_si_disdice_solo_quella_scelta():
     s = sessione([dialogo(f'<a id="{L}:_t5">Sì</a>')], f'<b id="{L}:j_idt61:0:disdiciButton"></b><b id="{L}:j_idt61:1:disdiciButton"></b>')
-    s.righe_prenotate = [(0, datetime(2026, 11, 1, 9, 0)), (1, QUANDO)]
+    s.righe_prenotate = [(0, datetime(2026, 11, 1, 9, 0), LUOGO), (1, QUANDO, LUOGO)]
     s.disdici_dialogo(QUANDO)
     assert s.lista.inviati[0]["javax.faces.source"].endswith(":1:disdiciButton")
 
@@ -118,7 +120,7 @@ def test_senza_messaggio_si_verifica_con_una_sessione_nuova(monkeypatch):
 def test_prenotazione_ancora_presente_dopo_la_disdetta_e_esito_incerto(monkeypatch):
     class Nuova:
         n_prenotate = 1
-        righe_prenotate = [(0, QUANDO)]
+        righe_prenotate = [(0, QUANDO, LUOGO)]
 
         def __init__(self, cf, nre):
             pass
@@ -172,12 +174,15 @@ def test_bot_esito_incerto_non_cambia_lo_stato_e_avvisa_l_admin(b, monkeypatch):
         raise c.CupError("Disdetta inviata, esito incerto: la prenotazione risulta non verificabile.")
     monkeypatch.setattr(c, "disdici", incerto)
     assert b.disdici(pratica(b), ATT.quando.isoformat()) == "incerta"
-    assert any(x.startswith("🚨") for x in inviati(b)) and pratica(b)["stato"] == "attivo"
+    p = pratica(b)
+    assert any(x.startswith("🚨") for x in inviati(b)) and p["stato"] == "pausa"
+    assert p["disdetta_incerta"]["quando"] == ATT.quando.isoformat() and not p.get("da_prenotare")
+    assert p["attuale"]["quando"] == ATT.quando.isoformat()  # la prenotazione resta quella finche' non si verifica
 
 
 # --- doppioni: due prenotazioni per la stessa ricetta --------------------------------------------
 def pren(giorni, cosa="VISITA - 11.11", sede="OSPEDALE A"):
-    return c.Prenotazione(datetime(2026, 12, 1, 9, 0) + __import__("datetime").timedelta(days=giorni),
+    return c.Prenotazione(datetime(2030, 12, 1, 9, 0) + __import__("datetime").timedelta(days=giorni),
                           c.Luogo(sede, "AMB 1", "Via Roma, 1 - TORINO (TO)"), cosa)
 
 
@@ -299,3 +304,140 @@ def test_bot_non_prenota_una_nuova_con_una_conferma_incerta_in_sospeso(b, monkey
     monkeypatch.setattr(c, "prenota", lambda *a, **k: (_ for _ in ()).throw(AssertionError("non va chiamata")))
     slot = c.Slot(datetime(2027, 1, 2, 9, 0), c.Luogo("OSPEDALE A", "AMB 1", "Via Roma, 1 - TORINO (TO)"), "id")
     assert b._prenota(pratica(b), slot, None) == "fallita"
+
+
+# --- verifica dopo la disdetta, doppioni, esito incerto ------------------------------------------
+def verifica_con(monkeypatch, letture):
+    class Nuova:
+        n_prenotate = 1
+        righe_prenotate = [(0, QUANDO, LUOGO)]
+
+        def __init__(self, cf, nre):
+            pass
+
+        def attuale(self):
+            x = letture.pop(0)
+            if isinstance(x, Exception):
+                raise x
+    prova_disdici(monkeypatch, [dialogo(f'<a id="{L}:_t289">Sì</a>'), "<p>pagina diversa</p>"], dopo=Nuova)
+
+
+def disdici_senza_messaggio():
+    return c.disdici("RSSMRA80A01H501U", "010A00000000003", QUANDO, dry_run=False)
+
+
+def test_un_nessun_record_isolato_non_prova_la_disdetta(monkeypatch):
+    nt, ancora = c.NonTrovata("Nessun record"), None
+    verifica_con(monkeypatch, [nt, ancora, nt, ancora, nt])
+    try:
+        disdici_senza_messaggio()
+        assert False
+    except c.CupError as e:
+        assert "Disdetta inviata, esito incerto" in str(e)
+
+
+def test_due_nessun_record_di_fila_provano_la_disdetta(monkeypatch):
+    verifica_con(monkeypatch, [c.NonTrovata("Nessun record"), c.NonTrovata("Nessun record")])
+    assert disdici_senza_messaggio() == "Prenotazione disdetta."
+
+
+def test_stato_erogata_non_prova_la_disdetta(monkeypatch):
+    verifica_con(monkeypatch, [c.NonAttiva("La prenotazione risulta in stato EROGATA", ["EROGATA"])] * 5)
+    try:
+        disdici_senza_messaggio()
+        assert False
+    except c.CupError as e:
+        assert "Disdetta inviata, esito incerto" in str(e)
+
+
+def test_errore_imprevisto_nella_verifica_lascia_una_traccia(monkeypatch):
+    verifica_con(monkeypatch, [KeyError("x")])
+    try:
+        disdici_senza_messaggio()
+        assert False
+    except c.CupError as e:
+        assert "esito incerto" in str(e)
+    assert any("errore imprevisto KeyError" in x for x in c.DIARIO)
+
+
+def test_le_righe_passate_non_fanno_disdire_quella_futura():
+    passata, futura = pren(-5000), pren(40)
+    assert c.doppione([passata, futura]) is None
+    vicina = pren(0)
+    assert c.doppione([passata, vicina, futura]) == (vicina, futura)
+
+
+def test_stessa_data_in_due_sedi_si_disdice_quella_giusta():
+    xml = f'<b id="{L}:j_idt61:0:disdiciButton"></b><b id="{L}:j_idt61:1:disdiciButton"></b>'
+    s = sessione([dialogo(f'<a id="{L}:_t5">Sì</a>')], xml)
+    s.righe_prenotate = [(0, QUANDO, LUOGO), (1, QUANDO, ALTRO)]
+    try:
+        s.disdici_dialogo(QUANDO)
+        assert False
+    except c.CupError:
+        pass
+    s.disdici_dialogo(QUANDO, ALTRO)
+    assert s.lista.inviati[0]["javax.faces.source"].endswith(":1:disdiciButton")
+
+
+def test_elimina_doppione_con_la_lettura_del_controllo_apre_una_sola_sessione(monkeypatch):
+    vicina, lontana = pren(0), pren(40)
+    disdette = sessioni_finte(monkeypatch, [[vicina, lontana]])
+    visto, chiamate = (vicina, lontana), []
+    monkeypatch.setattr(c, "disdici", lambda cf, nre, quando, **k: chiamate.append((quando, k)) or "Prenotazione disdetta.")
+    assert c.elimina_doppione("CF", "NRE", dry_run=False, visto=visto) == visto
+    quando, k = chiamate[0]
+    assert quando == lontana.quando and k["luogo"] == lontana.luogo and k["cup"] is not None and disdette == []
+
+
+def test_bot_errore_imprevisto_nel_doppione_non_esce_da_controlla(b, monkeypatch):
+    registra(b)
+    vicina, lontana = pren(0), pren(40)
+    monkeypatch.setattr(c, "check", lambda *a, **k: {"attuale": lontana, "slots": [], "sessione": None, "migliori": [],
+                                                    "doppione": (vicina, lontana)})
+    monkeypatch.setattr(c, "elimina_doppione", lambda *a, **k: (_ for _ in ()).throw(TypeError("riga strana")))
+    b.controlla(pratica(b))
+
+
+def test_disdetta_riuscita_non_cancella_una_conferma_incerta_in_sospeso(b, monkeypatch):
+    registra(b)
+    p = pratica(b)
+    p["incerta"] = {"quando": datetime(2027, 1, 1, 9, 0).isoformat(), "luogo": "OSPEDALE A"}
+    b.salva(p, "incerta")
+    monkeypatch.setattr(c, "disdici", lambda *a, **k: "Prenotazione disdetta.")
+    assert b.disdici(pratica(b), ATT.quando.isoformat()) == "ok"
+    assert pratica(b).get("incerta")
+
+
+def segna_disdetta_incerta(b):
+    p = pratica(b)
+    p["disdetta_incerta"] = {"quando": ATT.quando.isoformat(), "luogo": ATT.luogo.key(), "sede": ATT.luogo.sede,
+                             "ambulatorio": ATT.luogo.ambulatorio, "indirizzo": ATT.luogo.indirizzo}
+    b.salva(p, "disdetta_incerta")
+
+
+def test_bot_con_una_disdetta_da_verificare_non_ne_parte_un_altra(b, monkeypatch):
+    registra(b)
+    segna_disdetta_incerta(b)
+    monkeypatch.setattr(c, "disdici", lambda *a, **k: (_ for _ in ()).throw(AssertionError("non va chiamata")))
+    assert b.disdici(pratica(b), ATT.quando.isoformat()) == "fallita"
+
+
+def test_bot_disdetta_incerta_ancora_presente_al_controllo_dopo(b, monkeypatch):
+    registra(b)
+    segna_disdetta_incerta(b)
+    assert b.chiudi_disdetta_incerta(pratica(b), ATT) is True
+    assert not pratica(b).get("disdetta_incerta") and "non è andata a buon fine" in inviati(b)[-1]
+
+
+def test_bot_disdetta_incerta_poi_solo_disdette_vale_come_disdetta_riuscita(b, monkeypatch):
+    registra(b)
+    segna_disdetta_incerta(b)
+
+    def disdetta(*a, **k):
+        raise c.NonAttiva("La prenotazione risulta in stato DISDETTA", ["DISDETTA"])
+    monkeypatch.setattr(c, "check", disdetta)
+    b.controlla(pratica(b))
+    p = pratica(b)
+    assert p["da_prenotare"] and p["stato"] == "pausa" and not p.get("disdetta_incerta")
+    assert "disdetta di prima è andata a buon fine" in inviati(b)[-1]

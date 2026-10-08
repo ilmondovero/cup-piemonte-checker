@@ -250,6 +250,12 @@ def sospesa(p):
                 "Ho inviato la conferma ma il portale non l'ha ancora mostrata: finché non la verifico vale la "
                 "prenotazione qui sopra. " + ("Riprendi i controlli per verificarla." if p.get("stato") == "pausa"
                                              else "Verifico al prossimo controllo."))
+    dis = p.get("disdetta_incerta")
+    if dis:
+        q = datetime.fromisoformat(dis["quando"])
+        return ("incerta", f"Disdetta da verificare: {fmt(q)}", luogo_di(dis),
+                "Ho inviato la disdetta ma il portale non l'ha confermata: la prenotazione potrebbe esistere ancora. "
+                "Riprendi i controlli per verificarla.")
     return None
 
 
@@ -932,6 +938,15 @@ class Bot:
                 self.dire(p, f"{motivo} Ho sospeso i controlli.\n/modifica per un'altra ricetta, /riprendi per "
                              "riprovare, /cancella per eliminarla.")
                 return None
+            definitiva = isinstance(e, cup_http.NonTrovata) and p.get("assenze", 0) + 1 >= ASSENZE_PAUSA
+            if p.get("disdetta_incerta") and (definitiva or (isinstance(e, cup_http.NonAttiva) and e.solo_disdette())):
+                # la disdetta di prima risulta partita: la ricetta torna da prenotare, come dopo una disdetta riuscita
+                p.pop("assenze", None)
+                self.dopo_disdetta(p, attuale_di(p))
+                self.dire(p, "✅ Verificato: la disdetta di prima è andata a buon fine. I controlli di questa ricetta "
+                             "sono in pausa. Per prenotare di nuovo: ▶️ Riprendi.")
+                self.aggiorna_pannello(chat)
+                return None
             if isinstance(e, cup_http.NonTrovata) and p.get("assenze", 0) + 1 < ASSENZE_PAUSA:
                 # il portale ha risposto "nessun record" per prenotazioni che esistevano: si riprova a
                 # controlli radi e si sospende solo se lo ripete ASSENZE_PAUSA volte di fila
@@ -956,7 +971,10 @@ class Bot:
                 p["attuale"]["cosa"] = res["cosa"]
             res["attuale"] = attuale_di(p)
         if res.get("doppione"):
-            self.risolvi_doppione(p)
+            try:
+                self.risolvi_doppione(p, res["doppione"])
+            except Exception as e:
+                return self.errore_controllo(p, e, manuale)
             return None
         att = res["attuale"]
         res["migliori"] = migliori(p, res)  # da qui in poi (avvisi, automatica, app) valgono solo queste
@@ -992,6 +1010,7 @@ class Bot:
                    *(("prossimo",) if ripresa else ()))
         self.fissa_prima(p)
         self.chiudi_incerta(p, att)
+        self.chiudi_disdetta_incerta(p, att)
         auto = p.get("auto")  # appena riletta: se nel frattempo l'hanno spenta dall'app, niente prenotazione da solo
         if auto:
             # un solo tentativo automatico per data; le date gia' offerte col pulsante valgono comunque
@@ -1167,14 +1186,15 @@ class Bot:
         self.scarta(p["id"])
         return self.prenota(p, slot, s["sessione"], libera=True, trovata=s["ts"])
 
-    def risolvi_doppione(self, p):
+    def risolvi_doppione(self, p, visto=None):
         """La ricetta ha due prenotazioni (il portale non ne ammette): si tiene la piu' vicina e si disdice la piu'
-        lontana, poi data, ora e luogo di entrambe all'utente. Se non si riesce, un avviso ogni DOPPIONE_AVVISO."""
+        lontana, poi data, ora e luogo di entrambe all'utente. Se non si riesce, un avviso ogni DOPPIONE_AVVISO.
+        visto: il doppione appena letto dal controllo, che fa da prima lettura."""
         chat = p["chat_id"]
         self.scarta(p["id"])
         try:
             esito = self.portale(cup_http.elimina_doppione, p["cf"], p["nre"], dry_run=self.prova, pid=p["id"],
-                                 paziente=True)
+                                 paziente=True, visto=visto)
         except (cup_http.CupError, requests.RequestException) as e:
             incerta = "Disdetta inviata" in str(e)
             if incerta:
@@ -1212,6 +1232,9 @@ class Bot:
         disdetta la ricetta torna "da prenotare" e in pausa: niente prenotazione automatica al posto della
         disdetta, riprende solo quando l'utente la riattiva."""
         att = attuale_di(p)
+        if p.get("disdetta_incerta"):
+            self.dire(p, "C'è già una disdetta da verificare: riprendi i controlli e aspetta l'esito prima di riprovare.")
+            return "fallita"
         if da_prenotare(p) or not att or att.quando.isoformat() != attuale_vista:
             self.dire(p, "La prenotazione è cambiata nel frattempo: riapri la ricetta e riprova.")
             return "fallita"
@@ -1228,23 +1251,52 @@ class Bot:
             if incerta:
                 self.alert_admin(f"Esito incerto dopo la disdetta per {uid(p['chat_id'])}")
                 self.sospendi_auto(p)
+                # come per la prenotazione: il prossimo controllo che legge il portale dice com'e' andata; intanto
+                # in pausa e con la disdetta "da verificare", senza toccare p["attuale"]
+                p["disdetta_incerta"] = incerta_da({"quando": att.quando.isoformat(), "sede": att.luogo.sede,
+                                                    "ambulatorio": att.luogo.ambulatorio, "indirizzo": att.luogo.indirizzo})
+                p.update(stato="pausa", pausa_da=time.time())
+                self.salva(p, "disdetta_incerta", "stato", "pausa_da")
+                self.aggiorna_pannello(p["chat_id"])
             log.info("disdetta %s/%s fallita%s: %s", uid(p["chat_id"]), p["id"], " (esito incerto)" if incerta else "",
                      type(e).__name__)
             return "incerta" if incerta else "fallita"
         if self.prova:
             self.dire(p, "🧪 Prova: arrivato al dialogo di conferma, non ho disdetto.")
             return "ok"
-        p["attuale"] = senza_prenotazione(att.cosa)
-        p.update(da_prenotare=True, stato="pausa", pausa_da=time.time(), libera=True, auto=None, notificati={},
-                 ignorati=[], tentati_auto=[])
-        p.pop("incerta", None)
-        self.salva(p, "attuale", "da_prenotare", "stato", "pausa_da", "libera", "auto", "notificati", "ignorati",
-                   "tentati_auto", "incerta")
+        self.dopo_disdetta(p, att)
         log.info("disdetta %s/%s riuscita", uid(p["chat_id"]), p["id"])
         self.dire(p, f"✅ Prenotazione disdetta:\n{dove}\n\nI controlli di questa ricetta sono in pausa e la conferma "
                      "automatica è spenta. Per prenotare di nuovo: ▶️ Riprendi.")
         self.aggiorna_pannello(p["chat_id"])
         return "ok"
+
+    def dopo_disdetta(self, p, att):
+        """La prenotazione att non c'e' piu': la ricetta torna da prenotare e in pausa. Un p["incerta"] di una
+        conferma precedente resta: la chiude il primo controllo che legge il portale."""
+        p["attuale"] = senza_prenotazione(att.cosa)
+        p.update(da_prenotare=True, stato="pausa", pausa_da=time.time(), libera=True, auto=None, notificati={},
+                 ignorati=[], tentati_auto=[])
+        p.pop("disdetta_incerta", None)
+        self.salva(p, "attuale", "da_prenotare", "stato", "pausa_da", "libera", "auto", "notificati", "ignorati",
+                   "tentati_auto", "disdetta_incerta")
+
+    def chiudi_disdetta_incerta(self, p, att):
+        """Dopo una disdetta con esito incerto, se il portale mostra ancora quella prenotazione la disdetta non e'
+        partita: all'utente data, ora e luogo. True se l'ha chiusa."""
+        inc = p.get("disdetta_incerta")
+        if not inc:
+            return False
+        p.pop("disdetta_incerta")
+        self.salva(p, "disdetta_incerta")
+        if att.quando.isoformat() == inc["quando"] and att.luogo.key() == inc["luogo"]:
+            self.dire(p, descrivi_prenotazione(att, "ℹ️ Verificato: la disdetta di prima non è andata a buon fine, "
+                                                    "la prenotazione resta"))
+        else:  # la prenotazione e' un'altra: la vecchia non c'e' piu'
+            self.dire(p, descrivi_prenotazione(att, "ℹ️ Verificato: la prenotazione che volevi disdire non c'è più. "
+                                                    "Ora risulta"))
+        log.info("disdetta incerta %s/%s verificata", uid(p["chat_id"]), p["id"])
+        return True
 
     def prenota(self, p, slot, sessione, automatica=False, libera=False, trovata=None):
         """Ritorna "ok", "fallita" o "incerta" (conferma inviata ma esito non verificato). Durante la
@@ -1493,6 +1545,7 @@ class Bot:
         p.pop("viste", None)  # le date e le sedi trovate erano della ricetta vecchia
         p.pop("luoghi", None)
         p.pop("incerta", None)  # l'esito incerto era della ricetta vecchia
+        p.pop("disdetta_incerta", None)
         self.scarta(p["id"])
         p.pop("libera", None)
         p.update(stato="cf", creato=time.time(), auto=None, notificati={}, ignorati=[], tentati_auto=[])
