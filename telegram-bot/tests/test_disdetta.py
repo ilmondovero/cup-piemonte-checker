@@ -441,3 +441,27 @@ def test_bot_disdetta_incerta_poi_solo_disdette_vale_come_disdetta_riuscita(b, m
     p = pratica(b)
     assert p["da_prenotare"] and p["stato"] == "pausa" and not p.get("disdetta_incerta")
     assert "disdetta di prima è andata a buon fine" in inviati(b)[-1]
+
+
+def test_conferma_incerta_non_fatta_riattiva_la_conferma_automatica(b, monkeypatch):
+    registra(b)
+    p = pratica(b)
+    p["auto"] = {"on": True}
+    p["incerta"] = {"quando": datetime(2027, 1, 1, 9, 0).isoformat(), "luogo": "OSPEDALE X"}
+    b.salva(p, "auto", "incerta")
+    b.sospendi_auto(pratica(b))
+    assert not pratica(b).get("auto") and pratica(b)["auto_sospesa"] == {"on": True}
+    assert b.chiudi_incerta(pratica(b), ATT) is False
+    assert pratica(b)["auto"] == {"on": True} and not pratica(b).get("auto_sospesa")
+    assert "riattivato la conferma automatica" in inviati(b)[-1]
+
+
+def test_conferma_incerta_fatta_lascia_spenta_la_conferma_automatica(b, monkeypatch):
+    registra(b)
+    p = pratica(b)
+    p["auto"] = {"on": True}
+    p["incerta"] = {"quando": ATT.quando.isoformat(), "luogo": ATT.luogo.key()}
+    b.salva(p, "auto", "incerta")
+    b.sospendi_auto(pratica(b))
+    assert b.chiudi_incerta(pratica(b), ATT) is True
+    assert not pratica(b).get("auto") and not pratica(b).get("auto_sospesa")

@@ -52,7 +52,7 @@ RICHIESTE = collections.deque(maxlen=500)
 ULTIMA = 0.0  # epoch dell'ultima risposta (o errore) del portale: un ciclo lento ma vivo non sembra fermo
 TEMPI = {}  # fasi dell'ultima prenotazione: {"elenco": secondi, ...} (vedi prenota)
 # verifica dopo la Conferma: pause crescenti prima di ogni tentativo, e al massimo tanti secondi in tutto
-VERIFICA_PAUSE = (2, 5, 10, 20, 40)
+VERIFICA_PAUSE = (10, 15, 20, 30, 40)  # la prima lettura dopo la Conferma aspetta 10 s: il portale ci mette tempo
 VERIFICA_MAX = 180
 VERIFICA_MIN = 30  # secondi: con meno tempo rimasto un altro tentativo non avrebbe senso
 SCADENZA = None  # time.monotonic() entro cui finisce la verifica in corso: ogni sua richiesta aspetta al massimo fin li'

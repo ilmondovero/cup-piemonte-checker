@@ -1519,6 +1519,8 @@ class Bot:
         self.salva(p, "incerta")
         fatta = att.quando.isoformat() == inc["quando"] and att.luogo.key() == inc["luogo"]
         if fatta:
+            p.pop("auto_sospesa", None)  # prenotata: la conferma automatica non serve piu', la riaccende l'utente
+            self.salva(p, "auto_sospesa")
             anticipo = in_tutto(p, att)
             self.dire(p, descrivi_prenotazione(att, "✅ Verificato: la conferma di prima e' andata a buon fine") +
                       (f"\n\n{anticipo}" if anticipo else "") +
@@ -1526,17 +1528,29 @@ class Bot:
                       "riattivala con /auto se vuoi.")
         else:
             self.dire(p, "ℹ️ Verificato: la conferma di prima non e' andata a buon fine.\n\n" +
-                      descrivi_prenotazione(att, "La prenotazione resta"))
+                      descrivi_prenotazione(att, "La prenotazione resta") + self.ripristina_auto(p))
         log.info("esito incerto %s/%s verificato: %s", uid(p["chat_id"]), p["id"], "fatta" if fatta else "non fatta")
         return fatta
 
     def sospendi_auto(self, p):
         """Dopo un esito incerto niente altri tentativi automatici: decide l'utente."""
         if p.get("auto"):
+            p["auto_sospesa"] = p["auto"]  # se la verifica dice che non e' successo nulla, si rimette com'era
             p["auto"] = None
-            self.salva(p, "auto")
-            self.dire(p, "Per sicurezza ho disattivato la conferma automatica. Verifica la prenotazione, "
-                         "poi riattivala con /auto se vuoi.")
+            self.salva(p, "auto", "auto_sospesa")
+            self.dire(p, "Per sicurezza ho disattivato la conferma automatica. Se la verifica mostra che non è "
+                         "cambiato niente la riattivo da solo; altrimenti riattivala tu con /auto.")
+
+    def ripristina_auto(self, p):
+        """Dopo un esito incerto verificato "non fatto": la conferma automatica che l'utente aveva acceso torna
+        com'era, se nel frattempo non l'ha cambiata lui. Ritorna il testo da aggiungere al messaggio, o ""."""
+        prima = p.pop("auto_sospesa", None)
+        if prima and not p.get("auto"):
+            p["auto"] = prima
+            self.salva(p, "auto", "auto_sospesa")
+            return "\n\n⚡ Ho riattivato la conferma automatica."
+        self.salva(p, "auto_sospesa")
+        return ""
 
     # --- registrazione di una pratica ---------------------------------------------------
     def chiedi_cf(self, p):
