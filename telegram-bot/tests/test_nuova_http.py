@@ -709,7 +709,7 @@ def test_verifica_con_attese_crescenti(monkeypatch):
     sessioni_finte(monkeypatch, [c.NonTrovata("Non esistono prenotazioni"), c.CupError("x"), c.CupError("x"), FATTA])
     ora, pause = orologio_finto(monkeypatch)
     assert prenota_nuova() == "Prenotazione fatta."
-    assert pause[1:] == [2, 5, 10]  # (la prima pausa e' la seconda lettura di "nessun record") riuscita al terzo tentativo
+    assert pause[1:] == [10, 15, 20]  # (la prima pausa e' la seconda lettura di "nessun record") riuscita al terzo tentativo
 
 
 def test_verifica_senza_esito_resta_incerta_in_tempo_limitato(monkeypatch):
@@ -730,7 +730,7 @@ def test_verifica_lenta_si_ferma_entro_il_massimo(monkeypatch):
         c._passo(self.passo_elenco)
         attese.append(c._attesa()[1] if passi[-1] == "verifica" else None)
         if passi[-1] == "verifica":
-            ora[0] += 80  # ogni tentativo il portale ci mette 80 s
+            ora[0] += 60  # ogni tentativo il portale ci mette 60 s
             raise c.requests.ReadTimeout("x")
         raise c.NonTrovata("Non esistono prenotazioni")
     monkeypatch.setattr(c.CupSession, "attuale", attuale)
@@ -738,9 +738,9 @@ def test_verifica_lenta_si_ferma_entro_il_massimo(monkeypatch):
     with pytest.raises(c.CupError, match="esito incerto"):
         prenota_nuova()
     assert passi[:2] == ["elenco", "elenco"] and set(passi[2:]) == {"verifica"}
-    # due tentativi; al terzo (dopo 2 + 80 + 5 + 80 s) resterebbero 13 s meno la pausa: meno di VERIFICA_MIN
-    assert pause[1:] == [2, 5] and ora[0] == 3 + 2 + 80 + 5 + 80 <= c.VERIFICA_MAX + 3
-    assert attese[2:] == [150, 180 - 87]  # ogni richiesta aspetta al massimo il tempo che resta
+    # due tentativi; al terzo (dopo 10 + 60 + 15 + 60 s) resterebbero 35 s meno la pausa: meno di VERIFICA_MIN
+    assert pause[1:] == [10, 15] and ora[0] == 3 + 10 + 60 + 15 + 60 <= c.VERIFICA_MAX + 3
+    assert attese[2:] == [150, 180 - 85]  # ogni richiesta aspetta al massimo il tempo che resta
     assert c.ATTESE == {"verifica": 150} and c.SCADENZA is None
 
 
