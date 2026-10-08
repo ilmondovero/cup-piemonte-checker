@@ -269,6 +269,17 @@ def riga_sospesa(p):
     return f"{'⏳' if tipo == 'in_corso' else '⚠️'} {quando} – {dove}\n     {spiega}"
 
 
+def righe_note(p):
+    """Le note del CUP della prenotazione attuale (p["note"], salvate quando il bot l'ha fatta), solo se sono
+    di quella data: dopo uno spostamento o una disdetta quelle vecchie non valgono."""
+    n, att = p.get("note") or {}, attuale_di(p)
+    return list(n.get("righe") or []) if att and n.get("quando") == att.quando.isoformat() else []
+
+
+def testo_note(righe):
+    return ("📝 Note del CUP (leggile prima dell'appuntamento):\n" + "\n".join(righe)) if righe else ""
+
+
 def incerta_da(ic):
     """L'esito incerto di una prenotazione in corso (conferma partita): lo chiude il prossimo controllo."""
     luogo = luogo_di(ic)
@@ -1288,8 +1299,9 @@ class Bot:
         p.update(da_prenotare=True, stato="pausa", pausa_da=time.time(), libera=True, auto=None, notificati={},
                  ignorati=[], tentati_auto=[])
         p.pop("disdetta_incerta", None)
+        p.pop("note", None)
         self.salva(p, "attuale", "da_prenotare", "stato", "pausa_da", "libera", "auto", "notificati", "ignorati",
-                   "tentati_auto", "disdetta_incerta")
+                   "tentati_auto", "disdetta_incerta", "note")
 
     def chiudi_disdetta_incerta(self, p, att):
         """Dopo una disdetta con esito incerto, se il portale mostra ancora quella prenotazione la disdetta non e'
@@ -1386,7 +1398,7 @@ class Bot:
         # la Mini App lo legge subito dal database; il pannello in chat si aggiorna dalla verifica (Telegram
         # puo' metterci fino a 40 s, e prima della Conferma ogni secondo conta)
         self.salva(p, "in_corso")
-        ic = {}
+        ic, note = {}, []
         try:
             try:
                 esito = self.portale(cup_http.prenota, p["cf"], p["nre"], slot, sessione=sessione,
@@ -1397,6 +1409,7 @@ class Bot:
                 ic = self.togli_in_corso(p)  # prima di ogni messaggio: scheda e pannello non la mostrano piu'
                 raise
             # (KeyboardInterrupt, SystemExit: in_corso resta, vedi prenota)
+            note = list(cup_http.NOTE)
             ic = self.togli_in_corso(p)
         except cup_http.GiaPrenotata as e:
             self.dire(p, f"❌ Non prenotata: {e}.")
@@ -1445,6 +1458,8 @@ class Bot:
                 p["incerta"] = incerta_da(ic or {"quando": slot.quando.isoformat(), "luogo": slot.luogo.sede,
                                                  "ambulatorio": slot.luogo.ambulatorio,
                                                  "indirizzo": slot.luogo.indirizzo})
+                if cup_http.NOTE:  # se la prenotazione risulta fatta, le note servono comunque
+                    p["incerta"]["note"] = list(cup_http.NOTE)
                 self.salva(p, "incerta")
                 self.aggiorna_pannello(chat)
             # il motivo (date, sedi, passi del portale) serve a capire i flussi nuovi: mai CF e NRE nel log
@@ -1482,7 +1497,11 @@ class Bot:
         p["prossimo"] = time.time() + self.intervallo_di(chat) * 60
         p.pop("da_prenotare", None)  # da qui e' una prenotazione come le altre: si cercano date prima
         p.pop("incerta", None)  # un esito incerto di prima non vale piu': ora la prenotazione e' questa
-        self.salva(p, "notificati", "ignorati", "tentati_auto", "attuale", "prossimo", "da_prenotare", "incerta")
+        if note:
+            p["note"] = {"quando": slot.quando.isoformat(), "righe": note}
+        else:
+            p.pop("note", None)
+        self.salva(p, "notificati", "ignorati", "tentati_auto", "attuale", "prossimo", "da_prenotare", "incerta", "note")
         self.fissa_prima(p)  # la prima prenotazione fatta dal bot: da qui si contano i giorni guadagnati
         anticipo = "" if nuova else in_tutto(p, attuale_di(p))
         self.dire(p, f"✅ Prenotazione {'fatta' if nuova else 'spostata'}{' (conferma automatica)' if automatica else ''}!\n"
@@ -1490,7 +1509,7 @@ class Bot:
                      "Arriveranno SMS/email dal CUP con il nuovo promemoria; controlla anche il codice di "
                      "pagamento del ticket. Se non si puo' andare, disdire o spostare almeno 2 giorni lavorativi "
                      "prima. Continuo a cercare date ancora prima.\n\n" + (anticipo + "\n\n" if anticipo else "") +
-                     self.regola(p))
+                     (testo_note(note) + "\n\n" if note else "") + self.regola(p))
         self.aggiorna_pannello(chat)
         return "ok"
 
@@ -1535,10 +1554,15 @@ class Bot:
         fatta = att.quando.isoformat() == inc["quando"] and att.luogo.key() == inc["luogo"]
         if fatta:
             p.pop("auto_sospesa", None)  # prenotata: la conferma automatica non serve piu', la riaccende l'utente
-            self.salva(p, "auto_sospesa")
+            if inc.get("note"):
+                p["note"] = {"quando": att.quando.isoformat(), "righe": inc["note"]}
+            else:
+                p.pop("note", None)
+            self.salva(p, "auto_sospesa", "note")
             anticipo = in_tutto(p, att)
             self.dire(p, descrivi_prenotazione(att, "✅ Verificato: la conferma di prima e' andata a buon fine") +
                       (f"\n\n{anticipo}" if anticipo else "") +
+                      (f"\n\n{testo_note(inc['note'])}" if inc.get("note") else "") +
                       "\n\nArriveranno SMS/email dal CUP con il promemoria. La conferma automatica resta spenta: "
                       "riattivala con /auto se vuoi.")
         else:
@@ -1927,6 +1951,8 @@ class Bot:
                      f"🔎 Cerco: {descr_zona(zona_di(p), att)}"]
         if riga_sospesa(p):
             righe.insert(len(righe) - 1, riga_sospesa(p))
+        if righe_note(p):
+            righe.insert(len(righe) - 1, "📝 Note: " + " ".join(righe_note(p)))
         if cup_http.estensioni(zona_di(p)):
             righe.append("     (allargo la ricerca a tutto il Piemonte, poi filtro)")
         righe.append(f"⚡ Prenoto da solo: {auto_descr(p)}")

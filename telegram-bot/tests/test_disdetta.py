@@ -556,3 +556,30 @@ def test_presa_visione_non_registrata_non_conferma(monkeypatch):
         assert False
     except c.CupError as e:
         assert "presa visione" in str(e)
+
+
+# --- note del CUP: registrate alla prenotazione, mostrate nel bot e nella Mini App ----------------
+def test_note_riepilogo_estrae_il_link_senza_intestazioni():
+    pagina = ('<div class="row-fluid" id="noteDialog" style="display: none;"><h4>Note</h4><h5>Note Paziente</h5>'
+              '<span id="x" style="white-space: pre-wrap;">HTTPS://WWW.ESEMPIO.IT/PREP.PDF</span>'
+              '<div><span aria-describedby="Conferma presa visione" role="button"></span></div></div>')
+    assert c.note_riepilogo(pagina) == ["HTTPS://WWW.ESEMPIO.IT/PREP.PDF"]
+    assert c.note_riepilogo("<div>niente note</div>") == []
+
+
+def test_bot_registra_e_mostra_le_note_dopo_la_prenotazione(b, monkeypatch):
+    registra(b)
+    slot = c.Slot(datetime(2026, 10, 12, 9, 0), c.Luogo("OSPEDALE A", "AMB 1", "Via Roma, 1 - TORINO (TO)"), "id")
+
+    def prenota(*a, **k):
+        c.NOTE[:] = ["HTTPS://WWW.ESEMPIO.IT/PREP.PDF"]
+        return "Prenotazione spostata."
+    monkeypatch.setattr(c, "prenota", prenota)
+    assert b._prenota(pratica(b), slot, None) == "ok"
+    p = pratica(b)
+    assert p["note"] == {"quando": slot.quando.isoformat(), "righe": ["HTTPS://WWW.ESEMPIO.IT/PREP.PDF"]}
+    assert "Note del CUP" in inviati(b)[-1] and "PREP.PDF" in inviati(b)[-1]
+    import bot as botmod
+    assert botmod.righe_note(p) == ["HTTPS://WWW.ESEMPIO.IT/PREP.PDF"]
+    p["note"]["quando"] = "2020-01-01T09:00:00"  # note di un'altra data: non valgono
+    assert botmod.righe_note(p) == []

@@ -1189,3 +1189,11 @@ def test_disdici_dalla_mini_app_con_data_ora_e_luogo(app):
 def botmod_attuale(app, p):
     import bot as botmod
     return botmod.attuale_di(app.bot.store.get(p["id"]))
+
+
+def test_note_nella_scheda_della_mini_app_con_link_e_testo_neutralizzato(app):
+    p = pratica(app.bot, 1)
+    p["note"] = {"quando": p["attuale"]["quando"], "righe": ["https://www.esempio.it/prep.pdf?a=1&b=2", "<script>x</script>"]}
+    html_scheda = app.scheda(p)
+    assert 'href="https://www.esempio.it/prep.pdf?a=1&amp;b=2"' in html_scheda and 'rel="noopener noreferrer"' in html_scheda
+    assert "<script>x" not in html_scheda and "&lt;script&gt;" in html_scheda

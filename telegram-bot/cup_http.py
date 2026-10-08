@@ -51,6 +51,7 @@ ATTESE = {}
 RICHIESTE = collections.deque(maxlen=500)
 ULTIMA = 0.0  # epoch dell'ultima risposta (o errore) del portale: un ciclo lento ma vivo non sembra fermo
 TEMPI = {}  # fasi dell'ultima prenotazione: {"elenco": secondi, ...} (vedi prenota)
+NOTE = []  # righe delle note del Riepilogo dell'ultima prenotazione (vedi note_riepilogo)
 # verifica dopo la Conferma: pause crescenti prima di ogni tentativo, e al massimo tanti secondi in tutto
 VERIFICA_PAUSE = (10, 15, 20, 30, 40)  # la prima lettura dopo la Conferma aspetta 10 s: il portale ci mette tempo
 VERIFICA_MAX = 180
@@ -1029,6 +1030,20 @@ def _verifica_riepilogo(testo, data_riep, dopo_data, slot, cosa):
         raise CupError("Il riepilogo riporta un luogo diverso da quello scelto")
 
 
+def note_riepilogo(page):
+    """Le note dell'appuntamento che il Riepilogo mostra nel riquadro "Note" (di solito un link con la
+    preparazione all'esame), una riga per voce, senza le intestazioni. [] se non ce ne sono."""
+    i = page.find('id="noteDialog"')
+    if i < 0:
+        return []
+    j = page.find('aria-describedby="Conferma presa visione"', i)
+    blocco = page[i:j if j > i else i + 6000]
+    blocco = re.sub(r"<[^>]*$", "", blocco)  # il taglio cade dentro il tag del pulsante: via il pezzo
+    righe = [" ".join(r.split()) for r in html.unescape(re.sub(r"<[^>]+>", "\n", blocco)).split("\n")]
+    righe = [r for r in righe if r and not r.startswith("id=") and r.lower() not in ("note", "note paziente")]
+    return [r[:400] for r in righe[:10]]
+
+
 def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=False, nuova=False, calendario=None,
             fase=None):
     """Come _prenota, e nel diario (e in TEMPI) quanto e' durata ogni fase: per capire dove va il tempo di una
@@ -1036,6 +1051,7 @@ def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=Fals
     essere incerto) e "verifica"; un suo errore non ferma la prenotazione."""
     tempi, inizio = [], [time.time()]
     TEMPI.clear()
+    NOTE.clear()
 
     def tappa(nome):
         ora = time.time()
@@ -1141,6 +1157,7 @@ def _prenota(cf, nre, slot, sessione, zona, dry_run, libera, nuova, tappa, calen
         except CupError as e2:
             raise CupError(f"{e2} (tentativo nella sessione originale: {primo_errore})")
     tappa("riepilogo")
+    NOTE[:] = note_riepilogo(page)
     # la prestazione del Riepilogo deve essere quella della prenotazione (o, per una nuova, quella
     # che il portale ha messo nel carrello): se non si legge, _verifica_riepilogo non conferma
     _verifica_riepilogo(testo, data_riep, dopo, s, att.cosa if att else (cup.nomi[:1] or [cup.cosa])[0])

@@ -703,6 +703,17 @@ class App:
         minuti = int((p.get("prossimo", 0) - time.time()) // 60)
         return "a momenti" if minuti < 1 else f"tra {minuti} min"
 
+    def note(self, p):
+        """Le note del CUP dell'appuntamento (di solito il link alla preparazione all'esame), registrate quando il
+        bot ha prenotato. I link http(s) si aprono; il resto e' testo con i caratteri speciali neutralizzati."""
+        righe = botmod.righe_note(p)
+        if not righe:
+            return ""
+        voci = [re.sub(r'(https?://[^\s<>"]+)', r'<a href="\1" target="_blank" rel="noopener noreferrer">\1</a>',
+                       e(r), flags=re.I) for r in righe]
+        return ('<section class="note-cup"><strong>📝 Note del CUP</strong>'
+                + "".join(f"<small>{v}</small>" for v in voci) + '</section>')
+
     def scheda(self, p):
         att = botmod.attuale_di(p)
         pid, nome = p["id"], self.bot.nome(p)
@@ -720,6 +731,7 @@ class App:
   <p class="cosa">{e(botmod.prestazione(att.cosa, 80) or "Prestazione della ricetta")}</p>
   {self.quando_dove(p, att)}
   {self.sospesa(p)}
+  {self.note(p)}
   {self.offerta(p)}
   {self.riga_date(p)}
   <div class="regole">
