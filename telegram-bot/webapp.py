@@ -681,10 +681,13 @@ class App:
         mancano = f'<p class="mancano">{e(mancano.capitalize())}{anticipo}</p>' if mancano else ""
         return (f'<div class="quando"><span class="unito"><span class="giorno">{e(giorno)}</span> <strong>{e(data)}</strong>'
                 f'</span> <span class="unito">· ore <strong>{e(ora)}</strong></span></div>{mancano}'
-                f'<div class="dove">{e(botmod.titolo(att.luogo.sede))}<small>{e(att.luogo.ambulatorio)}<br>'
-                f'{e(botmod.indirizzo(att.luogo))}</small>'
-                f'<a class="mappa" href="{e(botmod.maps_url(att.luogo))}" target="_blank" rel="noopener noreferrer">'
-                f'🗺 Apri in Google Maps</a></div>')
+                # il luogo e' tutto un link a Google Maps: segnaposto a sinistra e freccia a destra, come le altre righe
+                f'<a class="dove luogo" href="{e(botmod.maps_url(att.luogo))}" target="_blank" rel="noopener noreferrer" '
+                f'aria-label="Apri {e(botmod.titolo(att.luogo.sede))} in Google Maps">'
+                f'<svg class="pin" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a7 7 0 0 0-7 7c0 5 7 13 7 13s7-8 '
+                f'7-13a7 7 0 0 0-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z"/></svg>'
+                f'<span class="testo">{e(botmod.titolo(att.luogo.sede))}<small>{e(att.luogo.ambulatorio)}<br>'
+                f'{e(botmod.indirizzo(att.luogo))}</small></span></a>')
 
     def sospesa(self, p):
         """Prenotazione in corso (con data-in-corso: app.js aggiorna le schede ogni 5 s finche' c'e') o data
