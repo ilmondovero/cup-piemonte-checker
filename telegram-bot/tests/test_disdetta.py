@@ -496,13 +496,13 @@ def test_un_altro_controllo_dello_stesso_cf_non_libera_la_data_offerta(b, monkey
     monkeypatch.setattr(b, "controlla", lambda q, manuale=False: controlli.append(q["id"]))
 
     b.offerte[999] = {"ts": _t.time(), "token": "t", "sessione": None, "slots": []}
-    assert b.offerta_valida_stesso_cf(pratica(b)) and not b.controllo_pianificato() and controlli == []
+    assert b.sessione_viva_stesso_cf(pratica(b)) and not b.controllo_pianificato() and controlli == []
 
     altra["cf"] = "ALTRO"  # un altro paziente: nessun legame
-    assert not b.offerta_valida_stesso_cf(pratica(b))
+    assert not b.sessione_viva_stesso_cf(pratica(b))
     altra["cf"] = p["cf"]
     b.offerte[999]["ts"] = _t.time() - botmod_ttl() - 1  # offerta scaduta
-    assert not b.offerta_valida_stesso_cf(pratica(b)) and b.controllo_pianificato() and controlli == [p["id"]]
+    assert not b.sessione_viva_stesso_cf(pratica(b)) and b.controllo_pianificato() and controlli == [p["id"]]
 
 
 def botmod_ttl():
@@ -583,3 +583,99 @@ def test_bot_registra_e_mostra_le_note_dopo_la_prenotazione(b, monkeypatch):
     assert botmod.righe_note(p) == ["HTTPS://WWW.ESEMPIO.IT/PREP.PDF"]
     p["note"]["quando"] = "2020-01-01T09:00:00"  # note di un'altra data: non valgono
     assert botmod.righe_note(p) == []
+
+
+# --- un controllo alla volta per codice fiscale ---------------------------------------------------
+def due_ricette_stesso_cf(b, monkeypatch):
+    """Due ricette dello stesso CF, entrambe da controllare; controlla() finto che apre la sessione come quello vero."""
+    import time as _t
+    registra(b)
+    p1 = pratica(b)
+    q = b.store.new(p1["chat_id"], cf=p1["cf"], nre="010A30000000999", stato="attivo", prossimo=0)
+    p1["prossimo"] = 0
+    b.salva(p1, "prossimo")
+    b.distanza = 0
+    controlli = []
+
+    def finto(pp, manuale=False):
+        controlli.append(pp["id"])
+        b.sessioni[pp["id"]] = {"ts": _t.time(), "sessione": None, "slots": []}
+    monkeypatch.setattr(b, "controlla", finto)
+    return p1["id"], q["id"], controlli
+
+
+def test_due_ricette_dello_stesso_cf_si_controllano_una_alla_volta(b, monkeypatch):
+    p1, q, controlli = due_ricette_stesso_cf(b, monkeypatch)
+    assert b.controllo_pianificato() and len(controlli) == 1
+    prima = controlli[0]
+    altra = q if prima == p1 else p1
+    # l'altra e' scaduta ma la sessione della prima tiene ancora le sue date: aspetta
+    b.store.modifica(altra, lambda f: f.update(prossimo=0))
+    assert not b.controllo_pianificato() and controlli == [prima]
+    b.sessioni[prima]["ts"] -= botmod_ttl() + 1  # la sessione della prima e' scaduta
+    assert b.controllo_pianificato() and controlli == [prima, altra]
+
+
+def test_la_sessione_scartata_libera_l_altra_ricetta(b, monkeypatch):
+    p1, q, controlli = due_ricette_stesso_cf(b, monkeypatch)
+    assert b.controllo_pianificato()
+    prima = controlli[0]
+    altra = q if prima == p1 else p1
+    b.store.modifica(altra, lambda f: f.update(prossimo=0))
+    assert not b.controllo_pianificato()
+    b.scarta(prima)  # presa la data, o ricetta cancellata: la sessione non tiene piu' niente
+    assert b.controllo_pianificato() and controlli == [prima, altra]
+
+
+def test_la_propria_sessione_non_blocca_il_proprio_controllo(b, monkeypatch):
+    import time as _t
+    registra(b)
+    p = pratica(b)
+    p["prossimo"] = 0
+    b.salva(p, "prossimo")
+    b.distanza = 0
+    b.sessioni[p["id"]] = {"ts": _t.time(), "sessione": None, "slots": []}
+    controlli = []
+    monkeypatch.setattr(b, "controlla", lambda pp, manuale=False: controlli.append(pp["id"]))
+    assert b.controllo_pianificato() and controlli == [p["id"]]
+
+
+def test_ricette_di_codici_fiscali_diversi_non_si_aspettano(b, monkeypatch):
+    p1, q, controlli = due_ricette_stesso_cf(b, monkeypatch)
+    b.store.modifica(q, lambda f: f.update(cf="ALTROCF"))  # un altro paziente
+    assert b.controllo_pianificato() and b.controllo_pianificato() and sorted(controlli) == sorted([p1, q])
+
+
+# --- note lunghe: mai troncate ---------------------------------------------------------------------
+def test_note_riepilogo_lunghe_restano_intere():
+    lunga = "Preparazione: " + "digiuno e idratazione prima dell'esame, " * 60  # ~2400 caratteri
+    pagina = (f'<div id="noteDialog"><h4>Note</h4><h5>Note Paziente</h5><span style="white-space: pre-wrap;">{lunga}</span>'
+              + "".join(f"<span>Riga {i}</span>" for i in range(30))
+              + '<div><span aria-describedby="Conferma presa visione"></span></div></div>')
+    righe = c.note_riepilogo(pagina)
+    assert righe[0] == " ".join(lunga.split()) and len(righe) == 31 and righe[-1] == "Riga 29"
+
+
+def test_pezzi_note_non_perde_niente_e_non_supera_il_limite():
+    import bot as botmod
+    righe = ["a " * 2000, "riga corta", "b" * 5000, "ultima"]  # una riga con spazi, una senza, una corta
+    pezzi = botmod.pezzi_note(righe, massimo=3500)
+    assert all(len(x) <= 3500 for x in pezzi)
+    assert "".join("".join(pezzi).split()) == "".join("".join(righe).split())  # stesso contenuto, spazi a parte
+    assert botmod.pezzi_note([]) == [] and botmod.pezzi_note(["x"]) == ["x"]
+
+
+def test_bot_note_lunghe_in_piu_messaggi_numerati(b, monkeypatch):
+    registra(b)
+    slot = c.Slot(datetime(2026, 10, 12, 9, 0), c.Luogo("OSPEDALE A", "AMB 1", "Via Roma, 1 - TORINO (TO)"), "id")
+    lunga = ["parola " * 700]  # ~4900 caratteri: due messaggi
+
+    def prenota(*a, **k):
+        c.NOTE[:] = lunga
+        return "Prenotazione spostata."
+    monkeypatch.setattr(c, "prenota", prenota)
+    assert b._prenota(pratica(b), slot, None) == "ok"
+    messaggi = [x for x in inviati(b) if "Note del CUP" in x]
+    assert len(messaggi) == 2 and "[1/2]" in messaggi[0] and "[2/2]" in messaggi[1]
+    assert all(len(x) < 4000 for x in messaggi)
+    assert pratica(b)["note"]["righe"] == lunga  # salvate intere

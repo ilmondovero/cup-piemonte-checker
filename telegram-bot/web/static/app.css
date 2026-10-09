@@ -280,7 +280,7 @@ button.g.oggi { box-shadow: inset 0 0 0 2px var(--accento); }
 /* --- note del CUP dell'appuntamento (di solito il link alla preparazione all'esame) --- */
 .note-cup { margin: 12px 0; padding: 12px; border-radius: 12px; background: color-mix(in srgb, var(--accento) 10%, var(--scheda));
   border: 1px solid color-mix(in srgb, var(--accento) 35%, transparent); }
-.note-cup small { display: block; color: var(--tenue); font-size: 13px; margin-top: 4px; overflow-wrap: anywhere; }
+.note-cup small { display: block; color: var(--tenue); font-size: 13px; margin-top: 4px; overflow-wrap: anywhere; white-space: pre-wrap; }
 .note-cup a { color: inherit; text-decoration: underline; }
 
 /* --- admin: rapporto guasti --- */

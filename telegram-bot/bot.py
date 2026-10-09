@@ -280,6 +280,29 @@ def testo_note(righe):
     return ("📝 Note del CUP (leggile prima dell'appuntamento):\n" + "\n".join(righe)) if righe else ""
 
 
+def pezzi_note(righe, massimo=3500):
+    """Le note intere, in messaggi da al massimo `massimo` caratteri (Telegram ne accetta 4096): si spezza tra
+    una riga e l'altra, e una riga piu' lunga si spezza sugli spazi."""
+    pezzi, corrente = [], ""
+    for riga in righe:
+        while len(riga) > massimo:
+            taglio = riga.rfind(" ", 0, massimo)
+            if taglio <= 0:
+                taglio = massimo
+            testa, riga = riga[:taglio], riga[taglio:].lstrip()
+            if corrente:
+                pezzi.append(corrente)
+                corrente = ""
+            pezzi.append(testa)
+        if corrente and len(corrente) + 1 + len(riga) > massimo:
+            pezzi.append(corrente)
+            corrente = ""
+        corrente = f"{corrente}\n{riga}" if corrente else riga
+    if corrente:
+        pezzi.append(corrente)
+    return pezzi
+
+
 def incerta_da(ic):
     """L'esito incerto di una prenotazione in corso (conferma partita): lo chiude il prossimo controllo."""
     luogo = luogo_di(ic)
@@ -869,11 +892,16 @@ class Bot:
         o = self.offerte.get(pid)
         return bool(o) and time.time() - o["ts"] <= TTL_OFFERTA
 
-    def offerta_valida_stesso_cf(self, p):
-        """Un'altra ricetta dello stesso codice fiscale ha una data offerta e ancora valida: la sua sessione la
-        tiene bloccata sul portale, e una sessione nuova per lo stesso paziente (un altro controllo) la libera."""
-        for pid in list(self.offerte):
-            if pid != p["id"] and self.offerta_valida(pid):
+    def sessione_viva_stesso_cf(self, p):
+        """Un'altra ricetta dello stesso codice fiscale ha una sessione sul portale ancora valida (un'offerta aperta
+        o l'ultimo controllo, da cui l'utente puo' ancora scegliere una data): le date che tiene bloccate le libera
+        una sessione nuova per lo stesso paziente, cioe' un altro controllo. Per questo i controlli di un codice
+        fiscale vanno uno alla volta: la prossima ricetta aspetta che l'altra sessione scada (TTL_OFFERTA)."""
+        ora = time.time()
+        vive = {pid for pid, o in self.offerte.items() if ora - o["ts"] <= TTL_OFFERTA}
+        vive |= {pid for pid, s in self.sessioni.items() if ora - s["ts"] <= TTL_OFFERTA}
+        for pid in vive:
+            if pid != p["id"]:
                 altra = self.store.get(pid)
                 if altra and altra.get("cf") == p.get("cf"):
                     return True
@@ -1509,7 +1537,8 @@ class Bot:
                      "Arriveranno SMS/email dal CUP con il nuovo promemoria; controlla anche il codice di "
                      "pagamento del ticket. Se non si puo' andare, disdire o spostare almeno 2 giorni lavorativi "
                      "prima. Continuo a cercare date ancora prima.\n\n" + (anticipo + "\n\n" if anticipo else "") +
-                     (testo_note(note) + "\n\n" if note else "") + self.regola(p))
+                     self.regola(p))
+        self.invia_note(p, note)
         self.aggiorna_pannello(chat)
         return "ok"
 
@@ -1562,14 +1591,21 @@ class Bot:
             anticipo = in_tutto(p, att)
             self.dire(p, descrivi_prenotazione(att, "✅ Verificato: la conferma di prima e' andata a buon fine") +
                       (f"\n\n{anticipo}" if anticipo else "") +
-                      (f"\n\n{testo_note(inc['note'])}" if inc.get("note") else "") +
                       "\n\nArriveranno SMS/email dal CUP con il promemoria. La conferma automatica resta spenta: "
                       "riattivala con /auto se vuoi.")
+            self.invia_note(p, inc.get("note") or [])
         else:
             self.dire(p, "ℹ️ Verificato: la conferma di prima non e' andata a buon fine.\n\n" +
                       descrivi_prenotazione(att, "La prenotazione resta") + self.ripristina_auto(p))
         log.info("esito incerto %s/%s verificato: %s", uid(p["chat_id"]), p["id"], "fatta" if fatta else "non fatta")
         return fatta
+
+    def invia_note(self, p, righe):
+        """Le note del CUP per intero, in un messaggio a parte (o piu' d'uno se sono lunghe)."""
+        pezzi = pezzi_note(righe)
+        for n, pezzo in enumerate(pezzi):
+            intestazione = "📝 Note del CUP (leggile prima dell'appuntamento)" + (f" [{n + 1}/{len(pezzi)}]" if len(pezzi) > 1 else "")
+            self.dire(p, f"{intestazione}:\n{pezzo}")
 
     def sospendi_auto(self, p):
         """Dopo un esito incerto niente altri tentativi automatici: decide l'utente."""
@@ -1952,7 +1988,9 @@ class Bot:
         if riga_sospesa(p):
             righe.insert(len(righe) - 1, riga_sospesa(p))
         if righe_note(p):
-            righe.insert(len(righe) - 1, "📝 Note: " + " ".join(righe_note(p)))
+            note = " ".join(righe_note(p))
+            righe.insert(len(righe) - 1, "📝 Note: " + (note if len(note) <= 700 else note[:700].rsplit(" ", 1)[0] +
+                                                      "… (intere nel messaggio di prenotazione e nella Mini App)"))
         if cup_http.estensioni(zona_di(p)):
             righe.append("     (allargo la ricerca a tutto il Piemonte, poi filtro)")
         righe.append(f"⚡ Prenoto da solo: {auto_descr(p)}")
@@ -2461,8 +2499,8 @@ class Bot:
             if self.offerta_valida(pid):
                 continue  # la sua sessione tiene la data offerta: un nuovo controllo non la vedrebbe
             p = self.store.get(pid)
-            if self.offerta_valida_stesso_cf(p):
-                continue  # resta in scadenza: parte appena l'altra offerta e' presa o scaduta
+            if self.sessione_viva_stesso_cf(p):
+                continue  # resta in scadenza: parte appena la sessione dell'altra ricetta e' scaduta o scartata
             p["prossimo"] = time.time() + self.intervallo_di(p["chat_id"]) * 60 * random.uniform(0.9, 1.1)
             self.salva(p, "prossimo")
             self.controlla(p)

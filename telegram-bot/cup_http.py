@@ -1043,7 +1043,13 @@ def note_riepilogo(page):
     blocco = re.sub(r"<[^>]*$", "", blocco)  # il taglio cade dentro il tag del pulsante: via il pezzo
     righe = [" ".join(r.split()) for r in html.unescape(re.sub(r"<[^>]+>", "\n", blocco)).split("\n")]
     righe = [r for r in righe if r and not r.startswith("id=") and r.lower() not in ("note", "note paziente")]
-    return [r[:400] for r in righe[:10]]
+    tot, fuori = 0, []
+    for r in righe[:80]:  # limiti larghi: solo contro pagine anomale, le note vere restano intere
+        tot += len(r)
+        if tot > 12000:
+            break
+        fuori.append(r)
+    return fuori
 
 
 def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=False, nuova=False, calendario=None,
