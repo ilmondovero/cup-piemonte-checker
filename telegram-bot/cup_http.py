@@ -692,6 +692,7 @@ class CupSession:
         i = riepilogo_page.find('aria-describedby="Conferma presa visione"')
         self.vs_riepilogo = None
         if i < 0:
+            DIARIO.append("presa visione: nessun pulsante")
             return
         ids = re.findall(r'id="(%s:_t\d+)"' % re.escape(RIEPILOGO), riepilogo_page[max(0, i - 900):i])
         if not ids:
@@ -702,6 +703,7 @@ class CupSession:
             raise CupError("Il portale non ha registrato la presa visione delle note: non confermo")
         vs = re.search(r'<update id="[^"]*javax\.faces\.ViewState[^"]*"[^>]*><!\[CDATA\[(.*?)\]\]>', xml, re.S)
         self.vs_riepilogo = vs.group(1) if vs else None
+        DIARIO.append(f"presa visione: registrata, ViewState {'nuovo' if self.vs_riepilogo else 'invariato'}")
 
     def conferma(self, riepilogo_page):
         _passo("conferma")
@@ -1158,6 +1160,7 @@ def _prenota(cf, nre, slot, sessione, zona, dry_run, libera, nuova, tappa, calen
             raise CupError(f"{e2} (tentativo nella sessione originale: {primo_errore})")
     tappa("riepilogo")
     NOTE[:] = note_riepilogo(page)
+    DIARIO.append(f"note: {len(NOTE)} righe")
     # la prestazione del Riepilogo deve essere quella della prenotazione (o, per una nuova, quella
     # che il portale ha messo nel carrello): se non si legge, _verifica_riepilogo non conferma
     _verifica_riepilogo(testo, data_riep, dopo, s, att.cosa if att else (cup.nomi[:1] or [cup.cosa])[0])
@@ -1231,7 +1234,7 @@ def _prenota(cf, nre, slot, sessione, zona, dry_run, libera, nuova, tappa, calen
                     tappa("verifica")
                     return "Prenotazione fatta." if nuova else "Prenotazione spostata."
             except (CupError, requests.RequestException) as e:
-                DIARIO.append(f"verifica: {descrivi(e) if isinstance(e, requests.RequestException) else 'pagina non letta'}")
+                DIARIO.append(f"verifica: {type(e).__name__}: {descrivi(e)[:160]}")
     except Exception:
         pass  # qualunque errore dopo la Conferma: esito incerto, sotto
     finally:
