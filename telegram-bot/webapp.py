@@ -78,6 +78,7 @@ ATTIVE = ("attivo", "pausa")
 AZIONI_POST = ("dove", "auto", "calendario", "pausa", "riprendi", "controlla", "offerta", "vista", "nome", "cancella", "modifica", "disdici")
 FOGLI_GET = ("dove", "auto", "calendario", "date", "storico", "altro")
 AZIONI_SENSIBILI = ("offerta", "vista", "cancella", "modifica", "disdici")  # vogliono una firma recente
+NOTE_BREVI = 280  # caratteri: oltre, le note della scheda si aprono con un tocco
 MAX_NO_CAL = 400  # date segnate no al massimo nel calendario
 GIORNI_CAL = 400  # il calendario arriva fino a tanti giorni da oggi
 MESI_CAL = 12  # mesi dopo quello corrente sfogliabili nel calendario
@@ -681,7 +682,9 @@ class App:
         return (f'<div class="quando"><span class="unito"><span class="giorno">{e(giorno)}</span> <strong>{e(data)}</strong>'
                 f'</span> <span class="unito">· ore <strong>{e(ora)}</strong></span></div>{mancano}'
                 f'<div class="dove">{e(botmod.titolo(att.luogo.sede))}<small>{e(att.luogo.ambulatorio)}<br>'
-                f'{e(botmod.indirizzo(att.luogo))}</small></div>')
+                f'{e(botmod.indirizzo(att.luogo))}</small>'
+                f'<a class="mappa" href="{e(botmod.maps_url(att.luogo))}" target="_blank" rel="noopener noreferrer">'
+                f'🗺 Apri in Google Maps</a></div>')
 
     def sospesa(self, p):
         """Prenotazione in corso (con data-in-corso: app.js aggiorna le schede ogni 5 s finche' c'e') o data
@@ -711,8 +714,16 @@ class App:
             return ""
         voci = [re.sub(r'(https?://[^\s<>"]+)', r'<a href="\1" target="_blank" rel="noopener noreferrer">\1</a>',
                        e(r), flags=re.I) for r in righe]
-        return ('<section class="note-cup"><strong>📝 Note del CUP</strong>'
-                + "".join(f"<small>{v}</small>" for v in voci) + '</section>')
+        corpo = "".join(f"<small>{v}</small>" for v in voci)
+        if sum(len(r) for r in righe) <= NOTE_BREVI and len(righe) <= 3:
+            return f'<section class="note-cup"><strong>📝 Note del CUP</strong>{corpo}</section>'
+        # lunghe: chiuse con un'anteprima, si aprono con un tocco (lo stato aperto lo ricorda app.js tra un
+        # aggiornamento delle schede e l'altro, data-nota)
+        inizio = " ".join(righe[:3])
+        anteprima = inizio if len(inizio) <= 150 else inizio[:150].rsplit(" ", 1)[0] + "…"
+        return (f'<details class="note-cup" data-nota="{p["id"]}"><summary><strong>📝 Note del CUP</strong>'
+                f'<small class="anteprima">{e(anteprima)}</small><span class="espandi" aria-hidden="true"></span></summary>'
+                f'{corpo}</details>')
 
     def scheda(self, p):
         att = botmod.attuale_di(p)

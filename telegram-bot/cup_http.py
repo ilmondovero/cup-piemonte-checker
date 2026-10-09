@@ -387,6 +387,7 @@ class CupSession:
         self.prenotate = []  # tutte le righe in stato PRENOTATO dell'elenco (una per prestazione, se piu' d'una)
         self.n_prenotate = 0  # righe PRENOTATO, anche quelle di cui non si legge la data
         self.righe_prenotate = []
+        self.note_attuale = []  # le note della prenotazione attuale, lette dall'elenco
         self.s = requests.Session()
         self.s.headers["User-Agent"] = UA
         self.s.hooks["response"].append(_misura)
@@ -430,6 +431,7 @@ class CupSession:
                           f"date prenotate diverse {len({x.quando for x in self.prenotate})}, "
                           f"descrizioni vuote {sum(1 for x in self.prenotate if not x.cosa)}")
         self.riga = pren[0]
+        self.note_attuale = note_lista(righe[self.riga])
         riga = righe[self.riga]
         quando = _date(_text(riga))
         if not quando:
@@ -911,7 +913,7 @@ def check(cf, nre, zona="sede"):
     if doppio and cup.n_prenotate == len(cup.prenotate):  # due prenotazioni: prima si sistema, poi si cerca
         return {"attuale": att, "slots": [], "sessione": cup, "migliori": [], "doppione": doppio}
     slots = cup.alternative(estendi=estensioni(zona))
-    return {"attuale": att, "slots": slots, "sessione": cup,
+    return {"attuale": att, "slots": slots, "sessione": cup, "note": cup.note_attuale,
             "migliori": [x for x in slots if candidata(x, att, zona)]}
 
 
@@ -1032,15 +1034,11 @@ def _verifica_riepilogo(testo, data_riep, dopo_data, slot, cosa):
         raise CupError("Il riepilogo riporta un luogo diverso da quello scelto")
 
 
-def note_riepilogo(page):
-    """Le note dell'appuntamento che il Riepilogo mostra nel riquadro "Note" (di solito un link con la
-    preparazione all'esame), una riga per voce, senza le intestazioni. [] se non ce ne sono."""
-    i = page.find('id="noteDialog"')
-    if i < 0:
-        return []
-    j = page.find('aria-describedby="Conferma presa visione"', i)
-    blocco = page[i:j if j > i else i + 6000]
-    blocco = re.sub(r"<[^>]*$", "", blocco)  # il taglio cade dentro il tag del pulsante: via il pezzo
+def _righe_note(blocco):
+    """Il testo di un riquadro di note, una riga per voce, senza le intestazioni del portale."""
+    blocco = re.sub(r'<h3 class="popoverTitle">.*?</h3>|<h5 class="popoverSede">.*?</h5>|<h6 class="popoverUnita">.*?</h6>',
+                    "", blocco, flags=re.S)
+    blocco = re.sub(r"<[^>]*$", "", blocco)  # un taglio dentro un tag: via il pezzo
     righe = [" ".join(r.split()) for r in html.unescape(re.sub(r"<[^>]+>", "\n", blocco)).split("\n")]
     righe = [r for r in righe if r and not r.startswith("id=") and r.lower() not in ("note", "note paziente")]
     tot, fuori = 0, []
@@ -1050,6 +1048,25 @@ def note_riepilogo(page):
             break
         fuori.append(r)
     return fuori
+
+
+def note_lista(riga):
+    """Le note di una prenotazione dell'elenco (il riquadro "Note" della sua riga). [] se non ce ne sono."""
+    m = re.search(r'id="[^"]*noteDialog__content"', riga)
+    if not m:
+        return []
+    fine = riga.find("<script", m.start())
+    return _righe_note(riga[m.start():fine if fine > 0 else m.start() + 15000])
+
+
+def note_riepilogo(page):
+    """Le note dell'appuntamento che il Riepilogo mostra nel riquadro "Note" (di solito un link con la
+    preparazione all'esame), una riga per voce, senza le intestazioni. [] se non ce ne sono."""
+    i = page.find('id="noteDialog"')
+    if i < 0:
+        return []
+    j = page.find('aria-describedby="Conferma presa visione"', i)
+    return _righe_note(page[i:j if j > i else i + 15000])
 
 
 def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=False, nuova=False, calendario=None,

@@ -679,3 +679,50 @@ def test_bot_note_lunghe_in_piu_messaggi_numerati(b, monkeypatch):
     assert len(messaggi) == 2 and "[1/2]" in messaggi[0] and "[2/2]" in messaggi[1]
     assert all(len(x) < 4000 for x in messaggi)
     assert pratica(b)["note"]["righe"] == lunga  # salvate intere
+
+
+# --- note lette dall'elenco per le prenotazioni esistenti, e link a Google Maps ----------------------
+RIGA_LISTA = ('Stato: PRENOTATO <div id="_x:noteDialog__content"><h3 class="popoverTitle">Note</h3>'
+              '<h5 class="popoverSede">SEDE X</h5><h6 class="popoverUnita">UNITA Y</h6><h5>Note Paziente</h5>'
+              '<span>E\' NECESSARIO presentarsi 20 minuti prima.</span><span>Portare le impegnative.</span></div>'
+              '<script type="text/javascript">var n = 1;</script>')
+
+
+def test_note_lista_prende_solo_il_testo_delle_note():
+    assert c.note_lista(RIGA_LISTA) == ["E' NECESSARIO presentarsi 20 minuti prima.", "Portare le impegnative."]
+    assert c.note_lista("Stato: PRENOTATO senza riquadro") == []
+
+
+def test_bot_note_dell_elenco_si_mandano_una_volta_e_si_aggiornano_se_cambiano(b):
+    import bot as botmod
+    registra(b)
+    p = pratica(b)
+    att = botmod.attuale_di(p)
+    righe = ["Presentarsi 20 minuti prima.", "Portare le impegnative."]
+    b.aggiorna_note(p, att, None)  # non lette: niente
+    assert not pratica(b).get("note")
+    b.aggiorna_note(p, att, righe)
+    assert pratica(b)["note"] == {"quando": att.quando.isoformat(), "righe": righe}
+    assert "Note del CUP" in inviati(b)[-1] and "Portare le impegnative." in inviati(b)[-1]
+    n = len(inviati(b))
+    b.aggiorna_note(pratica(b), att, righe)  # uguali: non si rimandano
+    assert len(inviati(b)) == n
+    b.aggiorna_note(pratica(b), att, righe + ["Nuova riga."])  # cambiate: si rimandano
+    assert len(inviati(b)) == n + 1 and "Nuova riga." in inviati(b)[-1]
+    b.aggiorna_note(pratica(b), att, [])  # nessuna nota per la stessa data: si tengono quelle che c'erano
+    assert pratica(b)["note"]["righe"][-1] == "Nuova riga."
+    p = pratica(b)
+    p["note"]["quando"] = "2020-01-01T09:00:00"  # le note erano di un'altra data e ora non ce ne sono
+    b.salva(p, "note")
+    b.aggiorna_note(pratica(b), att, [])
+    assert not pratica(b).get("note")
+
+
+def test_maps_url_e_link_nei_messaggi(b):
+    import bot as botmod
+    luogo = c.Luogo("POLIAMBULATORI STATUTO - PIAZZA STATUTO", "AMB", "PIAZZA STATUTO, 12 - TORINO (TO)")
+    url = botmod.maps_url(luogo)
+    assert url.startswith("https://www.google.com/maps/search/?api=1&query=") and "Torino" in url and "+" in url
+    assert " " not in url and "&" not in url.split("query=")[1]
+    registra(b)
+    assert botmod.maps_url(botmod.attuale_di(pratica(b)).luogo) in botmod.descrivi_prenotazione(botmod.attuale_di(pratica(b)))

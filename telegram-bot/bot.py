@@ -319,7 +319,7 @@ def passata(p):
 def descrivi_prenotazione(att, titolo="Prenotazione"):
     if att.quando >= SENZA_DATA:
         return f"Ricetta da prenotare:\n🩺 {att.cosa or 'la prestazione della ricetta'}\n📅 non ancora prenotata"
-    return f"{titolo}:\n🩺 {att.cosa}\n📅 {fmt(att.quando)}\n📍 {att.luogo}"
+    return f"{titolo}:\n🩺 {att.cosa}\n📅 {fmt(att.quando)}\n📍 {att.luogo}\n🗺 {maps_url(att.luogo)}"
 
 
 def giorni_mancanti(attuale, oggi):
@@ -442,6 +442,12 @@ def indirizzo(luogo):
     """"VIA ROMA, 1 - TORINO (TO)" -> "Via Roma, 1 - Torino (TO)"."""
     m = re.match(r"^(.*?)\s*(\([A-Z]{2}\))?\s*$", luogo.indirizzo)
     return (titolo(m.group(1)) + (" " + m.group(2) if m.group(2) else "")).strip()
+
+
+def maps_url(luogo):
+    """Link a Google Maps per la sede e l'indirizzo di una prenotazione (ricerca per testo: il portale non da' coordinate)."""
+    ricerca = ", ".join(x for x in (titolo(luogo.sede), indirizzo(luogo)) if x)
+    return "https://www.google.com/maps/search/?api=1&query=" + urllib.parse.quote_plus(ricerca)
 
 
 def prestazione(cosa, massimo=45):
@@ -695,7 +701,7 @@ class Bot:
             log.info("utente %s cancellato: %s", uid(chat_id), motivo)
 
     def send(self, chat_id, text, buttons=None):
-        data = {"chat_id": chat_id, "text": text[:4000]}
+        data = {"chat_id": chat_id, "text": text[:4000], "disable_web_page_preview": True}  # niente anteprime di Maps
         if buttons:
             data["reply_markup"] = {"inline_keyboard": buttons}
         return bool(self.tg("sendMessage", **data).get("ok"))
@@ -1060,6 +1066,7 @@ class Bot:
         self.fissa_prima(p)
         self.chiudi_incerta(p, att)
         self.chiudi_disdetta_incerta(p, att)
+        self.aggiorna_note(p, att, res.get("note"))
         auto = p.get("auto")  # appena riletta: se nel frattempo l'hanno spenta dall'app, niente prenotazione da solo
         if auto:
             # un solo tentativo automatico per data; le date gia' offerte col pulsante valgono comunque
@@ -1153,7 +1160,7 @@ class Bot:
         for p in pratiche:
             ic = p.pop("in_corso")
             q, luogo = fmt(datetime.fromisoformat(ic["quando"])), luogo_di(ic)
-            dove = f"📅 {q}\n📍 {luogo}"
+            dove = f"📅 {q}\n📍 {luogo}\n🗺 {maps_url(luogo)}"
             if ic.get("fase") in ("conferma", "verifica"):
                 p["incerta"] = incerta_da(ic)
                 if p["stato"] == "attivo":
@@ -1270,7 +1277,7 @@ class Bot:
         self.salva(p, "attuale", "doppione_avvisato", "notificati", "ignorati", "tentati_auto")
         log.info("doppione %s/%s risolto", uid(chat), p["id"])
         self.dire(p, "✅ Questa ricetta risultava prenotata due volte: ho tenuto la più vicina e disdetto l'altra.\n\n"
-                     f"Tenuta:\n📅 {fmt(tenuta.quando)}\n📍 {tenuta.luogo}\n\n"
+                     f"Tenuta:\n📅 {fmt(tenuta.quando)}\n📍 {tenuta.luogo}\n🗺 {maps_url(tenuta.luogo)}\n\n"
                      f"Disdetta:\n📅 {fmt(disdetta.quando)}\n📍 {disdetta.luogo}")
         self.aggiorna_pannello(chat)
         return "ok"
@@ -1287,7 +1294,7 @@ class Bot:
         if da_prenotare(p) or not att or att.quando.isoformat() != attuale_vista:
             self.dire(p, "La prenotazione è cambiata nel frattempo: riapri la ricetta e riprova.")
             return "fallita"
-        dove = f"📅 {fmt(att.quando)}\n📍 {att.luogo}"
+        dove = f"📅 {fmt(att.quando)}\n📍 {att.luogo}\n🗺 {maps_url(att.luogo)}"
         self.scarta(p["id"])  # un'offerta aperta riguarda una prenotazione che sta per sparire
         self.dire(p, f"Disdico la prenotazione:\n{dove}…")
         try:
@@ -1410,7 +1417,7 @@ class Bot:
             self.dire(p, "Una conferma di prima ha ancora un esito incerto: aspetto la verifica del prossimo controllo "
                          "per non prenotare due volte.")
             return "fallita"
-        self.dire(p, f"{'Prenoto' if nuova else 'Sposto la prenotazione a'}:\n📅 {fmt(slot.quando)}\n📍 {slot.luogo}…")
+        self.dire(p, f"{'Prenoto' if nuova else 'Sposto la prenotazione a'}:\n📅 {fmt(slot.quando)}\n📍 {slot.luogo}\n🗺 {maps_url(slot.luogo)}…")
         attuale_db = self.store.get(p["id"])
         if not attuale_db:
             log.info("prenotazione %s/%s annullata: dati cancellati nel frattempo", uid(chat), p["id"])
@@ -1533,7 +1540,7 @@ class Bot:
         self.fissa_prima(p)  # la prima prenotazione fatta dal bot: da qui si contano i giorni guadagnati
         anticipo = "" if nuova else in_tutto(p, attuale_di(p))
         self.dire(p, f"✅ Prenotazione {'fatta' if nuova else 'spostata'}{' (conferma automatica)' if automatica else ''}!\n"
-                     f"📅 {fmt(slot.quando)}\n📍 {slot.luogo}\n\n"
+                     f"📅 {fmt(slot.quando)}\n📍 {slot.luogo}\n🗺 {maps_url(slot.luogo)}\n\n"
                      "Arriveranno SMS/email dal CUP con il nuovo promemoria; controlla anche il codice di "
                      "pagamento del ticket. Se non si puo' andare, disdire o spostare almeno 2 giorni lavorativi "
                      "prima. Continuo a cercare date ancora prima.\n\n" + (anticipo + "\n\n" if anticipo else "") +
@@ -1599,6 +1606,21 @@ class Bot:
                       descrivi_prenotazione(att, "La prenotazione resta") + self.ripristina_auto(p))
         log.info("esito incerto %s/%s verificato: %s", uid(p["chat_id"]), p["id"], "fatta" if fatta else "non fatta")
         return fatta
+
+    def aggiorna_note(self, p, att, righe):
+        """Le note che il portale mostra per la prenotazione attuale (lette dall'elenco a ogni controllo): se sono
+        nuove o cambiate si salvano e si mandano intere; quelle di un'altra data non valgono piu'.
+        righe None: il controllo non le ha lette, non si tocca niente."""
+        if righe is None:
+            return
+        quando, vecchie = att.quando.isoformat(), p.get("note") or {}
+        if righe and vecchie != {"quando": quando, "righe": righe}:
+            p["note"] = {"quando": quando, "righe": righe}
+            self.salva(p, "note")
+            self.invia_note(p, righe)
+        elif not righe and vecchie and vecchie.get("quando") != quando:
+            p.pop("note", None)
+            self.salva(p, "note")
 
     def invia_note(self, p, righe):
         """Le note del CUP per intero, in un messaggio a parte (o piu' d'uno se sono lunghe)."""
@@ -1902,7 +1924,7 @@ class Bot:
             return
         q, att = datetime.fromisoformat(v["q"]), attuale_di(p)
         luogo = cup_http.Luogo(v["sede"], v["amb"], v["ind"])
-        dove = f"📅 {fmt(q)}\n📍 {titolo(v['sede'])}, {indirizzo(luogo)}"
+        dove = f"📅 {fmt(q)}\n📍 {titolo(v['sede'])}, {indirizzo(luogo)}\n🗺 {maps_url(luogo)}"
         fuori = "\n\n⚠️ È fuori dalla zona in cui cerchi." if not v["area"] else ""
         if da_prenotare(p):
             testo = (f"Prenoto {self.nome(p)} qui?\n\n{dove}{fuori}\n\nSe poi non si può andare, va disdetta almeno 2 "
@@ -1984,6 +2006,7 @@ class Bot:
                      f"📅 {fmt(att.quando)}" + (f" · {mancano}" if mancano else ""),
                      *([f"     {anticipo}"] if anticipo else []),
                      f"📍 {titolo(att.luogo.sede)}, {indirizzo(att.luogo)}",
+                     f"🗺 {maps_url(att.luogo)}",
                      f"🔎 Cerco: {descr_zona(zona_di(p), att)}"]
         if riga_sospesa(p):
             righe.insert(len(righe) - 1, riga_sospesa(p))

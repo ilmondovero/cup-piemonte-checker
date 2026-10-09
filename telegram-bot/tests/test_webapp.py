@@ -1197,3 +1197,23 @@ def test_note_nella_scheda_della_mini_app_con_link_e_testo_neutralizzato(app):
     html_scheda = app.scheda(p)
     assert 'href="https://www.esempio.it/prep.pdf?a=1&amp;b=2"' in html_scheda and 'rel="noopener noreferrer"' in html_scheda
     assert "<script>x" not in html_scheda and "&lt;script&gt;" in html_scheda
+
+
+def test_scheda_ha_il_link_a_google_maps_che_si_apre_fuori_dall_app(app):
+    p = pratica(app.bot, 1)
+    html_scheda = app.scheda(p)
+    url = botmod.maps_url(botmod.attuale_di(p).luogo).replace("&", "&amp;")
+    assert f'href="{url}"' in html_scheda and 'target="_blank"' in html_scheda and 'rel="noopener noreferrer"' in html_scheda
+
+
+def test_note_lunghe_nella_scheda_si_aprono_con_un_tocco_e_hanno_il_testo_intero(app):
+    p = pratica(app.bot, 1)
+    lunga = ["Presentarsi 20 minuti prima. " * 14, "Portare <b>le impegnative</b>.", "https://www.esempio.it/prep.pdf"]
+    p["note"] = {"quando": p["attuale"]["quando"], "righe": lunga}
+    h = app.scheda(p)
+    assert f'<details class="note-cup" data-nota="{p["id"]}">' in h and "<summary>" in h and 'class="anteprima"' in h
+    assert "Portare &lt;b&gt;le impegnative&lt;/b&gt;." in h and 'href="https://www.esempio.it/prep.pdf"' in h  # tutto dentro
+    assert lunga[0].strip() in h.replace("&#x27;", "'")  # la riga intera, non l'anteprima
+    p["note"]["righe"] = ["Una nota breve."]  # breve: nessun click necessario
+    h = app.scheda(p)
+    assert '<section class="note-cup">' in h and "<details" not in h.split("note-cup")[1].split("</section>")[0]

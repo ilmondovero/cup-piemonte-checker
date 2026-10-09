@@ -78,6 +78,20 @@
     }
   }).observe(ricette, { childList: true, subtree: true });
 
+  // le note lunghe si aprono con un tocco: le schede si ricaricano di continuo e non devono richiuderle
+  const noteAperte = new Set();
+  document.addEventListener("click", (e) => {
+    const sommario = e.target.closest && e.target.closest("details[data-nota] > summary");
+    if (!sommario) return;
+    const d = sommario.parentElement;
+    setTimeout(() => (d.open ? noteAperte.add(d.dataset.nota) : noteAperte.delete(d.dataset.nota)), 0);
+  });
+  document.addEventListener("htmx:after:swap", () => {
+    document.querySelectorAll("details[data-nota]").forEach((d) => {
+      if (noteAperte.has(d.dataset.nota)) d.open = true;
+    });
+  });
+
   // tornando all'app (da un'altra chat, o dal messaggio del bot) le schede si ricaricano subito:
   // una data vecchia non deve restare sullo schermo fino al prossimo aggiornamento
   const ricarica = () => ricette.dispatchEvent(new Event("aggiorna"));
