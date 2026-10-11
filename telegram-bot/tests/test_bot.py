@@ -2609,3 +2609,162 @@ def test_prima_non_sovrascrive_una_ricetta_sostituita_durante_il_controllo(b, mo
     vecchia = {**pratica(b), "attuale": botmod.pren_to_dict(ATT)}
     b.fissa_prima(vecchia)
     assert pratica(b)["prima"] is None and vecchia["prima"] is None
+
+
+# --- calendario (.ics) -------------------------------------------------------------------
+def documenti(b):
+    return [d for m, d in b.out if m == "sendDocument"]
+
+
+def test_calendario_solo_con_i_controlli_in_pausa(b):
+    registra(b)
+    p = pratica(b)
+    assert f"sc:calendario:{p['id']}:{botmod.versione(p)}" in [
+        bt["callback_data"] for riga in b.pulsanti_ricetta(p) for bt in riga]
+    b.ultimo_msg.clear()
+    b.on_message(msg(1, "/calendario"))
+    assert not documenti(b) and pratica(b)["stato"] == "attivo"
+    testo = inviati(b)[-1]
+    assert "solo con i controlli in pausa" in testo and botmod.fmt(ATT.quando) in testo and "Ospedale A" in testo
+    assert pulsanti(b) == [f"sc:calpausa:{p['id']}:{botmod.versione(p)}"]
+    b.on_callback(cq(1, pulsanti(b)[0]))  # "Metti in pausa e scarica"
+    p = pratica(b)
+    assert p["stato"] == "pausa" and p["ics"] == ATT.quando.isoformat()
+    [doc] = documenti(b)
+    nome, dati, tipo = doc["files"]["document"]
+    assert nome.endswith(".ics") and tipo == "text/calendar" and botmod.fmt(ATT.quando) in doc["caption"]
+    ics = dati.decode()
+    assert CF not in ics and NRE not in ics
+    assert ics.startswith("BEGIN:VCALENDAR\r\n") and ics.endswith("END:VCALENDAR\r\n")
+    assert all(len(r.encode()) <= 75 for r in ics.split("\r\n"))
+    piatto = ics.replace("\r\n ", "")  # righe ripiegate rimesse insieme
+    assert f"DTSTART:{botmod.ics_utc(ATT.quando)}" in piatto
+    assert r"LOCATION:Ospedale A\, Via Roma\, 1 - Torino (TO)" in piatto
+    assert "TRIGGER:-P1D" in piatto and "URL:https://www.google.com/maps/" in piatto
+    # in pausa il comando manda subito il file, con lo stesso UID
+    b.ultimo_msg.clear()
+    b.on_message(msg(1, "/calendario"))
+    assert len(documenti(b)) == 2
+    uid_di = lambda d: [r for r in d["files"]["document"][1].decode().split("\r\n") if r.startswith("UID:")]
+    assert uid_di(documenti(b)[0]) == uid_di(documenti(b)[1])
+
+
+def test_calendario_con_le_note_e_l_avviso_dopo_uno_spostamento(b):
+    registra(b)
+    p = pratica(b)
+    p.update(stato="pausa", note={"quando": ATT.quando.isoformat(), "righe": ["Portare; esami, precedenti", "A digiuno"]})
+    b.store.save(p)
+    b.esegui("calendario", pratica(b))
+    piatto = documenti(b)[-1]["files"]["document"][1].decode().replace("\r\n ", "")
+    assert r"Portare\; esami\, precedenti\nA digiuno" in piatto
+    assert botmod.CALENDARIO_VECCHIO not in b.scheda(pratica(b))
+    b.esegui("riprendi", pratica(b))
+    b.controlla(pratica(b))
+    b.on_callback(cq(1, pulsanti(b)[0]))  # sposta alla data migliore
+    [fatto] = [t for t in inviati(b) if t.startswith("✅ Prenotazione spostata")]
+    assert botmod.CALENDARIO_VECCHIO in fatto and botmod.CALENDARIO_VECCHIO in b.scheda(pratica(b))
+
+
+def test_calendario_non_per_ricette_da_prenotare_o_in_sospeso(b):
+    registra(b)
+    p = pratica(b)
+    p.update(stato="pausa", incerta={"quando": MEGLIO.quando.isoformat(), "luogo": "x", "sede": "OSPEDALE A",
+                                      "ambulatorio": "AMB 2", "indirizzo": "Via Roma, 1 - TORINO (TO)"})
+    b.store.save(p)
+    b.esegui("calendario", pratica(b))
+    assert not documenti(b) and "in sospeso" in inviati(b)[-1]
+    p = pratica(b)
+    p.update(da_prenotare=True, attuale=botmod.senza_prenotazione(COSA3))
+    p.pop("incerta")
+    b.store.save(p)
+    assert not any(bt["callback_data"].startswith("sc:calendario")
+                   for riga in b.pulsanti_ricetta(pratica(b)) for bt in riga)
+    b.esegui("calpausa", pratica(b))
+    assert not documenti(b) and "Non c'è ancora una prenotazione" in inviati(b)[-1]
+
+
+def test_ics_ripiega_senza_spezzare_le_lettere():
+    riga = "DESCRIPTION:" + "è" * 100
+    pezzi = botmod.ics_riga(riga).split("\r\n ")
+    assert "".join(pezzi) == riga and all(len(x.encode()) <= 74 for x in pezzi[1:]) and len(pezzi[0].encode()) <= 75
+    assert botmod.ics_testo("a\\b;c,d\r\ne") == r"a\\b\;c\,d\ne"
+
+
+def test_calpausa_non_ferma_la_verifica_di_un_esito_incerto(b):
+    registra(b)
+    p = pratica(b)
+    p["incerta"] = {"quando": MEGLIO.quando.isoformat(), "luogo": "x", "sede": "OSPEDALE A", "ambulatorio": "AMB 2",
+                    "indirizzo": "Via Roma, 1 - TORINO (TO)"}
+    b.store.save(p)
+    b.on_callback(cq(1, f"sc:calpausa:{p['id']}:{botmod.versione(p)}"))
+    assert pratica(b)["stato"] == "attivo" and not documenti(b)
+    assert "la verifico al prossimo controllo" in inviati(b)[-1]
+
+
+def test_calendario_non_per_una_prenotazione_non_trovata_o_passata(b, monkeypatch):
+    registra(b)
+
+    def nessun_record(*a):
+        raise c.NonTrovata("Nessun record trovato")
+    monkeypatch.setattr(c, "check", nessun_record)
+    for _ in range(botmod.ASSENZE_PAUSA):
+        b.controlla(pratica(b))
+    p = pratica(b)
+    assert p["stato"] == "pausa" and p["non_trovata"]
+    assert not any(bt["callback_data"].startswith("sc:calendario") for riga in b.pulsanti_ricetta(p) for bt in riga)
+    b.esegui("calendario", p)
+    assert not documenti(b) and "non trova più" in inviati(b)[-1]
+    b.esegui("riprendi", pratica(b))
+    assert "non_trovata" not in pratica(b)
+    p = pratica(b)
+    p.update(stato="pausa", attuale={**p["attuale"], "quando": (datetime.now() - timedelta(hours=1)).isoformat()})
+    b.store.save(p)
+    b.esegui("calendario", pratica(b))
+    assert not documenti(b) and "già passata" in inviati(b)[-1]
+
+
+def test_calendario_dimenticato_con_modifica_e_disdetta(b, monkeypatch):
+    registra(b)
+    p = pratica(b)
+    p["stato"] = "pausa"
+    b.store.save(p)
+    b.esegui("calendario", pratica(b))
+    assert pratica(b)["ics"]
+    monkeypatch.setattr(c, "disdici", lambda *a, **k: "Prenotazione disdetta.")
+    assert b.disdici(pratica(b), ATT.quando.isoformat()) == "ok"
+    assert "ics" not in pratica(b) and "Cancella dal calendario del telefono" in inviati(b)[-1]
+    assert botmod.fmt(ATT.quando) in inviati(b)[-1]
+    # con /modifica la ricetta cambia: l'evento scaricato era di quella vecchia
+    p = pratica(b)
+    p["ics"] = "2027-01-01T09:00:00"
+    b.store.save(p)
+    b.esegui("modifica", pratica(b))
+    assert "ics" not in pratica(b)
+
+
+def test_calendario_non_salvato_se_telegram_rifiuta_il_file(b):
+    registra(b)
+    p = pratica(b)
+    p["stato"] = "pausa"
+    b.store.save(p)
+    tg = b.tg
+    b.tg = lambda method, **d: {"ok": False} if method == "sendDocument" else tg(method, **d)
+    b.esegui("calendario", pratica(b))
+    assert "ics" not in pratica(b) and "Non sono riuscito a mandarti il file" in inviati(b)[-1]
+
+
+def test_tg_manda_il_file_in_multipart(tmp_path, monkeypatch):
+    bot = botmod.Bot(Store(tmp_path / "db.sqlite", Fernet.generate_key().decode()), "TOKEN", distanza=0)
+    chiamate = []
+
+    class Risposta:
+        def json(self):
+            return {"ok": True}
+    monkeypatch.setattr(requests, "post", lambda url, **k: chiamate.append((url, k)) or Risposta())
+    bot.tg("sendDocument", chat_id=5, caption="ciao", reply_markup={"inline_keyboard": []},
+           files={"document": ("v.ics", b"BEGIN:VCALENDAR", "text/calendar")})
+    bot.tg("sendMessage", chat_id=5, text="ciao")
+    (url, k), (_, k2) = chiamate
+    assert url.endswith("/sendDocument") and "json" not in k and k["files"]["document"][0] == "v.ics"
+    assert k["data"] == {"chat_id": 5, "caption": "ciao", "reply_markup": '{"inline_keyboard": []}'}
+    assert k2["json"] == {"chat_id": 5, "text": "ciao"} and "files" not in k2

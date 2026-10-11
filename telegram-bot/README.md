@@ -70,8 +70,21 @@ piccolo, senza Chromium.
    - Dopo un esito incerto si disattiva da sola e avvisa l'utente.
    - Prima di attivarla il bot ricorda due cose: la data vecchia si perde, e se poi non si può andare
      bisogna disdire almeno 2 giorni lavorativi prima, altrimenti si paga la prestazione.
+6. **Calendario del telefono (`/calendario`, pulsante "🗓 Aggiungi al calendario").** Manda un file `.ics`
+   con la visita: indirizzo (si apre nelle mappe), link a Google Maps, note del CUP e due promemoria (il
+   giorno prima e 2 ore prima). Niente codice fiscale né NRE.
+   - **Solo con i controlli in pausa.** Finché cerca, il bot può spostare la visita e l'evento resterebbe
+     con la data vecchia. Con i controlli attivi lo spiega e offre "⏸ Metti in pausa e scarica" (che non
+     mette in pausa se c'è un esito da verificare). Non lo manda per una ricetta da prenotare, con una
+     prenotazione ancora da verificare, che il portale non trova più o già passata.
+   - L'UID dell'evento è della ricetta e della data: lo stesso file riaperto non fa doppioni, una visita
+     spostata è un evento nuovo. Non si punta sull'aggiornamento dello stesso UID perché Google Calendar
+     ignora un UID già importato, anche se cancellato. Se la visita si sposta dopo il download, il
+     messaggio dello spostamento e la scheda dicono di cancellare l'evento vecchio e scaricare quello
+     nuovo. Dopo una disdetta il messaggio ricorda di togliere l'evento; con `/modifica` il download si
+     dimentica.
 
-Comandi: `/stato`, `/date`, `/controlla`, `/aggiungi`, `/dati`, `/modifica`, `/sede`, `/auto`, `/pausa`, `/riprendi`, `/cancella`,
+Comandi: `/stato`, `/date`, `/calendario`, `/controlla`, `/aggiungi`, `/dati`, `/modifica`, `/sede`, `/auto`, `/pausa`, `/riprendi`, `/cancella`,
 `/privacy`. Chi gestisce il bot ha anche `/admin`.
 
 ## Dove cercare

@@ -471,6 +471,7 @@ class App:
         def riprendi(f):
             f.update(stato="attivo", prossimo=time.time(), errori=0)
             f.pop("libera", None)
+            f.pop("non_trovata", None)
         try:
             self._modifica(chat, p, riprendi)
         except botmod.storemod.GiaRegistrata:

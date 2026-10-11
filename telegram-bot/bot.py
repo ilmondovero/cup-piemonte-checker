@@ -32,7 +32,7 @@ import sys
 import time
 import traceback
 import urllib.parse
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import requests
@@ -73,6 +73,8 @@ MAX_RALLENTA = 60  # minuti: con il portale in difficolta' l'intervallo cresce f
 GUASTO_MIN = 45  # minuti senza una sessione riuscita sul portale (con ricette da controllare): un avviso all'amministratore
 RITARDO_GUASTO = 10 * 60  # secondi: un controllo in ritardo di tanto, senza successi da GUASTO_MIN, e' un guasto
 BATTITO_MAX = 15 * 60  # secondi senza un giro del ciclo ne' una risposta del portale: il bot e' fermo
+ICS_DURATA = timedelta(hours=1)  # durata dell'evento nel calendario: il portale non dice quanto dura la visita
+ICS_AVVISI = ("-P1D", "-PT2H")  # promemoria dell'evento: il giorno prima e due ore prima
 
 
 def adesso():
@@ -139,6 +141,7 @@ AIUTO = (
     "📅 mostra le date trovate, da prenotare con un tocco.\n\n"
     "/stato – riporta il pannello in fondo alla chat\n"
     "/date – le date trovate dall'ultimo controllo, con il pulsante Prenota\n"
+    "/calendario – la visita come evento per il calendario del telefono (con i controlli in pausa)\n"
     "/aggiungi – segui un'altra ricetta (per esempio di un familiare)\n"
     "/dati – i dati che conservo\n"
     "/modifica – cambia codice fiscale e ricetta\n"
@@ -147,7 +150,7 @@ AIUTO = (
     "Funzionano anche /sede, /auto, /pausa, /riprendi e /controlla.")
 
 COMANDI = [("stato", "Il pannello delle tue ricette"), ("date", "Le date trovate, da prenotare"),
-           ("aggiungi", "Segui un'altra ricetta"),
+           ("calendario", "La visita nel calendario del telefono"), ("aggiungi", "Segui un'altra ricetta"),
            ("help", "Come funziona"), ("privacy", "Come tratto i tuoi dati")]
 PICCOLE = {"di", "da", "del", "della", "dei", "degli", "delle", "in", "per"}  # gli articoli no: nei nomi contano
 
@@ -450,6 +453,69 @@ def maps_url(luogo):
     return "https://www.google.com/maps/search/?api=1&query=" + urllib.parse.quote_plus(ricerca)
 
 
+def ics_testo(s):
+    """Un testo dentro un file .ics (RFC 5545): barra, punto e virgola, virgola e a capo con la barra davanti."""
+    s = s.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,")
+    return s.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\\n")
+
+
+def ics_riga(riga):
+    """Righe di al massimo 75 byte: le successive cominciano con uno spazio, mai a meta' di una lettera accentata."""
+    pezzi, corrente, limite = [], "", 75
+    for ch in riga:
+        if len((corrente + ch).encode()) > limite:
+            pezzi.append(corrente)
+            corrente, limite = "", 74  # lo spazio in testa alla riga dopo conta
+        corrente += ch
+    return "\r\n ".join(pezzi + [corrente])
+
+
+def ics_utc(d):
+    """Ora italiana (come il portale) -> "20270216T080000Z": in UTC il file non ha bisogno del fuso."""
+    return d.replace(tzinfo=TZ).astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def ics_evento(p, ora=None):
+    """Il file .ics della prenotazione attuale: indirizzo (LOCATION, il telefono lo apre nelle mappe), link a
+    Google Maps e note del CUP. L'UID e' della ricetta e della data: lo stesso file riaperto non fa doppioni;
+    una visita spostata e' un evento nuovo (Google Calendar ignora un UID gia' importato, anche cancellato, e
+    l'evento aggiornato sparirebbe), e quello vecchio va cancellato a mano. Niente codice fiscale ne' NRE."""
+    att = attuale_di(p)
+    ora = time.time() if ora is None else ora
+    stamp = datetime.fromtimestamp(ora, timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    cosa = prestazione(att.cosa, 70) or "Visita CUP"
+    oggetto = f"{cosa} – {p['nome']}" if p.get("nome") else cosa
+    dove = ", ".join(x for x in (titolo(att.luogo.sede), indirizzo(att.luogo)) if x)
+    descr = [f"🩺 {att.cosa}", "📍 " + " – ".join(x for x in (titolo(att.luogo.sede), att.luogo.ambulatorio) if x),
+             f"🗺 {maps_url(att.luogo)}"]
+    if righe_note(p):
+        descr += ["", "📝 Note del CUP:", *righe_note(p)]
+    descr += ["", "Se la visita cambia, scarica di nuovo il file dal bot (/calendario)."]
+    righe = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//cup-piemonte-checker//bot//IT", "CALSCALE:GREGORIAN",
+             "METHOD:PUBLISH", "BEGIN:VEVENT",
+             f"UID:cup-{p['id']}-{versione(p)}-{att.quando:%Y%m%d%H%M}@cup-piemonte-checker",
+             f"SEQUENCE:{int(ora // 60)}", f"DTSTAMP:{stamp}", f"LAST-MODIFIED:{stamp}",
+             f"DTSTART:{ics_utc(att.quando)}", f"DTEND:{ics_utc(att.quando + ICS_DURATA)}",
+             f"SUMMARY:{ics_testo(oggetto)}", f"LOCATION:{ics_testo(dove)}",
+             f"DESCRIPTION:{ics_testo(chr(10).join(descr))}", f"URL:{maps_url(att.luogo)}",
+             "STATUS:CONFIRMED", "TRANSP:OPAQUE"]
+    for prima in ICS_AVVISI:
+        righe += ["BEGIN:VALARM", "ACTION:DISPLAY", f"DESCRIPTION:{ics_testo(oggetto)}", f"TRIGGER:{prima}",
+                  "END:VALARM"]
+    righe += ["END:VEVENT", "END:VCALENDAR"]
+    return ("\r\n".join(ics_riga(r) for r in righe) + "\r\n").encode()
+
+
+def calendario_vecchio(p):
+    """L'evento scaricato con /calendario non e' piu' la prenotazione attuale (spostata dopo)."""
+    att = attuale_di(p)
+    return bool(p.get("ics")) and bool(att) and not da_prenotare(p) and p["ics"] != att.quando.isoformat()
+
+
+CALENDARIO_VECCHIO = ("🗓 Nel calendario del telefono c'è ancora la data vecchia: cancella quell'evento, metti in "
+                      "pausa e scarica il file nuovo con /calendario.")
+
+
 def prestazione(cosa, massimo=45):
     """Nome della prestazione leggibile: sigle (RM, TC, ECG) maiuscole, taglio a fine parola."""
     parole = cosa.split(" - ")[0].split()
@@ -681,9 +747,14 @@ class Bot:
     def redact(self, e):
         return str(e).replace(self.token, "***")
 
-    def tg(self, method, attesa_tg=40, **data):
+    def tg(self, method, attesa_tg=40, files=None, **data):
+        """files: {"document": (nome, bytes, tipo)} per mandare un file (multipart al posto del JSON)."""
         try:
-            r = requests.post(self.api + method, json=data, timeout=attesa_tg).json()
+            if files:  # nel multipart i campi annidati (reply_markup) vanno in JSON
+                campi = {k: json.dumps(v) if isinstance(v, (dict, list)) else v for k, v in data.items()}
+                r = requests.post(self.api + method, data=campi, files=files, timeout=attesa_tg).json()
+            else:
+                r = requests.post(self.api + method, json=data, timeout=attesa_tg).json()
         except (requests.RequestException, ValueError) as e:
             log.warning("Telegram %s fallito: %s", method, self.redact(e))
             return {}
@@ -997,9 +1068,9 @@ class Bot:
             if p.get("disdetta_incerta") and (definitiva or (isinstance(e, cup_http.NonAttiva) and e.solo_disdette())):
                 # la disdetta di prima risulta partita: la ricetta torna da prenotare, come dopo una disdetta riuscita
                 p.pop("assenze", None)
-                self.dopo_disdetta(p, attuale_di(p))
+                togli = self.dopo_disdetta(p, attuale_di(p))
                 self.dire(p, "✅ Verificato: la disdetta di prima è andata a buon fine. I controlli di questa ricetta "
-                             "sono in pausa. Per prenotare di nuovo: ▶️ Riprendi.")
+                             "sono in pausa. Per prenotare di nuovo: ▶️ Riprendi." + togli)
                 self.aggiorna_pannello(chat)
                 return None
             if isinstance(e, cup_http.NonTrovata) and p.get("assenze", 0) + 1 < ASSENZE_PAUSA:
@@ -1010,8 +1081,8 @@ class Bot:
                                            f"non sospendo, riprovo piu' tardi ({p['assenze']}/{ASSENZE_PAUSA - 1})")
                 return self.errore_controllo(p, dubbia, manuale, "assenze")
             p.pop("assenze", None)
-            p.update(stato="pausa", pausa_da=time.time(), libera=True)
-            self.salva(p, "stato", "pausa_da", "libera", "assenze")
+            p.update(stato="pausa", pausa_da=time.time(), libera=True, non_trovata=True)
+            self.salva(p, "stato", "pausa_da", "libera", "assenze", "non_trovata")
             self.aggiorna_pannello(chat)
             self.dire(p, f"Non trovo piu' una prenotazione attiva per questa ricetta ({e}): forse e' stata "
                          "disdetta, spostata altrove o gia' effettuata. Ho sospeso i controlli.\n"
@@ -1320,23 +1391,27 @@ class Bot:
         if self.prova:
             self.dire(p, "🧪 Prova: arrivato al dialogo di conferma, non ho disdetto.")
             return "ok"
-        self.dopo_disdetta(p, att)
+        togli = self.dopo_disdetta(p, att)
         log.info("disdetta %s/%s riuscita", uid(p["chat_id"]), p["id"])
         self.dire(p, f"✅ Prenotazione disdetta:\n{dove}\n\nI controlli di questa ricetta sono in pausa e la conferma "
-                     "automatica è spenta. Per prenotare di nuovo: ▶️ Riprendi.")
+                     "automatica è spenta. Per prenotare di nuovo: ▶️ Riprendi." + togli)
         self.aggiorna_pannello(p["chat_id"])
         return "ok"
 
     def dopo_disdetta(self, p, att):
         """La prenotazione att non c'e' piu': la ricetta torna da prenotare e in pausa. Un p["incerta"] di una
-        conferma precedente resta: la chiude il primo controllo che legge il portale."""
+        conferma precedente resta: la chiude il primo controllo che legge il portale. Ritorna la riga da
+        aggiungere al messaggio se l'evento era stato scaricato con /calendario ("" se no)."""
+        togli = (f"\n\n🗓 Cancella dal calendario del telefono l'evento del {fmt(att.quando)}: la visita non c'è più."
+                 if p.pop("ics", None) else "")
         p["attuale"] = senza_prenotazione(att.cosa)
         p.update(da_prenotare=True, stato="pausa", pausa_da=time.time(), libera=True, auto=None, notificati={},
                  ignorati=[], tentati_auto=[])
         p.pop("disdetta_incerta", None)
         p.pop("note", None)
         self.salva(p, "attuale", "da_prenotare", "stato", "pausa_da", "libera", "auto", "notificati", "ignorati",
-                   "tentati_auto", "disdetta_incerta", "note")
+                   "tentati_auto", "disdetta_incerta", "note", "ics")
+        return togli
 
     def chiudi_disdetta_incerta(self, p, att):
         """Dopo una disdetta con esito incerto, se il portale mostra ancora quella prenotazione la disdetta non e'
@@ -1544,7 +1619,7 @@ class Bot:
                      "Arriveranno SMS/email dal CUP con il nuovo promemoria; controlla anche il codice di "
                      "pagamento del ticket. Se non si puo' andare, disdire o spostare almeno 2 giorni lavorativi "
                      "prima. Continuo a cercare date ancora prima.\n\n" + (anticipo + "\n\n" if anticipo else "") +
-                     self.regola(p))
+                     (CALENDARIO_VECCHIO + "\n\n" if calendario_vecchio(p) else "") + self.regola(p))
         self.invia_note(p, note)
         self.aggiorna_pannello(chat)
         return "ok"
@@ -1657,6 +1732,8 @@ class Bot:
         p.pop("luoghi", None)
         p.pop("incerta", None)  # l'esito incerto era della ricetta vecchia
         p.pop("disdetta_incerta", None)
+        p.pop("ics", None)  # l'evento nel calendario e' della ricetta vecchia
+        p.pop("non_trovata", None)
         self.scarta(p["id"])
         p.pop("libera", None)
         p.update(stato="cf", creato=time.time(), auto=None, notificati={}, ignorati=[], tentati_auto=[])
@@ -1817,7 +1894,8 @@ class Bot:
         return PRIVACY + (f"\n\nGestore del bot: {self.contatto}" if self.contatto else "")
 
     # --- azioni su una pratica (dopo la scelta, se ce n'e' piu' d'una) ------------------
-    AZIONI = ("sede", "auto", "pausa", "riprendi", "modifica", "cancella", "controlla", "date", "menu")
+    AZIONI = ("sede", "auto", "pausa", "riprendi", "modifica", "cancella", "controlla", "date", "menu", "calendario",
+              "calpausa")
 
     def esegui(self, azione, p):
         if azione == "sede":
@@ -1831,6 +1909,10 @@ class Bot:
             self.aggiorna_pannello(p["chat_id"])
         elif azione == "controlla":
             self.controlla_ora(p)
+        elif azione in ("calendario", "calpausa"):  # calpausa: "Metti in pausa e scarica"
+            if azione == "calpausa" and p["stato"] == "attivo" and not self.niente_calendario(p):
+                self.esegui("pausa", p)
+            self.manda_calendario(p)
         elif azione == "date":
             self.mostra_date(p)
         elif azione == "menu":  # dal pannello compatto: la scheda di una ricetta con i suoi pulsanti
@@ -1838,8 +1920,9 @@ class Bot:
         elif azione == "riprendi":
             p.update(stato="attivo", prossimo=time.time(), errori=0)
             p.pop("libera", None)
+            p.pop("non_trovata", None)  # il prossimo controllo rilegge la prenotazione
             try:
-                self.salva(p, "stato", "prossimo", "errori", "libera")
+                self.salva(p, "stato", "prossimo", "errori", "libera", "non_trovata")
             except storemod.GiaRegistrata:
                 self.dire(p, "Nel frattempo questa ricetta e' stata registrata da un'altra chat: non posso riattivarla.")
                 return
@@ -1851,6 +1934,55 @@ class Bot:
             self.dire(p, f"Cancello i dati di questa ricetta ({self.nome(p)})? I suoi controlli si fermano.",
                       [[{"text": "Si', cancella", "callback_data": f"del:{p['id']}:{versione(p)}:1"},
                         {"text": "No", "callback_data": f"del:{p['id']}:{versione(p)}:0"}]])
+
+    def niente_calendario(self, p):
+        """Perche' la prenotazione non va nel calendario ("" se ci va, pausa a parte): non c'e', il portale non
+        la trova piu', e' passata o c'e' un esito da verificare (che solo i controlli attivi chiudono)."""
+        att = attuale_di(p)
+        if not att or da_prenotare(p):
+            return "🗓 Non c'è ancora una prenotazione da mettere nel calendario."
+        quando = f"📅 {fmt(att.quando)}\n📍 {titolo(att.luogo.sede)}, {indirizzo(att.luogo)}"
+        if p.get("non_trovata"):
+            return ("🗓 Il portale non trova più questa prenotazione: non la metto nel calendario. /riprendi per "
+                    f"riprovare a leggerla.\n\nL'ultima che ho visto:\n{quando}")
+        if att.quando <= adesso():
+            return f"🗓 Questa visita è già passata:\n{quando}"
+        if sospesa(p):
+            return ("🗓 Prima va verificata la prenotazione in sospeso: " +
+                    ("riprendi i controlli e, dopo la verifica, rimetti in pausa e scarica il file."
+                     if p["stato"] == "pausa" else "la verifico al prossimo controllo, poi potrai scaricare il file.") +
+                    f"\n\nLa prenotazione verificata:\n{quando}")
+        return ""
+
+    def manda_calendario(self, p):
+        """Il file .ics della prenotazione, da aprire sul telefono. Solo con i controlli in pausa: finche' il bot
+        cerca puo' spostare la visita, e l'evento nel calendario resterebbe con la data vecchia."""
+        p = self.store.get(p["id"]) or p  # la pausa riletta: la Mini App puo' aver appena ripreso i controlli
+        motivo = self.niente_calendario(p)
+        if motivo:
+            self.dire(p, motivo)
+            return
+        att = attuale_di(p)
+        quando = f"📅 {fmt(att.quando)}\n📍 {titolo(att.luogo.sede)}, {indirizzo(att.luogo)}"
+        if p["stato"] != "pausa":
+            self.dire(p, "🗓 Il file per il calendario lo scarichi solo con i controlli in pausa: finché cerco date "
+                         "migliori posso spostare la visita, e nel calendario resterebbe la data vecchia.\n\n"
+                         f"La prenotazione adesso:\n{quando}",
+                      [[{"text": "⏸ Metti in pausa e scarica", "callback_data": f"sc:calpausa:{p['id']}:{versione(p)}"}]])
+            return
+        didascalia = (f"🗓 La visita per il calendario:\n{quando}\n\nApri il file e aggiungi l'evento: ha indirizzo, "
+                      "link a Maps e note del CUP. Se riprendi i controlli e la visita si sposta, metti in pausa e "
+                      "scarica il file nuovo e cancella l'evento vecchio.")
+        if len(self.store.della_chat(p["chat_id"])) > 1:
+            didascalia = f"[{self.nome(p)}] {didascalia}"
+        r = self.tg("sendDocument", chat_id=p["chat_id"], caption=didascalia[:1000],
+                    files={"document": (f"visita-{att.quando:%Y-%m-%d-%H%M}.ics", ics_evento(p), "text/calendar")})
+        if not r.get("ok"):
+            self.dire(p, "🗓 Non sono riuscito a mandarti il file: riprova tra poco con /calendario.")
+            return
+        p["ics"] = att.quando.isoformat()
+        self.salva(p, "ics")
+        self.aggiorna_pannello(p["chat_id"])
 
     def mostra_date(self, p):
         """Le date dell'ultimo controllo in chat, ognuna con Prenota: come "Date disponibili" della Mini App,
@@ -2019,6 +2151,8 @@ class Bot:
         righe.append(f"⚡ Prenoto da solo: {auto_descr(p)}")
         if calendario_di(p):
             righe.append(f"📅 Giorni {descr_calendario(p)}")
+        if calendario_vecchio(p):
+            righe.append(CALENDARIO_VECCHIO)
         righe.append(self.riassunto(p))
         return "\n".join(righe)
 
@@ -2035,6 +2169,8 @@ class Bot:
             n = len(p["viste"])
             righe.append([{"text": f"📅 {n} {'data trovata' if n == 1 else 'date trovate'}: vedi e prenota",
                            "callback_data": f"sc:date:{p['id']}:{v}"}])
+        if p.get("attuale") and not da_prenotare(p) and not p.get("non_trovata"):
+            righe.append([{"text": "🗓 Aggiungi al calendario", "callback_data": f"sc:calendario:{p['id']}:{v}"}])
         return righe
 
     def testo_pannello(self, chat):
@@ -2192,7 +2328,9 @@ class Bot:
         elif cmd == "/controlla":
             for p in attive:
                 self.controlla_ora(p)
-        elif cmd[1:] in self.AZIONI:
+        elif cmd[1:] in self.AZIONI and cmd != "/calpausa":  # calpausa: solo dal pulsante
+            if cmd == "/calendario":  # solo le ricette con una prenotazione
+                attive = [p for p in attive if p.get("attuale") and not da_prenotare(p)] or attive
             if len(attive) == 1:
                 self.esegui(cmd[1:], attive[0])
             else:
@@ -2410,7 +2548,7 @@ class Bot:
                         z = {"tipo": "tutte", "valore": ""}  # senza prenotazione non c'e' una sede da cui ricavarla
                     f.update(nuovi, zona=z, prima=prima_con(f, nuovi["attuale"], stessa=f.get("nre") == nre))
                     f.pop("guida", None)
-                    for k in ("libera", "viste", "storico", "riassunto", "ultimo", "luoghi"):
+                    for k in ("libera", "viste", "storico", "riassunto", "ultimo", "luoghi", "ics", "non_trovata"):
                         f.pop(k, None)
                 p = self.store.modifica(pid, cambia)
                 self.scarta(pid)
