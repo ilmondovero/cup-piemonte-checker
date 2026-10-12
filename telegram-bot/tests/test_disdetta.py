@@ -726,3 +726,29 @@ def test_maps_url_e_link_nei_messaggi(b):
     assert " " not in url and "&" not in url.split("query=")[1]
     registra(b)
     assert botmod.maps_url(botmod.attuale_di(pratica(b)).luogo) in botmod.descrivi_prenotazione(botmod.attuale_di(pratica(b)))
+
+
+def _pulsante_portale(numero, etichetta):
+    """Il pulsante del dialogo come lo disegna il portale (ottobre 2026): l'id sul div, l'etichetta nel button."""
+    return (f'<div class=" btn btn-primary iconButton chainedButton form-control" id="{L}:_t{numero}" onmouseover="x">'
+            f'<span class="yui-button"><span aria-describedby="{etichetta}" class="first-child" role="button">'
+            f'<button name="{L}:_t{numero}_button" tabindex="0" type="button"><span>{etichetta}</span></button>'
+            f'</span></span></div>')
+
+
+def test_il_si_del_dialogo_come_lo_disegna_il_portale_adesso():
+    corpo = (f'<div id="{L}:confirmDialog">Sei sicuro di voler disdire la prenotazione?'
+             f'<span id="{L}:j_idt252:0:_t254">Martedì 13 Ottobre 2026 alle ore 17:30 89262.1 - VISITA</span>'
+             f'<span id="{L}:_t263"></span></div>'
+             f'<div class="row-fluid">{_pulsante_portale(289, "Si")}{_pulsante_portale(291, "No")}</div>')
+    s = sessione([dialogo(corpo)])
+    assert s.disdici_dialogo(QUANDO) == f"{L}:_t289"
+
+
+def test_due_si_nel_dialogo_non_disdicono():
+    s = sessione([dialogo(_pulsante_portale(1, "Si"), _pulsante_portale(2, "Sì"))])
+    try:
+        s.disdici_dialogo(QUANDO)
+        assert False
+    except c.CupError as e:
+        assert "non riconosciuto" in str(e)

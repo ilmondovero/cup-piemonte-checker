@@ -456,10 +456,17 @@ class CupSession:
             self.lista.vs = vs.group(1)
         testo = html.unescape(xml)
         si = set()
-        for m in re.finditer(r'<(?:a|button|input|span)\b[^>]*\sid="(%s:_t\d+)"[^>]*>' % re.escape(L), testo):
+        elementi = list(re.finditer(r'<(?:a|button|input|span|div)\b[^>]*\sid="(%s:_t\d+)"[^>]*>' % re.escape(L), testo))
+        for i, m in enumerate(elementi):
             valore = re.search(r'\svalue="([^"]*)"', m.group(0))
-            etichetta = valore.group(1) if valore else _text(testo[m.end():m.end() + 300].split("<", 1)[0])
-            if _chiave_comune(etichetta) == "SI":  # "Sì" (anche "Si'"): senza accento, come i comuni
+            etichette = [valore.group(1) if valore else _text(testo[m.end():m.end() + 300].split("<", 1)[0])]
+            # ottobre 2026: l'id e' sul contenitore (div) e l'etichetta nel <button><span>Si</span></button> dentro,
+            # fino al prossimo elemento con id
+            fine = elementi[i + 1].start() if i + 1 < len(elementi) else len(testo)
+            interno = re.search(r"<button\b[^>]*>(.*?)</button>", testo[m.end():min(fine, m.end() + 1500)], re.S)
+            if interno:
+                etichette.append(_text(interno.group(1)))
+            if any(_chiave_comune(x) == "SI" for x in etichette):  # "Sì" (anche "Si'"): senza accento, come i comuni
                 si.add(m.group(1))
         if len(si) != 1:
             ids = sorted({_id(b) for b in re.findall(r'id="([^"]*:_t\d+)"', testo)})[:12]
