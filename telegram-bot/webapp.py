@@ -75,8 +75,8 @@ CSP = (f"default-src 'self'; script-src 'self' {TELEGRAM_JS}; style-src 'self' '
        "img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'; "
        "frame-ancestors https://web.telegram.org https://*.telegram.org")
 ATTIVE = ("attivo", "pausa")
-AZIONI_POST = ("dove", "auto", "calendario", "pausa", "riprendi", "controlla", "offerta", "vista", "nome", "cancella", "modifica", "disdici")
-FOGLI_GET = ("dove", "auto", "calendario", "date", "storico", "altro")
+AZIONI_POST = ("dove", "auto", "calendario", "pausa", "riprendi", "controlla", "offerta", "vista", "nome", "cancella", "modifica", "disdici", "ics")
+FOGLI_GET = ("dove", "auto", "calendario", "date", "storico", "altro", "ics")  # "ics": il file per il calendario del telefono ("calendario" sono i giorni si'/no)
 AZIONI_SENSIBILI = ("offerta", "vista", "cancella", "modifica", "disdici")  # vogliono una firma recente
 NOTE_BREVI = 280  # caratteri: oltre, le note della scheda si aprono con un tocco
 MAX_NO_CAL = 400  # date segnate no al massimo nel calendario
@@ -478,6 +478,19 @@ class App:
             raise Richiesta(409, "Questa ricetta è stata registrata da un'altra chat: non posso riattivarla.")
         return f"{self.bot.nome(p)}: controlli riattivati."
 
+    def azione_ics(self, chat, p, dati):
+        # le stesse regole del bot (niente_calendario), qui subito: l'app non deve dire "te lo mando" a un file
+        # che il bot poi rifiuta (il bot le riapplica comunque quando esegue la coda)
+        motivo = self.bot.niente_calendario(p)
+        if motivo:
+            raise Richiesta(409, motivo.split("\n\n")[0].replace("🗓 ", ""))
+        if p["stato"] == "attivo":
+            if dati.get("pausa") != "1":
+                raise Richiesta(409, "Il file si scarica solo con i controlli in pausa.")
+            self.azione_pausa(chat, p, dati)
+        self._in_coda("ics", chat, p["id"])
+        return f"{self.bot.nome(p)}: ti mando il file per il calendario nel bot. I controlli sono in pausa."
+
     def azione_controlla(self, chat, p, dati):
         # le stesse regole di Bot.controlla_ora, qui subito: l'app non deve dire "avviato" a un controllo
         # che il bot poi rifiuta (il bot le riapplica comunque quando esegue la coda)
@@ -749,6 +762,7 @@ class App:
   {self.note(p)}
   {self.offerta(p)}
   {self.riga_date(p)}
+  {self.riga_ics(p)}
   <div class="regole">
     <button type="button" class="regola" hx-get="/ui/r/{pid}/dove" hx-target="#foglio" aria-label="Cambia dove cerco">
       <span class="nome">🔎 Dove cerco</span><span class="valore">{e(botmod.descr_zona(zona, att))}{estesa}</span></button>
@@ -769,6 +783,16 @@ class App:
     <button type="button" hx-get="/ui/r/{pid}/altro" hx-target="#foglio">✏️ Modifica</button>
   </nav>
 </article>"""
+
+    def riga_ics(self, p):
+        """Il pulsante per il calendario del telefono; non c'e' se il bot non puo' mandare il file (da prenotare,
+        da verificare, non trovata, passata): in quel caso un file sarebbe sbagliato."""
+        if self.bot.niente_calendario(p):
+            return ""
+        testo = ("🗓 Nel calendario del telefono c'è la data vecchia" if botmod.calendario_vecchio(p)
+                 else "🗓 Aggiungi al calendario del telefono")
+        return (f'<button type="button" class="riga-date" hx-get="/ui/r/{p["id"]}/ics" hx-target="#foglio">'
+                f'{e(testo)} ›</button>')
 
     def riga_date(self, p):
         tutte = p.get("viste") or []
@@ -1068,6 +1092,35 @@ class App:
   {scelte}
   <p class="nota">{"Riepilogo: cerco " + e(botmod.descr_zona(botmod.zona_di(p), botmod.attuale_di(p))) + ". " if self._guidata(p) else ""}Calendario: {e(botmod.descr_calendario(p))}.</p>
   <button class="primario">{self._avanti(p, True)}</button>
+</form>"""
+
+    def foglio_ics(self, p):
+        """Il file .ics lo manda il bot in chat (la WebView di Telegram non scarica file), solo con i controlli
+        in pausa: con i controlli attivi il bot puo' spostare la visita e l'evento resterebbe con la data vecchia."""
+        pid, att = p["id"], botmod.attuale_di(p)
+        motivo = self.bot.niente_calendario(p)
+        if motivo:
+            return (f'<h2>🗓 Calendario · {e(self.bot.nome(p))}</h2>'
+                    f'<p class="nota">{e(motivo.replace("🗓 ", "")).replace(chr(10), "<br>")}</p>')
+        pausa = p["stato"] == "pausa"
+        # il testo della chat rimanda a /calendario, che qui non c'e': si scarica con il bottone sotto
+        vecchio = ('<p class="nota"><strong>🗓 Nel calendario del telefono c\'è ancora la data vecchia: cancella '
+                   'quell\'evento, metti in pausa e mandami il file nuovo da qui sotto.</strong></p>'
+                   if botmod.calendario_vecchio(p) else "")
+        if pausa:
+            avviso = "I controlli sono in pausa: puoi scaricare il file."
+            bottone = '<button class="primario">Mandami il file in chat</button>'
+        else:
+            avviso = ("Il file si scarica solo con i controlli in pausa: finché cerco date migliori posso spostare la "
+                      "visita, e nel calendario resterebbe la data vecchia. Puoi riprendere i controlli quando vuoi.")
+            bottone = '<input type="hidden" name="pausa" value="1"><button class="primario">⏸ Metti in pausa e mandami il file</button>'
+        return f"""
+<h2>🗓 Calendario · {e(self.bot.nome(p))}</h2>
+<p class="nota">{e(botmod.fmt(att.quando))}<br>{e(botmod.titolo(att.luogo.sede))}, {e(botmod.indirizzo(att.luogo))}</p>
+{vecchio}<p class="nota">Ti mando nel bot un file da toccare: l'evento ha l'indirizzo (si apre nelle mappe), il link a
+  Google Maps, le note del CUP e due promemoria, il giorno prima e 2 ore prima. {e(avviso)}</p>
+<form hx-post="/ui/r/{pid}/ics" hx-target="#ricette" hx-swap="innerMorph" class="scelte">
+  {bottone}
 </form>"""
 
     def foglio_calendario(self, p):

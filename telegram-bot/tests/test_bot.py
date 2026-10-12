@@ -2649,6 +2649,16 @@ def test_calendario_solo_con_i_controlli_in_pausa(b):
     assert uid_di(documenti(b)[0]) == uid_di(documenti(b)[1])
 
 
+def test_calendario_non_mandato_a_una_ricetta_cancellata_nel_frattempo(b):
+    registra(b)
+    p = pratica(b)
+    b.store.modifica(p["id"], lambda f: f.update(stato="pausa", pausa_da=0))
+    p = b.store.get(p["id"])
+    b.store.delete(p["id"])
+    b.manda_calendario(p)  # p e' ancora la copia di prima della cancellazione
+    assert not documenti(b)
+
+
 def test_calendario_con_le_note_e_l_avviso_dopo_uno_spostamento(b):
     registra(b)
     p = pratica(b)

@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import bot as botmod  # noqa: E402
 import webapp  # noqa: E402
 from store import Store  # noqa: E402
-from test_bot import ATT, ATT2, CF, CF2, NRE, NRE2, aggiungi_familiare, b, pratica, registra  # noqa: E402,F401
+from test_bot import ATT, ATT2, CF, CF2, NRE, NRE2, aggiungi_familiare, b, documenti, pratica, registra  # noqa: E402,F401
 from test_bot import CF3 as CF_NUOVA, NRE3 as NRE_NUOVA, COSA3  # noqa: E402
 
 TOKEN = "123456:TEST-token-per-i-test"
@@ -1217,3 +1217,60 @@ def test_note_lunghe_nella_scheda_si_aprono_con_un_tocco_e_hanno_il_testo_intero
     p["note"]["righe"] = ["Una nota breve."]  # breve: nessun click necessario
     h = app.scheda(p)
     assert '<section class="note-cup">' in h and "<details" not in h.split("note-cup")[1].split("</section>")[0]
+
+
+# --- calendario del telefono (.ics) ------------------------------------------------------
+def test_ics_dalla_app_con_i_controlli_attivi_chiede_la_pausa(app):
+    pid = pratica(app.bot, 1)["id"]
+    _, _, corpo = get(app, "/ui/ricette")
+    assert f'hx-get="/ui/r/{pid}/ics"' in corpo.decode() and "Aggiungi al calendario del telefono" in corpo.decode()
+    stato, _, foglio = get(app, f"/ui/r/{pid}/ics")
+    foglio = foglio.decode()
+    assert stato == 200 and "solo con i controlli in pausa" in foglio and 'name="pausa" value="1"' in foglio
+    assert "Ospedale A" in foglio and "Metti in pausa e mandami il file" in foglio
+    stato, _, corpo = post(app, f"/ui/r/{pid}/ics", {})  # senza il consenso alla pausa: niente
+    assert stato == 409 and app.store.get(pid)["stato"] == "attivo" and not list(app.bot.coda.queue)
+    stato, _, corpo = post(app, f"/ui/r/{pid}/ics", {"pausa": "1"})
+    assert stato == 200 and "ti mando il file" in corpo.decode() and "in pausa" in corpo.decode()
+    assert app.store.get(pid)["stato"] == "pausa" and ("ics", 1, pid) in list(app.bot.coda.queue)
+    app.bot.esegui_coda()  # il bot manda il file in chat
+    [doc] = documenti(app.bot)
+    assert doc["chat_id"] == 1 and doc["files"]["document"][0].endswith(".ics")
+    assert app.store.get(pid)["ics"] == ATT.quando.isoformat()
+    # ora il calendario e' aggiornato: il pulsante resta, senza avviso di data vecchia
+    assert "è la data vecchia" not in get(app, "/ui/ricette")[2].decode()
+
+
+def test_ics_dalla_app_in_pausa_e_poi_visita_spostata(app):
+    pid = pratica(app.bot, 1)["id"]
+    post(app, f"/ui/r/{pid}/pausa", {})
+    foglio = get(app, f"/ui/r/{pid}/ics")[2].decode()
+    assert "puoi scaricare il file" in foglio and 'name="pausa"' not in foglio
+    post(app, f"/ui/r/{pid}/ics", {})
+    app.bot.esegui_coda()
+    assert len(documenti(app.bot)) == 1
+    app.store.modifica(pid, lambda f: f["attuale"].update(quando=(ATT.quando - timedelta(days=9)).isoformat()))
+    _, _, corpo = get(app, "/ui/ricette")
+    assert "Nel calendario del telefono c&#x27;è la data vecchia" in corpo.decode()
+    pagina = get(app, f"/ui/r/{pid}/ics")[2].decode()
+    assert "data vecchia" in pagina and "/calendario" not in pagina  # il testo della Mini App non rimanda al comando
+
+
+def test_ics_dalla_app_non_c_e_se_il_bot_non_puo_mandarlo(app):
+    pid = pratica(app.bot, 1)["id"]
+    app.store.modifica(pid, lambda f: f.update(non_trovata=True, stato="pausa"))
+    assert "/ics" not in get(app, "/ui/ricette")[2].decode().split("Familiare")[0]
+    assert "non trova più" in get(app, f"/ui/r/{pid}/ics")[2].decode()
+    stato, _, corpo = post(app, f"/ui/r/{pid}/ics", {})
+    assert stato == 409 and "non trova più" in corpo.decode() and not list(app.bot.coda.queue)
+    # la visita non e' ancora prenotata
+    app.store.modifica(pid, lambda f: f.update(non_trovata=None, da_prenotare=True,
+                                               attuale=botmod.senza_prenotazione(COSA3)))
+    assert post(app, f"/ui/r/{pid}/ics", {})[0] == 409 and not list(app.bot.coda.queue)
+
+
+def test_ics_dalla_app_solo_per_le_proprie_ricette(app):
+    pid = pratica(app.bot, 1)["id"]
+    assert get(app, f"/ui/r/{pid}/ics", chat=2)[0] == 404
+    assert post(app, f"/ui/r/{pid}/ics", {"pausa": "1"}, chat=2)[0] == 404
+    assert app.store.get(pid)["stato"] == "attivo" and not list(app.bot.coda.queue)

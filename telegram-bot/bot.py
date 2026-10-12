@@ -516,6 +516,11 @@ CALENDARIO_VECCHIO = ("🗓 Nel calendario del telefono c'è ancora la data vecc
                       "pausa e scarica il file nuovo con /calendario.")
 
 
+def riepilogo_visita(att):
+    """Data, sede e indirizzo della visita, come li vede l'utente nei messaggi sul calendario."""
+    return f"📅 {fmt(att.quando)}\n📍 {titolo(att.luogo.sede)}, {indirizzo(att.luogo)}"
+
+
 def prestazione(cosa, massimo=45):
     """Nome della prestazione leggibile: sigle (RM, TC, ECG) maiuscole, taglio a fine parola."""
     parole = cosa.split(" - ")[0].split()
@@ -1941,7 +1946,7 @@ class Bot:
         att = attuale_di(p)
         if not att or da_prenotare(p):
             return "🗓 Non c'è ancora una prenotazione da mettere nel calendario."
-        quando = f"📅 {fmt(att.quando)}\n📍 {titolo(att.luogo.sede)}, {indirizzo(att.luogo)}"
+        quando = riepilogo_visita(att)
         if p.get("non_trovata"):
             return ("🗓 Il portale non trova più questa prenotazione: non la metto nel calendario. /riprendi per "
                     f"riprovare a leggerla.\n\nL'ultima che ho visto:\n{quando}")
@@ -1957,13 +1962,16 @@ class Bot:
     def manda_calendario(self, p):
         """Il file .ics della prenotazione, da aprire sul telefono. Solo con i controlli in pausa: finche' il bot
         cerca puo' spostare la visita, e l'evento nel calendario resterebbe con la data vecchia."""
-        p = self.store.get(p["id"]) or p  # la pausa riletta: la Mini App puo' aver appena ripreso i controlli
+        fresca = self.store.get(p["id"])  # la pausa riletta: la Mini App puo' aver appena ripreso i controlli
+        if fresca is None:  # la ricetta e' stata cancellata nel frattempo: niente file per una chat che non la segue piu'
+            return
+        p = fresca
         motivo = self.niente_calendario(p)
         if motivo:
             self.dire(p, motivo)
             return
         att = attuale_di(p)
-        quando = f"📅 {fmt(att.quando)}\n📍 {titolo(att.luogo.sede)}, {indirizzo(att.luogo)}"
+        quando = riepilogo_visita(att)
         if p["stato"] != "pausa":
             self.dire(p, "🗓 Il file per il calendario lo scarichi solo con i controlli in pausa: finché cerco date "
                          "migliori posso spostare la visita, e nel calendario resterebbe la data vecchia.\n\n"
@@ -2605,6 +2613,8 @@ class Bot:
                     self.prenota_vista(p, *altro)
                 elif azione == "disdici":
                     self.disdici(p, *altro)
+                elif azione == "ics":  # il file per il calendario, in chat: la pausa l'ha gia' messa la Mini App
+                    self.esegui("calendario", p)
             except Exception as e:
                 log.error("coda: errore imprevisto %s\n%s", type(e).__name__, "".join(traceback.format_tb(e.__traceback__)))
                 self.alert_admin(f"Errore imprevisto in un'azione dalla Mini App: {type(e).__name__}")

@@ -77,6 +77,10 @@ piccolo, senza Chromium.
      con la data vecchia. Con i controlli attivi lo spiega e offre "⏸ Metti in pausa e scarica" (che non
      mette in pausa se c'è un esito da verificare). Non lo manda per una ricetta da prenotare, con una
      prenotazione ancora da verificare, che il portale non trova più o già passata.
+   - **Anche dalla Mini App.** Sulla scheda c'è "🗓 Aggiungi al calendario del telefono" (se il file si può
+     mandare): apre un foglio che spiega e, con i controlli attivi, offre "Metti in pausa e mandami il file".
+     Il file arriva comunque in chat, perché la WebView di Telegram non scarica file. Se il calendario ha la
+     data vecchia, il pulsante lo dice.
    - L'UID dell'evento è della ricetta e della data: lo stesso file riaperto non fa doppioni, una visita
      spostata è un evento nuovo. Non si punta sull'aggiornamento dello stesso UID perché Google Calendar
      ignora un UID già importato, anche se cancellato. Se la visita si sposta dopo il download, il
