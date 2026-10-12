@@ -11,8 +11,10 @@ piccolo, senza Chromium.
 
 ## Cosa fa
 
-1. **Registrazione in chat.** Informativa e consenso, poi codice fiscale e numero ricetta (NRE). Il bot
-   verifica subito la prenotazione sul portale e mostra prestazione, data, ora e luogo. Se la ricetta non
+1. **Registrazione in chat.** Informativa e consenso, poi codice fiscale e numero ricetta (NRE), scritti
+   a mano oppure letti dal **promemoria PDF** della ricetta mandato in chat (solo PDF con testo, non
+   scansioni, al massimo 3 MB: il bot lo legge in memoria, non lo conserva e toglie il messaggio dalla
+   chat). Il bot verifica subito la prenotazione sul portale e mostra prestazione, data, ora e luogo. Se la ricetta non
    è ancora prenotata la segue lo stesso (vedi "Ricetta mai prenotata" qui sotto). Poi chiede
    **dove cercare** (vedi "Dove cercare" qui sotto): stessa sede, un comune (quello della prenotazione o
    un altro, per esempio Novara), Torino e prima cintura, la provincia, oppure qualsiasi sede proposta

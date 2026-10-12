@@ -38,6 +38,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 import cup_http
+import ricetta_pdf
 import store as storemod
 from store import REGISTRAZIONE, Store
 
@@ -1730,7 +1731,7 @@ class Bot:
         return ""
 
     # --- registrazione di una pratica ---------------------------------------------------
-    def chiedi_cf(self, p):
+    def chiedi_cf(self, p, domanda=True):
         p.pop("nre", None)  # la coppia CF+NRE si riforma solo a ricerca riuscita
         p.pop("attende_comune", None)
         p.pop("viste", None)  # le date e le sedi trovate erano della ricetta vecchia
@@ -1743,8 +1744,9 @@ class Bot:
         p.pop("libera", None)
         p.update(stato="cf", creato=time.time(), auto=None, notificati={}, ignorati=[], tentati_auto=[])
         self.store.save(p)
-        self.send(p["chat_id"], "Mandami il codice fiscale della persona a cui e' intestata la ricetta "
-                                "(16 caratteri, come sul promemoria).")
+        if domanda:
+            self.send(p["chat_id"], "Mandami il codice fiscale della persona a cui e' intestata la ricetta "
+                                    "(16 caratteri, come sul promemoria). Oppure mandami il promemoria in PDF.")
 
     def ricevi_cf(self, p, testo):
         cf = "".join(testo.split()).upper()
@@ -2246,7 +2248,77 @@ class Bot:
         self.send(chat, "Per quale ricetta?", righe)
 
     # --- messaggi e pulsanti ------------------------------------------------------------
+    def scarica_file(self, file_id):
+        """I byte di un file mandato alla chat (b"" se Telegram non lo da')."""
+        try:
+            percorso = self.tg("getFile", attesa_tg=20, file_id=file_id).get("result", {}).get("file_path")
+            if not percorso:
+                return b""
+            r = requests.get(f"https://api.telegram.org/file/bot{self.token}/{percorso}", timeout=30)
+            return r.content if r.ok else b""
+        except requests.RequestException as e:
+            log.warning("download file fallito: %s", self.redact(e))
+            return b""
+
+    def ricevi_documento(self, msg):
+        """Il promemoria PDF della ricetta mandato in chat: ne ricava codice fiscale e NRE e prosegue la
+        registrazione. Il messaggio col PDF si cancella dalla chat (ha dati personali) e il file non si conserva."""
+        chat, doc = msg["chat"]["id"], msg["document"]
+        pratiche = self.store.della_chat(chat)
+        if not pratiche:
+            self.send(chat, "Scrivi /start per iniziare: poi potrai mandarmi il promemoria in PDF.")
+            return
+        reg = next((p for p in pratiche if p["stato"] in REGISTRAZIONE), None)
+        if reg and reg["stato"] not in ("cf", "nre"):
+            self.send(chat, "Completa prima la registrazione della ricetta (o /cancella per annullarla).")
+            self.riprendi_registrazione(reg)
+            return
+        if not reg and self.piena(len(pratiche)):
+            self.send(chat, f"Puoi seguire al massimo {self.max_pratiche} ricette. /cancella per toglierne una.")
+            return
+        if doc.get("mime_type") != "application/pdf" and not doc.get("file_name", "").lower().endswith(".pdf"):
+            self.send(chat, "Questo file non è un PDF. Mandami il promemoria della ricetta in PDF, oppure scrivi "
+                            "codice fiscale e numero ricetta.")
+            return
+        if doc.get("file_size", 0) > ricetta_pdf.MAX_BYTE:
+            self.send(chat, "Il PDF è troppo grande (al massimo 3 MB).")
+            return
+        dati = self.scarica_file(doc["file_id"])
+        self.tg("deleteMessage", chat_id=chat, message_id=msg["message_id"])
+        try:
+            letto = ricetta_pdf.leggi(dati)
+        except ricetta_pdf.PdfNonLeggibile as ex:
+            letto, errore = None, str(ex)
+        except Exception:
+            log.error("lettura PDF fallita")
+            letto, errore = None, "Non riesco a leggere questo PDF."
+        if not dati and letto is None:
+            errore = "Non sono riuscito a scaricare il PDF: riprova tra poco."
+        if letto is None or not letto["cf"]:
+            self.send(chat, (errore if letto is None else "Nel PDF non trovo il codice fiscale.") +
+                      " Scrivimi i dati a mano.")
+            if not reg:
+                self.send(chat, "Nuova ricetta da seguire: tua o di un familiare che ti ha autorizzato.")
+                self.chiedi_cf(self.store.new(chat))
+            return
+        p = reg
+        if not p:
+            p = self.store.new(chat)
+            self.chiedi_cf(p, domanda=False)
+        if letto["nre"]:
+            p.update(cf=letto["cf"], stato="nre")
+            self.store.save(p)
+            self.send(chat, "Ho letto codice fiscale e numero ricetta dal PDF (ho tolto il messaggio dalla chat).")
+            self.ricevi_nre(p, letto["nre"])
+        else:
+            self.send(chat, "Dal PDF ho letto il codice fiscale ma non il numero ricetta (ho tolto il messaggio "
+                            "dalla chat).")
+            self.ricevi_cf(p, letto["cf"])
+
     def on_message(self, msg):
+        if msg.get("chat", {}).get("type") == "private" and "document" in msg and "text" not in msg:
+            self.ricevi_documento(msg)
+            return
         if msg.get("chat", {}).get("type") != "private" or "text" not in msg:
             return
         chat = msg["chat"]["id"]

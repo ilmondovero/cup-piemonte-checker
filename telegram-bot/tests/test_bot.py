@@ -2778,3 +2778,68 @@ def test_tg_manda_il_file_in_multipart(tmp_path, monkeypatch):
     assert url.endswith("/sendDocument") and "json" not in k and k["files"]["document"][0] == "v.ics"
     assert k["data"] == {"chat_id": 5, "caption": "ciao", "reply_markup": '{"inline_keyboard": []}'}
     assert k2["json"] == {"chat_id": 5, "text": "ciao"} and "files" not in k2
+
+
+def doc_msg(chat, nome="ricetta.pdf", tipo="application/pdf", mid=20, dimensione=1000):
+    return {"chat": {"id": chat, "type": "private"}, "from": {"id": chat}, "message_id": mid,
+            "document": {"file_id": "F1", "file_name": nome, "mime_type": tipo, "file_size": dimensione}}
+
+
+def con_pdf(b, monkeypatch, letto=None, errore=None):
+    """Il bot scarica 'un PDF' e il lettore ne ricava `letto` (o solleva `errore`)."""
+    monkeypatch.setattr(b, "scarica_file", lambda file_id: b"%PDF-finto")
+
+    def leggi(dati):
+        if errore:
+            raise botmod.ricetta_pdf.PdfNonLeggibile(errore)
+        return letto
+    monkeypatch.setattr(botmod.ricetta_pdf, "leggi", leggi)
+
+
+def test_pdf_in_chat_compila_codice_fiscale_e_nre(b, monkeypatch):
+    con_pdf(b, monkeypatch, {"cf": CF, "nre": NRE, "problemi": []})
+    b.on_message(msg(1, "/start"))
+    b.on_callback(cq(1, "consenso:1"))
+    b.on_message(doc_msg(1))
+    p = pratica(b)
+    assert p["cf"] == CF and p["nre"] == NRE and p["stato"] != "cf"
+    assert ("deleteMessage", {"chat_id": 1, "message_id": 20}) in b.out  # il PDF non resta in chat
+    assert any(botmod.fmt(ATT.quando) in t for t in inviati(b))  # ha cercato e trovato la prenotazione
+
+
+def test_pdf_in_chat_senza_nre_chiede_solo_quello(b, monkeypatch):
+    con_pdf(b, monkeypatch, {"cf": CF, "nre": "", "problemi": ["numero ricetta (NRE)"]})
+    b.on_message(msg(1, "/start"))
+    b.on_callback(cq(1, "consenso:1"))
+    b.on_message(doc_msg(1))
+    assert pratica(b)["stato"] == "nre" and pratica(b)["cf"] == CF
+    assert "numero della ricetta" in inviati(b)[-1]
+
+
+def test_pdf_in_chat_di_chi_non_e_registrato_o_non_e_un_pdf(b, monkeypatch):
+    con_pdf(b, monkeypatch, {"cf": CF, "nre": NRE, "problemi": []})
+    b.on_message(doc_msg(1))
+    assert "/start" in inviati(b)[-1] and not b.store.della_chat(1)
+    registra(b)
+    b.out.clear()
+    b.on_message(doc_msg(1, nome="foto.png", tipo="image/png"))
+    assert "non è un PDF" in inviati(b)[-1] and len(b.store.della_chat(1)) == 1
+
+
+def test_pdf_in_chat_illeggibile_si_ricade_sui_dati_a_mano(b, monkeypatch):
+    con_pdf(b, monkeypatch, errore="Il PDF non contiene testo (forse è una scansione).")
+    b.on_message(msg(1, "/start"))
+    b.on_callback(cq(1, "consenso:1"))
+    b.out.clear()
+    b.on_message(doc_msg(1))
+    assert any("scansione" in t and "a mano" in t for t in inviati(b))
+    assert ("deleteMessage", {"chat_id": 1, "message_id": 20}) in b.out
+    assert pratica(b)["stato"] == "cf"
+
+
+def test_pdf_in_chat_per_una_ricetta_in_piu(b, monkeypatch):
+    registra(b)
+    con_pdf(b, monkeypatch, {"cf": CF2, "nre": NRE2, "problemi": []})
+    b.on_message(doc_msg(1))
+    assert len(b.store.della_chat(1)) == 2
+    assert pratica(b, n=1)["cf"] == CF2
