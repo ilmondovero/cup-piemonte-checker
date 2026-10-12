@@ -90,6 +90,12 @@ piccolo, senza Chromium.
      nuovo. Dopo una disdetta il messaggio ricorda di togliere l'evento; con `/modifica` il download si
      dimentica.
 
+7. **Sedi escluse (`/escluse`, "🚫 Sedi escluse" nella Mini App).** Per ogni ricetta si possono togliere
+   le sedi in cui non si vuole andare: valgono con qualunque zona, il bot non le propone e non ci prenota
+   da solo. Si escludono con "🚫 Non voglio…" sotto ogni data proposta in chat, o dal foglio della Mini
+   App, scegliendo tra le sedi viste nei controlli; si rimettono con "↩️ Rimetti". La sede è la coppia
+   nome + comune (ci sono sedi omonime). Le date già trovate in una sede esclusa risultano "fuori zona".
+
 Comandi: `/stato`, `/date`, `/calendario`, `/controlla`, `/aggiungi`, `/dati`, `/modifica`, `/sede`, `/auto`, `/pausa`, `/riprendi`, `/cancella`,
 `/privacy`. Chi gestisce il bot ha anche `/admin`.
 

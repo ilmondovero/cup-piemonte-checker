@@ -75,8 +75,8 @@ CSP = (f"default-src 'self'; script-src 'self' {TELEGRAM_JS}; style-src 'self' '
        "img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'; "
        "frame-ancestors https://web.telegram.org https://*.telegram.org")
 ATTIVE = ("attivo", "pausa")
-AZIONI_POST = ("dove", "auto", "calendario", "pausa", "riprendi", "controlla", "offerta", "vista", "nome", "cancella", "modifica", "disdici", "ics")
-FOGLI_GET = ("dove", "auto", "calendario", "date", "storico", "altro", "ics")  # "ics": il file per il calendario del telefono ("calendario" sono i giorni si'/no)
+AZIONI_POST = ("dove", "auto", "calendario", "pausa", "riprendi", "controlla", "offerta", "vista", "nome", "cancella", "modifica", "disdici", "ics", "escluse")
+FOGLI_GET = ("dove", "auto", "calendario", "date", "storico", "altro", "ics", "escluse")  # "ics": il file per il calendario del telefono ("calendario" sono i giorni si'/no)
 AZIONI_SENSIBILI = ("offerta", "vista", "cancella", "modifica", "disdici")  # vogliono una firma recente
 NOTE_BREVI = 280  # caratteri: oltre, le note della scheda si aprono con un tocco
 MAX_NO_CAL = 400  # date segnate no al massimo nel calendario
@@ -478,6 +478,34 @@ class App:
             raise Richiesta(409, "Questa ricetta è stata registrata da un'altra chat: non posso riattivarla.")
         return f"{self.bot.nome(p)}: controlli riattivati."
 
+    def azione_escluse(self, chat, p, dati):
+        fai, coppie = dati.get("fai"), coppie_sedi("[" + dati.get("sede", "") + "]")
+        if fai not in ("aggiungi", "togli") or not coppie or len(coppie) != 1:
+            raise Richiesta(400, "Scelta non valida.")
+        voce = coppie[0]
+        k = cup_http.chiave_sede(voce["sede"], voce["comune"])
+        if fai == "aggiungi":
+            if k in {cup_http.chiave_sede(x["sede"], x["comune"]) for x in p.get("escluse") or []}:
+                return ("foglio", self.foglio_escluse(p))  # doppio tocco: gia' fatto
+            if k not in {cup_http.chiave_sede(x["sede"], x["comune"]) for x in self.sedi_escludibili(p)}:
+                raise Richiesta(400, "Non trovo questa sede tra quelle viste nei controlli.")
+            if botmod.zona_svuotata(p, voce):
+                raise Richiesta(409, "È proprio dove cerchi: se la escludo non trovo più date. Se non ci vuoi "
+                                     "andare, cambia prima dove cercare.")
+
+        def imposta(f):
+            gia = f.get("escluse") or []
+            if fai == "aggiungi":
+                if len(gia) >= cup_http.ESCLUSE_MAX:
+                    raise Richiesta(400, f"Al massimo {cup_http.ESCLUSE_MAX} sedi escluse: rimettine qualcuna.")
+                f["escluse"] = cup_http.coppie_sedi_norm(gia + [voce], cup_http.ESCLUSE_MAX)
+            else:
+                f["escluse"] = [x for x in gia if cup_http.chiave_sede(x["sede"], x["comune"]) != k]
+            if not f["escluse"]:
+                f.pop("escluse")
+        self._modifica(chat, p, imposta)
+        return ("foglio", self.foglio_escluse(self.store.get(p["id"])))
+
     def azione_ics(self, chat, p, dati):
         # le stesse regole del bot (niente_calendario), qui subito: l'app non deve dire "te lo mando" a un file
         # che il bot poi rifiuta (il bot le riapplica comunque quando esegue la coda)
@@ -763,6 +791,7 @@ class App:
   {self.offerta(p)}
   {self.riga_date(p)}
   {self.riga_ics(p)}
+  {self.riga_escluse(p)}
   <div class="regole">
     <button type="button" class="regola" hx-get="/ui/r/{pid}/dove" hx-target="#foglio" aria-label="Cambia dove cerco">
       <span class="nome">🔎 Dove cerco</span><span class="valore">{e(botmod.descr_zona(zona, att))}{estesa}</span></button>
@@ -783,6 +812,17 @@ class App:
     <button type="button" hx-get="/ui/r/{pid}/altro" hx-target="#foglio">✏️ Modifica</button>
   </nav>
 </article>"""
+
+    def riga_escluse(self, p):
+        """Sedi che l'utente non vuole (valgono con qualunque zona): la riga c'e' se ce n'e' o se ce ne sono da
+        scegliere, cioe' dopo il primo controllo."""
+        n = len(p.get("escluse") or [])
+        att = botmod.attuale_di(p)
+        if not (n or p.get("luoghi") or (att and att.luogo.sede and not botmod.da_prenotare(p))):
+            return ""
+        testo = f"🚫 Sedi escluse ({n})" if n else "🚫 Escludi una sede"
+        return (f'<button type="button" class="riga-date" hx-get="/ui/r/{p["id"]}/escluse" hx-target="#foglio">'
+                f'{e(testo)} ›</button>')
 
     def riga_ics(self, p):
         """Il pulsante per il calendario del telefono; non c'e' se il bot non puo' mandare il file (da prenotare,
@@ -1093,6 +1133,43 @@ class App:
   <p class="nota">{"Riepilogo: cerco " + e(botmod.descr_zona(botmod.zona_di(p), botmod.attuale_di(p))) + ". " if self._guidata(p) else ""}Calendario: {e(botmod.descr_calendario(p))}.</p>
   <button class="primario">{self._avanti(p, True)}</button>
 </form>"""
+
+    def sedi_escludibili(self, p):
+        """Le sedi viste nei controlli (e quella della prenotazione) non ancora escluse: [{"sede", "comune"}]."""
+        att = botmod.attuale_di(p)
+        viste = [{"sede": l["sede"], "comune": l.get("comune", "")} for l in p.get("luoghi", [])]
+        if att and att.luogo.sede and not botmod.da_prenotare(p):
+            viste.append({"sede": att.luogo.sede, "comune": cup_http.comune(att.luogo)})
+        gia = {cup_http.chiave_sede(x["sede"], x["comune"]) for x in p.get("escluse") or []}
+        da_scegliere = {}
+        for x in viste:
+            k = cup_http.chiave_sede(x["sede"], x["comune"])
+            if k not in gia and cup_http._norm(x["sede"]):
+                da_scegliere.setdefault(k, x)
+        return sorted(da_scegliere.values(), key=lambda x: (x["comune"], x["sede"]))
+
+    def foglio_escluse(self, p):
+        pid, gia = p["id"], p.get("escluse") or []
+        righe = "".join(
+            f'<li><strong>{e(botmod.titolo(x["sede"]))}</strong><small>{e(botmod.titolo(x["comune"]))}</small>'
+            f'<form hx-post="/ui/r/{pid}/escluse" hx-target="#foglio"><input type="hidden" name="fai" value="togli">'
+            f'<input type="hidden" name="sede" value="{e(json_sedi([x["sede"], x["comune"]]))}">'
+            f'<button>↩️ Rimetti</button></form></li>' for x in gia)
+        opzioni = "".join(
+            f'<option value="{e(json_sedi([x["sede"], x["comune"]]))}">{e(botmod.titolo(x["sede"]))}'
+            f'{" · " + e(botmod.titolo(x["comune"])) if x["comune"] else ""}</option>' for x in self.sedi_escludibili(p))
+        aggiungi = (f'<form hx-post="/ui/r/{pid}/escluse" hx-target="#foglio" class="scelte">'
+                    f'<input type="hidden" name="fai" value="aggiungi"><label class="campo">Sede da escludere'
+                    f'<select name="sede">{opzioni}</select></label><button class="primario">🚫 Escludi questa sede</button>'
+                    f'</form>' if opzioni else '<p class="nota">Non ci sono altre sedi viste nei controlli: dopo i '
+                    'prossimi controlli compaiono qui. Dai messaggi con le date, in chat, puoi escluderle anche '
+                    'con 🚫 Non voglio…</p>')
+        return f"""
+<h2>🚫 Sedi escluse · {e(self.bot.nome(p))}</h2>
+<p class="nota">Non ti propongo né prenoto da solo date in queste sedi, qualunque sia il posto in cui cerchi.
+  Se ne rimetti una, le sue date tornano dal prossimo controllo.</p>
+<ul class="elenco">{righe or '<li>Nessuna sede esclusa.</li>'}</ul>
+{aggiungi}"""
 
     def foglio_ics(self, p):
         """Il file .ics lo manda il bot in chat (la WebView di Telegram non scarica file), solo con i controlli

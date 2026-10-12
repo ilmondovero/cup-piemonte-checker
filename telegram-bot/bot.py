@@ -19,6 +19,7 @@ Configurazione da variabili d'ambiente (vedi .env.example):
     WEBAPP_URL           indirizzo HTTPS pubblico della Mini App (facoltativa; senza, niente Mini App)
     WEBAPP_PORTA         porta locale su cui ascolta la Mini App, dietro il reverse proxy (default 8095)
 """
+import hashlib
 import hmac
 import json
 import logging
@@ -143,6 +144,7 @@ AIUTO = (
     "/stato – riporta il pannello in fondo alla chat\n"
     "/date – le date trovate dall'ultimo controllo, con il pulsante Prenota\n"
     "/calendario – la visita come evento per il calendario del telefono (con i controlli in pausa)\n"
+    "/escluse – le sedi che non vuoi, da rimettere (le escludi dai messaggi con le date)\n"
     "/aggiungi – segui un'altra ricetta (per esempio di un familiare)\n"
     "/dati – i dati che conservo\n"
     "/modifica – cambia codice fiscale e ricetta\n"
@@ -151,7 +153,8 @@ AIUTO = (
     "Funzionano anche /sede, /auto, /pausa, /riprendi e /controlla.")
 
 COMANDI = [("stato", "Il pannello delle tue ricette"), ("date", "Le date trovate, da prenotare"),
-           ("calendario", "La visita nel calendario del telefono"), ("aggiungi", "Segui un'altra ricetta"),
+           ("calendario", "La visita nel calendario del telefono"), ("escluse", "Le sedi che hai escluso"),
+           ("aggiungi", "Segui un'altra ricetta"),
            ("help", "Come funziona"), ("privacy", "Come tratto i tuoi dati")]
 PICCOLE = {"di", "da", "del", "della", "dei", "degli", "delle", "in", "per"}  # gli articoli no: nei nomi contano
 
@@ -641,7 +644,30 @@ def zona_di(p):
     z = p.get("zona")
     if z is None:
         z = p.get("stessa_sede", True)
-    return cup_http.zona_norm(z)
+    z = cup_http.zona_norm(z)
+    z.pop("escludi", None)  # le escluse stanno in p["escluse"]: una copia dentro la zona non si puo' piu' togliere
+    if p.get("escluse"):  # le sedi che l'utente non vuole valgono con qualunque zona
+        z = cup_http.zona_norm({**z, "escludi": p["escluse"]})
+    return z
+
+
+def zona_svuotata(p, voce):
+    """Escludere `voce` lascerebbe la zona di p senza nessuna sede possibile? (il bot non troverebbe piu' nulla)"""
+    z = zona_di({**p, "escluse": None})
+    tipo, v = z["tipo"], z["valore"]
+    if tipo == "sede":
+        att = attuale_di(p)
+        rif = v or (att.luogo.sede if att else "")
+        return bool(rif) and cup_http._norm(rif) == cup_http._norm(voce["sede"])
+    if tipo == "sedi":
+        fuori = {cup_http.chiave_sede(x["sede"], x["comune"]) for x in (p.get("escluse") or []) + [voce]}
+        return bool(v) and all(cup_http.chiave_sede(x["sede"], x["comune"]) in fuori for x in v)
+    return False
+
+
+def tag_sede(x):
+    """Un'etichetta corta per una sede esclusa: sta nel callback_data dei pulsanti (64 byte al massimo)."""
+    return hashlib.sha1("|".join(cup_http.chiave_sede(x["sede"], x.get("comune", ""))).encode()).hexdigest()[:8]
 
 
 def nomi_comuni(elenco, massimo=4):
@@ -670,6 +696,15 @@ def nomi_sedi(elenco):
 
 
 def descr_zona(zona, att):
+    z = cup_http.zona_norm(zona)
+    testo = descr_zona_base(z, att)
+    if z.get("escludi"):
+        nomi = nomi_sedi(z["escludi"])
+        testo += ", senza " + (", ".join(nomi) if len(nomi) <= 2 else f"{', '.join(nomi[:2])} e altre {len(nomi) - 2}")
+    return testo
+
+
+def descr_zona_base(zona, att):
     z = cup_http.zona_norm(zona)
     tipo, v = z["tipo"], z["valore"]
     if tipo == "sedi":
@@ -1274,12 +1309,19 @@ class Bot:
         """Messaggio con un pulsante per ogni data migliore (max 3). La sessione del controllo resta
         in memoria: e' lei che tiene bloccata la data proposta."""
         token = secrets.token_hex(4)
-        slots = [x for x in res["migliori"] if x.luogo.sede and x.key() not in ignorati][:3]
+        zona = zona_di(self.store.get(p["id"]) or p)  # l'utente puo' aver escluso una sede durante il controllo
+        slots = [x for x in res["migliori"] if x.luogo.sede and x.key() not in ignorati
+                 and cup_http.ammesso(x, res.get("attuale"), zona)][:3]
         if not slots:
             return False
         pid = p["id"]
         buttons = [[{"text": f"✅ Prenota {fmt(x.quando)}", "callback_data": f"p:{pid}:{token}:{i}"}]
                    for i, x in enumerate(slots)]
+        prime = {}  # una sede proposta due volte ha un solo pulsante per escluderla
+        for x in slots:
+            prime.setdefault(tag_sede({"sede": x.luogo.sede, "comune": cup_http.comune(x.luogo)}), x)
+        buttons += [[{"text": f"🚫 Non voglio {titolo(x.luogo.sede)}"[:60], "callback_data": f"ex:{pid}:{tag}"}]
+                    for tag, x in prime.items()]
         if self.webapp_url:  # l'app si apre gia' su questa ricetta, col pulsante Prenota di Telegram in basso
             u = urllib.parse.urlsplit(self.webapp_url)
             url = u._replace(query=f"{u.query}&r={pid}" if u.query else f"r={pid}").geturl()
@@ -1902,7 +1944,7 @@ class Bot:
 
     # --- azioni su una pratica (dopo la scelta, se ce n'e' piu' d'una) ------------------
     AZIONI = ("sede", "auto", "pausa", "riprendi", "modifica", "cancella", "controlla", "date", "menu", "calendario",
-              "calpausa")
+              "calpausa", "escluse")
 
     def esegui(self, azione, p):
         if azione == "sede":
@@ -1922,6 +1964,8 @@ class Bot:
             self.manda_calendario(p)
         elif azione == "date":
             self.mostra_date(p)
+        elif azione == "escluse":
+            self.mostra_escluse(p)
         elif azione == "menu":  # dal pannello compatto: la scheda di una ricetta con i suoi pulsanti
             self.dire(p, self.scheda(p), self.pulsanti_ricetta(p))
         elif azione == "riprendi":
@@ -1941,6 +1985,76 @@ class Bot:
             self.dire(p, f"Cancello i dati di questa ricetta ({self.nome(p)})? I suoi controlli si fermano.",
                       [[{"text": "Si', cancella", "callback_data": f"del:{p['id']}:{versione(p)}:1"},
                         {"text": "No", "callback_data": f"del:{p['id']}:{versione(p)}:0"}]])
+
+    # --- sedi escluse ---------------------------------------------------------------------
+    def _cambia_escluse(self, p, cambia):
+        """Cambia l'elenco delle escluse dentro la transazione (la Mini App scrive lo stesso campo) e riallinea p."""
+        def fn(fresca):
+            nuove = cambia(list(fresca.get("escluse") or []))
+            if nuove:
+                fresca["escluse"] = nuove
+            else:
+                fresca.pop("escluse", None)
+        self.store.modifica(p["id"], fn)
+        fresca = self.store.get(p["id"]) or {}
+        if fresca.get("escluse"):
+            p["escluse"] = fresca["escluse"]
+        else:
+            p.pop("escluse", None)
+
+    def sede_da_tag(self, p, tag):
+        """La sede {"sede", "comune"} con questa etichetta tra quelle che il bot ha visto per p (anche senza offerta)."""
+        viste = [{"sede": l["sede"], "comune": l.get("comune", "")} for l in p.get("luoghi", [])]
+        att = attuale_di(p)
+        if att and att.luogo.sede:
+            viste.append({"sede": att.luogo.sede, "comune": cup_http.comune(att.luogo)})
+        o = self.offerte.get(p["id"])
+        viste += [{"sede": x.luogo.sede, "comune": cup_http.comune(x.luogo)} for x in (o["slots"] if o else [])]
+        return next((x for x in viste if tag_sede(x) == tag), None)
+
+    def escludi_sede(self, p, sede, comune=""):
+        """Da ora le date in questa sede non si propongono ne' si prenotano da soli, qualunque sia la zona.
+        True se l'ha esclusa."""
+        voce = {"sede": sede, "comune": comune}
+        gia = p.get("escluse") or []
+        if any(tag_sede(x) == tag_sede(voce) for x in gia):
+            self.dire(p, f"{titolo(sede)} è già tra le sedi escluse. /escluse per vederle.")
+            return False
+        if len(gia) >= cup_http.ESCLUSE_MAX:
+            self.dire(p, f"Puoi escludere al massimo {cup_http.ESCLUSE_MAX} sedi: /escluse per rimetterne qualcuna.")
+            return False
+        if zona_svuotata(p, voce):
+            self.dire(p, f"{titolo(sede)} è proprio dove cerco: se la escludo non trovo più date. Se non ci vuoi "
+                         "andare, cambia prima dove cerco (🔎 Dove cerco).")
+            return False
+        self._cambia_escluse(p, lambda elenco: cup_http.coppie_sedi_norm(
+            [x for x in elenco if tag_sede(x) != tag_sede(voce)] + [voce], cup_http.ESCLUSE_MAX))
+        self.dire(p, f"🚫 Non ti propongo più date in {titolo(sede)}" + (f" ({titolo(comune)})" if comune else "") +
+                  f" per {self.nome(p)}. Per rimetterla o vedere le altre: /escluse.",
+                  [[{"text": "↩️ Rimettila", "callback_data": f"es:{p['id']}:{tag_sede(voce)}"}]])
+        self.aggiorna_pannello(p["chat_id"])
+        return True
+
+    def rimetti_sede(self, p, tag):
+        voce = next((x for x in p.get("escluse") or [] if tag_sede(x) == tag), None)
+        if not voce:
+            self.dire(p, "Questa sede non è più tra quelle escluse.")
+            return
+        self._cambia_escluse(p, lambda elenco: [x for x in elenco if tag_sede(x) != tag])
+        self.dire(p, f"↩️ Ho rimesso {titolo(voce['sede'])}: dal prossimo controllo ti propongo anche le sue date.")
+        self.aggiorna_pannello(p["chat_id"])
+
+    def mostra_escluse(self, p):
+        gia = p.get("escluse") or []
+        if not gia:
+            self.dire(p, f"Nessuna sede esclusa per {self.nome(p)}. Quando ti propongo una data, tocca "
+                         "🚫 Non voglio… per non vedere più quella sede.")
+            return
+        nomi = nomi_sedi(gia)
+        elenco = "\n".join(f"• {n}" for n in nomi)
+        self.dire(p, f"🚫 Sedi escluse · {self.nome(p)}\nNon ti propongo né prenoto da solo date in:\n{elenco}",
+                  [[{"text": f"↩️ Rimetti {n}"[:60], "callback_data": f"es:{p['id']}:{tag_sede(x)}"}]
+                   for n, x in zip(nomi, gia)][:MAX_PULSANTI])
 
     def niente_calendario(self, p):
         """Perche' la prenotazione non va nel calendario ("" se ci va, pausa a parte): non c'e', il portale non
@@ -2532,6 +2646,20 @@ class Bot:
             self.aggiorna_pannello(chat)
         elif kind in ("p", "x"):
             self.on_offerta(p, parts, togli_pulsanti)
+        elif kind == "ex" and len(parts) == 3:  # "Non voglio questa sede" su un'offerta
+            voce = self.sede_da_tag(p, parts[2])
+            if not voce:
+                self.dire(p, "Non riconosco più questa sede: usa /escluse o la Mini App.")
+                return
+            if self.escludi_sede(p, voce["sede"], voce["comune"]):
+                o = self.offerte.get(p["id"])  # se l'offerta aveva solo questa sede non c'e' piu' nulla da prenotare
+                if o and all(tag_sede({"sede": x.luogo.sede, "comune": cup_http.comune(x.luogo)}) == parts[2]
+                             for x in o["slots"]):
+                    self.scarta(p["id"])
+                    togli_pulsanti()
+        elif kind == "es" and len(parts) == 3:
+            togli_pulsanti()
+            self.rimetti_sede(p, parts[2])
         elif kind == "vd" and len(parts) == 4:  # una data dell'elenco /date: prima la conferma
             self.chiedi_conferma_data(p, parts[2], parts[3])
         elif kind == "vs" and len(parts) == 4:
@@ -2620,6 +2748,7 @@ class Bot:
             else:
                 def cambia(f):
                     z, vecchia = zona_di(f), attuale_di(f)
+                    z.pop("escludi", None)  # le escluse restano in f["escluse"], non dentro la zona
                     if z["tipo"] in ("sede", "comune", "provincia") and not z["valore"] and vecchia:
                         # la zona era "quella della prenotazione": con la ricetta nuova vale quella di prima
                         z["valore"] = {"sede": vecchia.luogo.sede, "comune": cup_http.comune(vecchia.luogo),

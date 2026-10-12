@@ -274,6 +274,10 @@ def inviati(b):
 
 def pulsanti(b):
     """callback_data dei pulsanti dell'ultimo messaggio (non pannello) che ne aveva."""
+    return [x for x in tutti_pulsanti(b) if not x.startswith("ex:")]  # "Non voglio questa sede": test a parte
+
+
+def tutti_pulsanti(b):
     ultimo = [d for m, d in b.out if m == "sendMessage" and d.get("reply_markup") and not d["text"].startswith("📋")][-1]
     return [bt["callback_data"] for riga in ultimo["reply_markup"]["inline_keyboard"] for bt in riga]
 

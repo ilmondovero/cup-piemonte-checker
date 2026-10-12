@@ -726,6 +726,7 @@ class CupSession:
 ZONE = ("sede", "sedi", "comune", "comuni", "provincia", "tutte")  # dove l'utente accetta una data nuova
 COMUNI_MAX = 30  # comuni al massimo in una zona "comuni"
 SEDI_MAX = 20  # sedi al massimo in una zona "sedi"
+ESCLUSE_MAX = 30  # sedi escluse al massimo per ricetta (valgono con qualunque zona)
 # Ricetta mai prenotata con piu' prestazioni: dal vivo (2026-09-25) con una data di "Altre disponibilita'"
 # il bot non e' arrivato al Riepilogo, mentre accettare la proposta del portale ("Avanti") ha prenotato tutto.
 SOLO_PROPOSTA = ("Con piu' prestazioni prenoto solo la data proposta dal portale per tutte insieme: "
@@ -819,25 +820,36 @@ def chiave_sede(sede, nome_comune):
     return _norm(sede), _chiave_comune(nome_comune)
 
 
+def coppie_sedi_norm(v, massimo):
+    """Una lista di {"sede", "comune"} ripulita: senza voci illeggibili e senza doppioni, al massimo `massimo`."""
+    coppie = {}
+    for x in (v if isinstance(v, list) else []):
+        if (isinstance(x, dict) and isinstance(x.get("sede"), str) and isinstance(x.get("comune", ""), str)
+                and _norm(x["sede"])):
+            voce = {"sede": x["sede"].strip(), "comune": x.get("comune", "").strip()}
+            coppie.setdefault(chiave_sede(voce["sede"], voce["comune"]), voce)
+    return list(coppie.values())[:massimo]
+
+
 def zona_norm(zona):
     """{"tipo": sede|sedi|comune|comuni|provincia|tutte, "valore": ...}: per "comuni" una lista di nomi, per
     "sedi" una lista di {"sede", "comune"} (senza doppioni, al massimo SEDI_MAX), per gli altri una stringa.
+    Con "escludi" (lista di {"sede", "comune"}, al massimo ESCLUSE_MAX) le sedi che non si vogliono, qualunque
+    sia la zona; la chiave c'e' solo se l'elenco non e' vuoto.
     Accetta anche i formati precedenti (True/False = stessa sede si'/no, oppure solo il tipo come stringa)."""
     if isinstance(zona, dict) and zona.get("tipo") in ZONE:
         v = zona.get("valore") or ""
         if zona["tipo"] == "comuni":
             v = [x for x in v if isinstance(x, str) and x] if isinstance(v, list) else []
         elif zona["tipo"] == "sedi":
-            coppie = {}
-            for x in (v if isinstance(v, list) else []):
-                if (isinstance(x, dict) and isinstance(x.get("sede"), str) and isinstance(x.get("comune", ""), str)
-                        and _norm(x["sede"])):
-                    voce = {"sede": x["sede"].strip(), "comune": x.get("comune", "").strip()}
-                    coppie.setdefault(chiave_sede(voce["sede"], voce["comune"]), voce)
-            v = list(coppie.values())[:SEDI_MAX]
+            v = coppie_sedi_norm(v, SEDI_MAX)
         elif not isinstance(v, str):
             v = ""
-        return {"tipo": zona["tipo"], "valore": v}
+        risultato = {"tipo": zona["tipo"], "valore": v}
+        escluse = coppie_sedi_norm(zona.get("escludi"), ESCLUSE_MAX)
+        if escluse:
+            risultato["escludi"] = escluse
+        return risultato
     if isinstance(zona, dict):
         zona = zona.get("tipo")
     zona = {True: "sede", False: "tutte"}.get(zona, zona) if isinstance(zona, (bool, str, type(None))) else None
@@ -857,6 +869,9 @@ def ammesso(slot, attuale, zona="sede"):
     tipo, rif = z["tipo"], z["valore"]
     if not slot.luogo.sede:
         return False  # luogo non leggibile: mai proporlo
+    if z.get("escludi") and chiave_sede(slot.luogo.sede, comune(slot.luogo)) in {
+            chiave_sede(x["sede"], x["comune"]) for x in z["escludi"]}:
+        return False  # una sede che l'utente non vuole, qualunque sia la zona
     if tipo == "sede":
         rif = rif or (attuale.luogo.sede if attuale else "")
         return bool(rif) and _norm(slot.luogo.sede) == _norm(rif)
