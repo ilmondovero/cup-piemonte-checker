@@ -18,11 +18,10 @@ pub struct Luogo {
 
 impl fmt::Display for Luogo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let parti: Vec<&str> = [&self.sede, &self.ambulatorio, &self.indirizzo]
-            .into_iter()
-            .map(String::as_str)
-            .filter(|x| !x.is_empty())
-            .collect();
+        // senza via il portale scrive "- TORINO (TO)": a chi legge il trattino iniziale non dice nulla
+        let indirizzo = self.indirizzo.trim_start_matches(['-', ' ']);
+        let parti: Vec<&str> =
+            [self.sede.as_str(), self.ambulatorio.as_str(), indirizzo].into_iter().filter(|x| !x.is_empty()).collect();
         f.write_str(&parti.join(", "))
     }
 }
@@ -35,6 +34,28 @@ pub struct Prenotazione {
     pub cosa: String,
 }
 
+/// Una data offerta da "Sposta appuntamento".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Slot {
+    pub quando: NaiveDateTime,
+    pub luogo: Luogo,
+    /// Il pulsante "Seleziona" della data; la proposta non ne ha, e' gia' selezionata.
+    pub seleziona: Option<String>,
+    /// La data che il portale propone per prima ("Appuntamenti Proposti").
+    pub proposta: bool,
+}
+
+impl Slot {
+    /// Data e luogo: la stessa data letta in due controlli ha la stessa chiave.
+    pub fn chiave(&self) -> String {
+        format!(
+            "{}|{}",
+            self.quando.format("%Y%m%d%H%M"),
+            norm(&format!("{}{}", self.luogo.sede, self.luogo.ambulatorio))
+        )
+    }
+}
+
 /// L'elenco "Recupera Prenotazioni" di una ricetta.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Elenco {
@@ -44,7 +65,14 @@ pub struct Elenco {
     pub prenotate: Vec<Prenotazione>,
     /// Righe PRENOTATO, anche quelle di cui non si legge la data.
     pub n_prenotate: usize,
+    /// La riga dell'elenco della prenotazione attuale: i suoi pulsanti ("Sposta", "Disdici") hanno il suo numero.
+    pub riga: usize,
 }
+
+/// Il modulo di Recupera Prenotazioni.
+pub const L: &str = "_listaprenotazioni_WAR_cupprenotazione_:prescrizioniForm";
+/// Il modulo della pagina degli appuntamenti (la stessa per "Sposta" e per una prenotazione nuova).
+pub const A: &str = "_ricettaelettronica_WAR_cupprenotazione_:appuntamentiForm";
 
 const MESI: [&str; 12] = [
     "gennaio",
@@ -81,6 +109,16 @@ re!(COSA, r#"(?s)captionAppointment-desc">(.*?)</div>"#);
 re!(PRENOTABILE, r"\s*\(PRENOTABILE\)\s*");
 re!(STATO, r"Stato:\s*(\S+)");
 re!(NESSUNA, r"Non esistono[^<]*|Nessun record[^<]*");
+re!(PROPOSTA, r"'_ricettaelettronica_WAR_cupprenotazione_:appuntamentiForm:[^']*:0:app_selector'");
+re!(SELETTORE, r"'(_ricettaelettronica_WAR_cupprenotazione_:appuntamentiForm:[^']*:0:(?:app|indisp)_selector)'");
+re!(
+    PULSANTE,
+    r#"<div class="[^"]*\bbtn\b[^"]*" id="(_ricettaelettronica_WAR_cupprenotazione_:appuntamentiForm:[^"]+)"[^>]*>"#
+);
+re!(ID_A, r#"id="(_ricettaelettronica_WAR_cupprenotazione_:appuntamentiForm:[^"]+)"[^>]*>"#);
+re!(SELEZIONA, r"\A>\s*Seleziona\s*<");
+re!(AREA, r#"id="(_ricettaelettronica_WAR_cupprenotazione_:appuntamentiForm:nextArea)""#);
+re!(PULISCI, r"'(_ricettaelettronica_WAR_cupprenotazione_:appuntamentiForm:notifyCleaner)'");
 re!(CF, r"^[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]$");
 re!(NRE, r"^[0-9A-Z]{15}$");
 
@@ -127,11 +165,8 @@ pub fn luogo(frammento: &str) -> Luogo {
     Luogo {
         sede: righe.first().cloned().unwrap_or_default(),
         ambulatorio: righe.get(1).cloned().unwrap_or_default(),
-        // senza via il portale scrive "- TORINO (TO)": il trattino iniziale non dice nulla
-        indirizzo: INDIRIZZO
-            .captures(seg)
-            .map(|c| testo(&c[1]).trim_start_matches(['-', ' ']).to_string())
-            .unwrap_or_default(),
+        // com'e' scritto, anche "- TORINO (TO)" senza via: il comune si legge dai pezzi tra i trattini
+        indirizzo: INDIRIZZO.captures(seg).map(|c| testo(&c[1])).unwrap_or_default(),
     }
 }
 
@@ -179,7 +214,106 @@ pub fn elenco(xml: &str) -> Result<Elenco, Errore> {
         attuale: Prenotazione { quando, luogo: luogo(righe[prima]), cosa: cosa(righe[prima]) },
         prenotate,
         n_prenotate: pren.len(),
+        riga: prima,
     })
+}
+
+/// Il pulsante della riga `riga` dell'elenco: "spostaButton", "disdiciButton".
+pub fn pulsante_riga(xml: &str, riga: usize, nome: &str) -> Option<String> {
+    let re = Regex::new(&format!(r#"id="({}:[^"]*:{riga}:{nome})""#, regex::escape(L))).ok()?;
+    re.captures(xml).map(|c| c[1].to_string())
+}
+
+/// Il pezzo di `testo` dopo `inizio` (al piu' `n` caratteri) in cui puo' stare un'etichetta "dentro lo stesso
+/// div" del pulsante: fino al primo "</div>", del quale resta solo il "<" (un'etichetta puo' finire li').
+fn dentro_il_div(testo: &str, inizio: usize, n: usize) -> &str {
+    let seg = primi(&testo[inizio..], n);
+    seg.find("</div>").map_or(seg, |i| &seg[..i + 1])
+}
+
+/// La data proposta dal portale in cima alla pagina degli appuntamenti, se c'e'.
+pub fn proposta(pagina: &str) -> Option<Slot> {
+    let prop = pagina.find("Appuntamenti Proposti").map_or("", |i| &pagina[i..]);
+    let quando = data(&testo(primi(prop, 6000)))?;
+    PROPOSTA.is_match(pagina).then(|| Slot { quando, luogo: luogo(prop), seleziona: None, proposta: true })
+}
+
+/// (pulsante "Altre disponibilita'", selettore del pannello della proposta): il click su "Altre disponibilita'"
+/// risale al pannello della proposta, e il browser invia prima il suo selettore (app_selector, o
+/// indisp_selector se non c'e' nessuna proposta).
+pub fn altre_disponibilita(pagina: &str) -> Option<(String, String)> {
+    let altre = PULSANTE.captures_iter(pagina).find_map(|c| {
+        let fine = c.get(0).unwrap().end();
+        dentro_il_div(pagina, fine, 800 + 18).contains("Altre disponibilit").then(|| c[1].to_string())
+    })?;
+    Some((altre, SELETTORE.captures(pagina)?[1].to_string()))
+}
+
+/// Il pannello "Appuntamenti Disponibili" di una risposta, se c'e'.
+pub fn disponibili(xml: &str) -> Option<&str> {
+    if !testo(xml).contains("Appuntamenti Disponibili") {
+        return None;
+    }
+    xml.find("Appuntamenti Disponibili").map(|i| &xml[i..])
+}
+
+/// Il pulsante "Estendi area di ricerca" del pannello.
+pub fn estendi_area(disponibili: &str) -> Option<String> {
+    AREA.captures(disponibili).map(|c| c[1].to_string())
+}
+
+/// Il comando che chiude l'avviso "area estesa".
+pub fn chiudi_avviso(xml: &str) -> Option<String> {
+    PULISCI.captures(xml).map(|c| c[1].to_string())
+}
+
+/// Le date del pannello "Appuntamenti Disponibili", con il loro pulsante "Seleziona". La proposta ripetuta in
+/// cima all'elenco (stessa data, senza "Seleziona") non si conta due volte.
+pub fn date_disponibili(disponibili: &str, proposta: Option<&Slot>) -> Vec<Slot> {
+    let inizi: Vec<usize> =
+        disponibili.match_indices(r#"<div class="captionAppointment-what""#).map(|(i, _)| i).collect();
+    let fini = inizi.iter().skip(1).copied().chain([disponibili.len()]);
+    let mut slots = vec![];
+    for (a, b) in inizi.iter().copied().zip(fini) {
+        let blocco = &disponibili[a..b];
+        let Some(quando) = data(&testo(blocco)) else { continue };
+        let seleziona = ID_A.captures_iter(blocco).find_map(|c| {
+            let dopo = &blocco[c.get(0).unwrap().end()..];
+            // come il bot: il ">" dell'etichetta entro 600 caratteri, senza passare un "</div>"
+            let fino = dentro_il_div(dopo, 0, 600).len().min(dopo.find("</div>").unwrap_or(usize::MAX));
+            dopo.char_indices()
+                .take_while(|(i, _)| *i <= fino)
+                .any(|(i, ch)| ch == '>' && SELEZIONA.is_match(&dopo[i..]))
+                .then(|| c[1].to_string())
+        });
+        if proposta.is_some_and(|p| p.quando == quando) && seleziona.is_none() {
+            continue;
+        }
+        slots.push(Slot { quando, luogo: luogo(blocco), seleziona, proposta: false });
+    }
+    slots
+}
+
+/// (da tenere, da disdire) se la stessa prestazione e' prenotata in due appuntamenti diversi (data o luogo): si
+/// tiene il piu' vicino. None se non c'e' un doppione. Le righe gia' passate non contano: non si disdice mai
+/// l'appuntamento futuro per tenerne uno trascorso.
+pub fn doppione(prenotate: &[Prenotazione], adesso: NaiveDateTime) -> Option<(Prenotazione, Prenotazione)> {
+    let mut gruppi: Vec<(String, Vec<&Prenotazione>)> = vec![];
+    for x in prenotate.iter().filter(|x| !norm(&x.cosa).is_empty() && x.quando >= adesso) {
+        match gruppi.iter_mut().find(|(k, _)| *k == norm(&x.cosa)) {
+            Some((_, v)) => v.push(x),
+            None => gruppi.push((norm(&x.cosa), vec![x])),
+        }
+    }
+    let chiave = |x: &Prenotazione| (x.quando, norm(&format!("{}{}", x.luogo.sede, x.luogo.ambulatorio)));
+    gruppi
+        .into_iter()
+        .filter_map(|(_, mut righe)| {
+            righe.sort_by_key(|x| x.quando);
+            let diverse = righe.iter().map(|x| chiave(x)).collect::<std::collections::HashSet<_>>().len() > 1;
+            diverse.then(|| (righe[0].clone(), righe[righe.len() - 1].clone()))
+        })
+        .max_by_key(|(_, lontana)| lontana.quando)
 }
 
 /// Codice fiscale e numero ricetta come li vuole il portale (maiuscoli, senza spazi), o perche' non vanno.
@@ -238,7 +372,8 @@ mod test {
         assert_eq!(cosa(&html), "VISITA DI ESEMPIO - 11.11");
         assert_eq!(luogo(&html).to_string(), "OSPEDALE A, AMB 1, Via Roma, 1 - TORINO (TO)");
         let senza_via = html.replace("<span>Via Roma, 1</span>", "");
-        assert_eq!(luogo(&senza_via).indirizzo, "TORINO (TO)");
+        assert_eq!(luogo(&senza_via).indirizzo, "- TORINO (TO)"); // grezzo: serve a leggere il comune
+        assert_eq!(luogo(&senza_via).to_string(), "OSPEDALE A, AMB 1, TORINO (TO)");
     }
 
     #[test]
@@ -298,6 +433,96 @@ mod test {
         );
         assert!(matches!(credenziali("RSSMRA80A01L219", "010A00000000001"), Err(Errore::DatiNonValidi(_))));
         assert!(matches!(credenziali("RSSMRA80A01L219X", "010A0000000000"), Err(Errore::DatiNonValidi(_))));
+    }
+
+    #[test]
+    fn proposta_altre_disponibilita_e_date() {
+        use crate::prova::{appuntamenti, appuntamento, disponibili as pannello};
+        let pagina = appuntamenti(
+            "x",
+            &appuntamento("Martedì 14 Settembre 2027", "POLIAMBULATORIO NORD", "ECO 1", "TORINO (TO)", None),
+        );
+        let p = proposta(&pagina).unwrap();
+        assert!(p.proposta && p.seleziona.is_none() && p.luogo.sede == "POLIAMBULATORIO NORD");
+        assert_eq!(p.quando, ora(2027, 9, 14, 9, 0));
+        assert_eq!(altre_disponibilita(&pagina), Some((format!("{A}:altre"), format!("{A}:x:0:app_selector"))));
+        // senza il selettore della proposta non c'e' proposta (la data in pagina e' di altro)
+        assert_eq!(proposta(&pagina.replace("app_selector", "altro")), None);
+        let xml = pannello(
+            &[
+                appuntamento("Martedì 14 Settembre 2027", "POLIAMBULATORIO NORD", "ECO 1", "TORINO (TO)", None),
+                appuntamento(
+                    "Lunedì 6 Settembre 2027",
+                    "POLIAMBULATORIO SUD",
+                    "ECO 2",
+                    "TORINO (TO)",
+                    Some(&format!("{A}:s1")),
+                ),
+                appuntamento("Venerdì 3 Settembre 2027", "OSPEDALE", "ECO 3", "ASTI (AT)", Some(&format!("{A}:s2"))),
+            ],
+            true,
+            true,
+        );
+        let disp = disponibili(&xml).unwrap();
+        let date = date_disponibili(disp, Some(&p));
+        // la proposta ripetuta in cima all'elenco non si conta due volte
+        assert_eq!(date.iter().map(|s| s.luogo.sede.as_str()).collect::<Vec<_>>(), ["POLIAMBULATORIO SUD", "OSPEDALE"]);
+        assert_eq!(date[0].seleziona.as_deref(), Some(format!("{A}:s1").as_str()));
+        assert!(!date[0].proposta && date[1].luogo.indirizzo == "Via Roma, 1 - ASTI (AT)");
+        assert_eq!(estendi_area(disp), Some(format!("{A}:nextArea")));
+        assert_eq!(chiudi_avviso(&xml), Some(format!("{A}:notifyCleaner")));
+        assert_eq!(disponibili("<partial-response>niente</partial-response>"), None);
+        // un "Seleziona" fuori dal div del pulsante non e' il suo
+        let fuori = appuntamento("Lunedì 6 Settembre 2027", "SEDE", "AMB", "TORINO (TO)", None)
+            + &format!(r#"<div id="{A}:s9"></div><span>Seleziona</span>"#);
+        assert_eq!(date_disponibili(&fuori, None)[0].seleziona, None);
+    }
+
+    #[test]
+    fn pulsanti_della_riga_dell_elenco() {
+        let xml = crate::prova::elenco_prenotato("Lunedì 1 Marzo 2027", "OSPEDALE A", "TORINO (TO)");
+        assert_eq!(elenco(&xml).unwrap().riga, 0);
+        assert_eq!(pulsante_riga(&xml, 0, "spostaButton"), Some(format!("{L}:righe:0:spostaButton")));
+        assert_eq!(pulsante_riga(&xml, 1, "spostaButton"), None);
+    }
+
+    #[test]
+    fn seleziona_entro_600_caratteri_come_il_bot() {
+        let blocco = |prima: usize, spazi: usize| {
+            appuntamento_base()
+                + &format!(
+                    r#"<div id="{A}:s1"><span>{}>{}Seleziona</span></div>"#,
+                    "x".repeat(prima),
+                    " ".repeat(spazi)
+                )
+        };
+        let trovato = |b: String| date_disponibili(&b, None)[0].seleziona.is_some();
+        // il ">" prima dell'etichetta e' a 6 + `prima` caratteri dal pulsante
+        assert!(trovato(blocco(0, 0)) && trovato(blocco(594, 0)));
+        assert!(!trovato(blocco(595, 0))); // oltre i 600 caratteri
+        assert!(trovato(blocco(580, 100))); // tanti spazi attorno all'etichetta: va bene, come nel bot
+    }
+
+    fn appuntamento_base() -> String {
+        crate::prova::appuntamento("Lunedì 6 Settembre 2027", "SEDE", "AMB", "TORINO (TO)", None)
+    }
+
+    #[test]
+    fn doppione_della_stessa_prestazione() {
+        let p = |g: u32, sede: &str, cosa: &str| Prenotazione {
+            quando: ora(2027, 1, g, 9, 0),
+            luogo: Luogo { sede: sede.into(), ambulatorio: "AMB".into(), indirizzo: String::new() },
+            cosa: cosa.into(),
+        };
+        let adesso = ora(2026, 12, 1, 0, 0);
+        let (tenere, disdire) =
+            doppione(&[p(20, "B", "VISITA - 1"), p(7, "A", "VISITA - 1"), p(9, "C", "ESAME - 2")], adesso).unwrap();
+        assert_eq!((tenere.quando.day(), disdire.quando.day()), (7, 20));
+        // prestazioni diverse, o la stessa ripetuta nello stesso appuntamento: nessun doppione
+        assert_eq!(doppione(&[p(7, "A", "VISITA - 1"), p(9, "A", "ESAME - 2")], adesso), None);
+        assert_eq!(doppione(&[p(7, "A", "VISITA - 1"), p(7, "A", "VISITA - 1")], adesso), None);
+        // una riga gia' passata non conta
+        assert_eq!(doppione(&[p(7, "A", "VISITA - 1"), p(20, "B", "VISITA - 1")], ora(2027, 1, 8, 0, 0)), None);
     }
 
     #[test]

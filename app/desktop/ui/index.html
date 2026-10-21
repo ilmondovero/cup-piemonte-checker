@@ -9,7 +9,7 @@
 <body>
   <main>
     <h1>CUP Piemonte</h1>
-    <p class="nota">Leggo la prenotazione attuale dal portale. Solo lettura: non sposto nulla e non blocco date.</p>
+    <p class="nota">Leggo la prenotazione e cerco date prima. Non sposto nulla.</p>
     <form id="ricetta" autocomplete="off">
       <label>Codice fiscale
         <input name="cf" maxlength="16" required spellcheck="false" autocapitalize="characters">
@@ -17,7 +17,43 @@
       <label>Numero ricetta (NRE)
         <input name="nre" maxlength="20" required spellcheck="false" autocapitalize="characters" placeholder="010A0 0000000001">
       </label>
-      <button type="submit">Leggi la prenotazione</button>
+      <fieldset>
+        <legend>Dove cerco</legend>
+        <select name="dove">
+          <option value="comune" selected>Nel comune della prenotazione</option>
+          <option value="cintura">Torino e prima cintura</option>
+          <option value="altro">In un altro comune…</option>
+          <option value="provincia">Nella provincia della prenotazione</option>
+          <option value="sede">Solo nella sede della prenotazione</option>
+          <option value="tutte">Dove propone il CUP</option>
+        </select>
+        <input name="valore" placeholder="Comune, o più comuni separati da virgole" hidden spellcheck="false">
+      </fieldset>
+      <fieldset>
+        <legend>Giorni da evitare</legend>
+        <div class="giorni">
+          <label><input type="checkbox" name="evita" value="0">lun</label>
+          <label><input type="checkbox" name="evita" value="1">mar</label>
+          <label><input type="checkbox" name="evita" value="2">mer</label>
+          <label><input type="checkbox" name="evita" value="3">gio</label>
+          <label><input type="checkbox" name="evita" value="4">ven</label>
+          <label><input type="checkbox" name="evita" value="5">sab</label>
+          <label><input type="checkbox" name="evita" value="6">dom</label>
+        </div>
+      </fieldset>
+      <div class="pulsanti">
+        <button type="submit" value="leggi" class="secondario">Leggi la prenotazione</button>
+        <button type="submit" value="cerca">Cerca date prima</button>
+      </div>
+      <div id="conferma" class="avviso" hidden>
+        <p>Per vedere le date apro "Sposta appuntamento" sul portale: la data che il portale propone resta
+          bloccata per circa 40 minuti, anche per te dal sito del CUP. Non sposto nulla.</p>
+        <p>Ogni ricerca ne blocca un'altra: per la stessa ricetta ne faccio al massimo una ogni 20 minuti.</p>
+        <div class="pulsanti">
+          <button type="button" id="annulla" class="secondario">Annulla</button>
+          <button type="button" id="procedi">Cerca</button>
+        </div>
+      </div>
     </form>
     <section id="esito" aria-live="polite"></section>
   </main>

@@ -17,6 +17,9 @@ pub enum Errore {
     /// 502/503/504, connessione rifiutata o caduta: si riprova piu' tardi.
     #[error("portale sovraccarico ({0})")]
     Sovraccarico(String),
+    /// La stessa prestazione e' prenotata in due appuntamenti: prima se ne disdice uno, poi si cerca.
+    #[error("{0}")]
+    Doppione(String),
     /// Pagina diversa da quella attesa: sito cambiato, manutenzione, risposta inattesa.
     #[error("{0}")]
     Inattesa(String),
