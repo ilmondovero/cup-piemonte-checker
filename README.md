@@ -68,6 +68,12 @@ docker compose up -d
 Configurazione, limiti (ogni controllo tiene bloccata una data per circa 40 minuti), privacy e
 aggiornamenti: [`telegram-bot/README.md`](telegram-bot/README.md).
 
+## App desktop (cartella [`app/`](app/), in sviluppo)
+
+Un progetto a sé, senza Telegram e senza server: un'app leggera per Windows, macOS e Linux che parla
+con il portale dal computer dell'utente. Per ora legge soltanto la prenotazione attuale di una
+ricetta. Stato e istruzioni: [`app/README.md`](app/README.md).
+
 ---
 
 # Script originale (con browser)

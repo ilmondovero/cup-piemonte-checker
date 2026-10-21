@@ -1,0 +1,19 @@
+[package]
+name = "cup-desktop"
+description = "App desktop CUP Piemonte (Windows, macOS, Linux)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "cup-piemonte"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+cup-core = { path = "../core" }
+serde = { version = "1", features = ["derive"] }
+tauri = { version = "2", features = [] }
+

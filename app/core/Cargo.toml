@@ -1,0 +1,14 @@
+[package]
+name = "cup-core"
+description = "Motore dell'app: parla con il portale CUP Piemonte via HTTP, come il browser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+html-escape = "0.2"
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "cookies", "rustls-tls"] }
+serde_urlencoded = "0.7"
+thiserror = "2"

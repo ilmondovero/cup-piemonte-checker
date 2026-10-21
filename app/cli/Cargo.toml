@@ -1,0 +1,13 @@
+[package]
+name = "cup-cli"
+description = "Prova del motore da terminale: legge la prenotazione attuale di una ricetta"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "cup"
+path = "src/main.rs"
+
+[dependencies]
+cup-core = { path = "../core" }

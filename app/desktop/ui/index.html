@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CUP Piemonte</title>
+  <link rel="stylesheet" href="stile.css">
+</head>
+<body>
+  <main>
+    <h1>CUP Piemonte</h1>
+    <p class="nota">Leggo la prenotazione attuale dal portale. Solo lettura: non sposto nulla e non blocco date.</p>
+    <form id="ricetta" autocomplete="off">
+      <label>Codice fiscale
+        <input name="cf" maxlength="16" required spellcheck="false" autocapitalize="characters">
+      </label>
+      <label>Numero ricetta (NRE)
+        <input name="nre" maxlength="20" required spellcheck="false" autocapitalize="characters" placeholder="010A0 0000000001">
+      </label>
+      <button type="submit">Leggi la prenotazione</button>
+    </form>
+    <section id="esito" aria-live="polite"></section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

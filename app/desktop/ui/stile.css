@@ -1,0 +1,71 @@
+:root {
+  --sfondo: #f6f7f9;
+  --testo: #1d2330;
+  --tenue: #5b6475;
+  --scheda: #ffffff;
+  --bordo: #d9dde5;
+  --accento: #0b6bcb;
+  --errore: #b3261e;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --sfondo: #15181e;
+    --testo: #e6e9ef;
+    --tenue: #9aa3b2;
+    --scheda: #1f242c;
+    --bordo: #333a45;
+    --accento: #5aa9f5;
+    --errore: #f2b8b5;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--sfondo);
+  color: var(--testo);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Ubuntu, sans-serif;
+}
+
+main { max-width: 520px; margin: 0 auto; padding: 20px 16px; }
+h1 { font-size: 1.3rem; margin: 0 0 4px; }
+.nota, .attesa, .altra { color: var(--tenue); }
+
+form { display: grid; gap: 12px; margin: 16px 0; }
+label { display: grid; gap: 4px; font-weight: 600; font-size: 0.9rem; }
+
+input {
+  font: inherit;
+  padding: 9px 10px;
+  border: 1px solid var(--bordo);
+  border-radius: 8px;
+  background: var(--scheda);
+  color: var(--testo);
+  text-transform: uppercase;
+}
+
+button {
+  font: inherit;
+  font-weight: 600;
+  padding: 10px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accento);
+  color: #fff;
+  cursor: pointer;
+}
+
+button:disabled { opacity: 0.6; cursor: wait; }
+
+.scheda {
+  background: var(--scheda);
+  border: 1px solid var(--bordo);
+  border-radius: 10px;
+  padding: 4px 14px;
+}
+
+.quando { font-weight: 700; font-size: 1.05rem; }
+.errore { color: var(--errore); font-weight: 600; }
