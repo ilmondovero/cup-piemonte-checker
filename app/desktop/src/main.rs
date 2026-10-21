@@ -1,128 +1,434 @@
 // in release niente finestra del terminale su Windows
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::collections::HashMap;
-use std::sync::Mutex;
-use std::time::Instant;
+mod archivio;
+mod controlli;
+mod registro;
 
-use cup_core::analisi::{breve, credenziali};
-use cup_core::portale::INTERVALLO_MIN;
-use cup_core::zona::perche_no;
-use cup_core::{Calendario, Dove, Errore, Prenotazione, Sessione, Slot, Zona};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+use chrono::{Local, TimeZone};
+use cup_core::analisi::credenziali;
+use cup_core::{Dove, Errore, Sessione};
 use serde::Serialize;
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+use tauri_plugin_notification::NotificationExt;
 
-#[derive(Serialize)]
-struct Visita {
-    quando: String,
-    sede: String,
-    luogo: String,
-    cosa: String,
-}
+use archivio::{Archivio, Data, Esito, Protezione, Ricetta, Visita};
+use controlli::{adesso, Stato, INTERVALLO};
+use registro::Registro;
 
-impl From<&Prenotazione> for Visita {
-    fn from(p: &Prenotazione) -> Self {
-        Visita {
-            quando: breve(&p.quando),
-            sede: p.luogo.sede.clone(),
-            luogo: p.luogo.to_string(),
-            cosa: p.cosa.clone(),
-        }
+type Condiviso<'a> = State<'a, Arc<Stato>>;
+
+/// "14:05" oggi, "21/10 14:05" un altro giorno.
+fn ora(ts: i64) -> String {
+    let t = Local.timestamp_opt(ts, 0).single().unwrap_or_else(Local::now);
+    if t.date_naive() == Local::now().date_naive() {
+        t.format("%H:%M").to_string()
+    } else {
+        t.format("%d/%m %H:%M").to_string()
     }
 }
 
-#[derive(Serialize)]
-struct Lettura {
-    attuale: Visita,
-    prenotate: Vec<Visita>,
+/// "RSS…19X": nell'interfaccia codice fiscale e ricetta non si vedono mai per intero.
+fn mascherato(s: &str) -> String {
+    let c: Vec<char> = s.chars().collect();
+    if c.len() < 8 {
+        return "…".into();
+    }
+    format!("{}…{}", c[..3].iter().collect::<String>(), c[c.len() - 3..].iter().collect::<String>())
 }
 
-#[derive(Serialize)]
-struct Data {
-    quando: String,
-    luogo: String,
-    proposta: bool,
-    /// Perche' la data non va bene; assente se va bene.
-    motivo: Option<&'static str>,
-}
+const GIORNI: [&str; 7] = ["lun", "mar", "mer", "gio", "ven", "sab", "dom"];
 
 #[derive(Serialize)]
-struct Ricerca {
-    attuale: Visita,
-    zona: String,
-    date: Vec<Data>,
-    buone: usize,
+struct EsitoUi {
+    ora: String,
+    controllo: bool,
+    attuale: Option<Visita>,
+    date: usize,
+    buone: Vec<Data>,
     area_incompleta: bool,
+    errore: Option<String>,
 }
 
-/// Quando e' partita l'ultima ricerca di ogni ricetta (per numero ricetta), finche' l'app resta aperta.
-#[derive(Default)]
-struct Ricerche(Mutex<HashMap<String, Instant>>);
-
-/// Il motore usa un client HTTP bloccante: fuori dal thread dell'interfaccia.
-async fn in_disparte<T: Send + 'static>(f: impl FnOnce() -> Result<T, Errore> + Send + 'static) -> Result<T, String> {
-    tauri::async_runtime::spawn_blocking(f).await.map_err(|_| "errore interno".to_string())?.map_err(|e| e.to_string())
-}
-
-/// La prenotazione attuale della ricetta, letta dal portale (solo lettura: non blocca date).
-#[tauri::command]
-async fn attuale(cf: String, nre: String) -> Result<Lettura, String> {
-    in_disparte(move || {
-        let e = Sessione::nuova(&cf, &nre)?.elenco()?;
-        Ok(Lettura { attuale: (&e.attuale).into(), prenotate: e.prenotate.iter().map(Visita::from).collect() })
-    })
-    .await
-}
-
-/// Le date offerte da "Sposta appuntamento" e quelle che vanno bene. Blocca la data proposta per ~40 minuti.
-#[tauri::command]
-async fn cerca(
-    ricerche: tauri::State<'_, Ricerche>,
+#[derive(Serialize)]
+struct Scheda {
+    id: u64,
+    nome: String,
     cf: String,
     nre: String,
     dove: String,
     valore: String,
     evita: Vec<u32>,
-) -> Result<Ricerca, String> {
-    let zona = Zona::new(Dove::da_scelta(&dove, &valore).map_err(|e| e.to_string())?);
-    let (_, ricetta) = credenziali(&cf, &nre).map_err(|e| e.to_string())?;
-    {
-        // ogni "Sposta" blocca un'altra data per ~40 minuti: non piu' di una ricerca ogni 20 minuti per ricetta,
-        // anche se quella prima e' finita con un errore (puo' aver gia' aperto "Sposta")
-        let mut fatte = ricerche.0.lock().map_err(|_| "errore interno".to_string())?;
-        if let Some(prima) = fatte.get(&ricetta).filter(|t| t.elapsed() < INTERVALLO_MIN) {
-            let resta = (INTERVALLO_MIN - prima.elapsed()).as_secs().div_ceil(60);
-            return Err(format!(
-                "Hai già cercato le date di questa ricetta da poco: ogni ricerca blocca un'altra data per circa 40                  minuti. Riprova tra {resta} minut{}.",
-                if resta == 1 { "o" } else { "i" }
-            ));
-        }
-        fatte.insert(ricetta, Instant::now());
+    zona: String,
+    giorni: String,
+    attiva: bool,
+    in_corso: bool,
+    prossimo: Option<String>,
+    esito: Option<EsitoUi>,
+}
+
+fn scheda(r: &Ricetta, in_corso: Option<u64>) -> Scheda {
+    let zona = match &r.esito {
+        Some(e) if !e.zona.is_empty() => e.zona.clone(),
+        _ => Dove::da_scelta(&r.dove, &r.valore).map(|d| d.descrizione(None)).unwrap_or_default(),
+    };
+    let mut evita = r.evita.clone();
+    evita.sort();
+    let giorni = if evita.is_empty() {
+        "tutti i giorni".into()
+    } else {
+        format!(
+            "niente {}",
+            evita.iter().filter_map(|g| GIORNI.get(*g as usize)).copied().collect::<Vec<_>>().join(", ")
+        )
+    };
+    Scheda {
+        id: r.id,
+        nome: r.nome.clone(),
+        cf: mascherato(&r.cf),
+        nre: mascherato(&r.nre),
+        dove: r.dove.clone(),
+        valore: r.valore.clone(),
+        evita,
+        zona,
+        giorni,
+        attiva: r.attiva,
+        in_corso: in_corso == Some(r.id),
+        prossimo: controlli::prossimo(r, adesso()).map(ora),
+        esito: r.esito.as_ref().map(|e| EsitoUi {
+            ora: ora(e.ts),
+            controllo: e.controllo,
+            attuale: e.attuale.clone(),
+            date: e.date,
+            buone: e.buone.clone(),
+            area_incompleta: e.area_incompleta,
+            errore: e.errore.clone(),
+        }),
     }
-    in_disparte(move || {
-        let cal = Calendario { no_settimana: evita.into_iter().filter(|g| *g < 7).collect(), ..Default::default() };
-        let c = Sessione::nuova(&cf, &nre)?.controlla(&zona, &cal)?;
-        let att = &c.elenco.attuale;
-        let data = |s: &Slot| Data {
-            quando: breve(&s.quando),
-            luogo: s.luogo.to_string(),
-            proposta: s.proposta,
-            motivo: perche_no(s, Some(att), &zona, &cal),
-        };
-        Ok(Ricerca {
-            attuale: att.into(),
-            zona: zona.dove.descrizione(Some(att)),
-            date: c.slots.iter().map(data).collect(),
-            buone: c.migliori.len(),
-            area_incompleta: c.area_incompleta,
-        })
-    })
-    .await
+}
+
+/// Salva e dice all'interfaccia di ridisegnarsi.
+fn salva(app: &AppHandle, stato: &Stato, dati: &archivio::Dati) -> Result<(), String> {
+    let esito = stato.salva(dati);
+    let _ = app.emit("ricette", ());
+    esito
+}
+
+#[derive(Serialize)]
+struct Elenco {
+    ricette: Vec<Scheda>,
+    /// Un salvataggio non riuscito, da mostrare finche' non ne riesce uno.
+    avviso: Option<String>,
+}
+
+#[tauri::command]
+fn ricette(stato: Condiviso) -> Elenco {
+    let in_corso = stato.in_corso();
+    let ricette = stato.dati().ricette.iter().map(|r| scheda(r, in_corso)).collect();
+    Elenco { ricette, avviso: stato.avviso() }
+}
+
+fn nome_pulito(nome: &str) -> Result<String, String> {
+    let n = nome.split_whitespace().collect::<Vec<_>>().join(" ");
+    if n.is_empty() {
+        return Err("Dai un nome alla ricetta, per esempio Papà o Ecografia.".into());
+    }
+    Ok(n.chars().take(30).collect())
+}
+
+/// Una ricetta nuova: prima legge la prenotazione dal portale (solo lettura, non apre "Sposta"), poi la salva.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn aggiungi(
+    app: AppHandle,
+    stato: Condiviso<'_>,
+    nome: String,
+    cf: String,
+    nre: String,
+    dove: String,
+    valore: String,
+    evita: Vec<u32>,
+    attiva: bool,
+) -> Result<(), String> {
+    let nome = nome_pulito(&nome)?;
+    let zona = Dove::da_scelta(&dove, &valore).map_err(|e| e.to_string())?;
+    let (cf, nre) = credenziali(&cf, &nre).map_err(|e| e.to_string())?;
+    if stato.dati().ricette.iter().any(|r| r.nre == nre) {
+        return Err("Questa ricetta c'è già.".into());
+    }
+    let (c, n) = (cf.clone(), nre.clone());
+    let elenco = tauri::async_runtime::spawn_blocking(move || Sessione::nuova(&c, &n)?.elenco())
+        .await
+        .map_err(|_| "errore interno".to_string())?
+        .map_err(|e| match e {
+            Errore::NonTrovata(m) => format!(
+                "Il portale non trova prenotazioni per questa ricetta ({m}). Per ora l'app segue solo ricette già \
+                 prenotate."
+            ),
+            e => e.to_string(),
+        })?;
+    let a = &elenco.attuale;
+    let mut d = stato.dati();
+    if d.ricette.iter().any(|r| r.nre == nre) {
+        return Err("Questa ricetta c'è già.".into());
+    }
+    // riaggiunta subito dopo averla eliminata: i 20 minuti dall'ultimo controllo valgono ancora
+    let ultimo_tentativo = d.ultimo_eliminata(&nre, adesso(), INTERVALLO);
+    d.prossimo_id += 1;
+    let id = d.prossimo_id;
+    d.ricette.push(Ricetta {
+        id,
+        nome,
+        cf,
+        nre,
+        dove,
+        valore,
+        evita: evita.into_iter().filter(|g| *g < 7).collect(),
+        attiva,
+        ultimo_tentativo,
+        esito: Some(Esito {
+            ts: adesso(),
+            attuale: Some(Visita {
+                quando: cup_core::analisi::breve(&a.quando),
+                luogo: a.luogo.to_string(),
+                cosa: a.cosa.clone(),
+            }),
+            zona: zona.descrizione(Some(a)),
+            ..Default::default()
+        }),
+        notificate: vec![],
+        assenze: 0,
+    });
+    stato.registro.scrivi(&format!("ricetta {id}: aggiunta{}", if attiva { "" } else { " (in pausa)" }));
+    salva(&app, &stato, &d)
+}
+
+#[tauri::command]
+fn modifica(
+    app: AppHandle,
+    stato: Condiviso,
+    id: u64,
+    nome: String,
+    dove: String,
+    valore: String,
+    evita: Vec<u32>,
+) -> Result<(), String> {
+    let nome = nome_pulito(&nome)?;
+    Dove::da_scelta(&dove, &valore).map_err(|e| e.to_string())?;
+    let mut d = stato.dati();
+    let r = d.ricetta(id)?;
+    let evita: Vec<u32> = evita.into_iter().filter(|g| *g < 7).collect();
+    if (&r.dove, &r.valore, &r.evita) != (&dove, &valore, &evita) {
+        // la zona letta con la prenotazione non vale piu': le date buone si rivedono al prossimo controllo
+        if let Some(e) = r.esito.as_mut() {
+            e.zona.clear();
+            e.buone.clear();
+        }
+    }
+    (r.nome, r.dove, r.valore, r.evita) = (nome, dove, valore, evita);
+    stato.registro.scrivi(&format!("ricetta {id}: modificata"));
+    salva(&app, &stato, &d)
+}
+
+#[tauri::command]
+fn elimina(app: AppHandle, stato: Condiviso, id: u64) -> Result<(), String> {
+    let mut d = stato.dati();
+    d.elimina(id, adesso(), INTERVALLO);
+    stato.registro.scrivi(&format!("ricetta {id}: eliminata"));
+    salva(&app, &stato, &d)
+}
+
+#[tauri::command]
+fn attiva(app: AppHandle, stato: Condiviso, id: u64, si: bool) -> Result<(), String> {
+    let mut d = stato.dati();
+    let r = d.ricetta(id)?;
+    r.attiva = si;
+    r.assenze = 0;
+    stato.registro.scrivi(&format!("ricetta {id}: {}", if si { "controlli ripresi" } else { "controlli in pausa" }));
+    salva(&app, &stato, &d)
+}
+
+#[derive(Serialize)]
+struct Impostazioni {
+    avvio_automatico: bool,
+    protezione: Protezione,
+    messo_da_parte: Option<String>,
+    registro: String,
+}
+
+#[tauri::command]
+fn impostazioni(app: AppHandle, stato: Condiviso) -> Impostazioni {
+    Impostazioni {
+        avvio_automatico: app.autolaunch().is_enabled().unwrap_or(false),
+        protezione: stato.archivio.protezione,
+        messo_da_parte: stato.archivio.messo_da_parte.as_ref().map(|p| p.display().to_string()),
+        registro: stato.registro.percorso().display().to_string(),
+    }
+}
+
+/// Le ultime righe del registro, dalla piu' recente.
+#[tauri::command]
+fn registro(stato: Condiviso) -> Vec<String> {
+    let mut righe = stato.registro.ultime(40);
+    righe.reverse();
+    righe
+}
+
+#[tauri::command]
+fn imposta_avvio(app: AppHandle, stato: Condiviso, si: bool) -> Result<(), String> {
+    let a = app.autolaunch();
+    if si { a.enable() } else { a.disable() }.map_err(|e| format!("Non riesco a cambiare l'avvio automatico: {e}"))?;
+    stato.registro.scrivi(if si { "avvio automatico acceso" } else { "avvio automatico spento" });
+    Ok(())
+}
+
+fn mostra(app: &AppHandle) {
+    // se l'avvio non e' riuscito c'e' solo la finestra di errore: l'interfaccia non funzionerebbe
+    if app.try_state::<Arc<Stato>>().is_none() {
+        return;
+    }
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+}
+
+/// Mostra una notifica; nel registro va `per_registro`, mai titolo e testo (nome della ricetta, date della visita).
+fn avvisa(app: &AppHandle, titolo: &str, testo: &str, per_registro: &str) {
+    let esito = app.notification().builder().title(titolo).body(testo).show();
+    if let Some(stato) = app.try_state::<Arc<Stato>>() {
+        stato.registro.scrivi(&match esito {
+            Ok(()) => format!("notifica: {per_registro}"),
+            Err(e) => format!("notifica non mostrata ({e}): {per_registro}"),
+        });
+    }
+}
+
+/// Lo stato dell'app, o perche' non si puo' aprire (portachiavi che non risponde, archivio di un'altra versione...).
+fn prepara(app: &tauri::App, registro: Registro) -> Result<Arc<Stato>, (Registro, String)> {
+    let cartella = match app.path().app_data_dir() {
+        Ok(c) => c,
+        Err(e) => return Err((registro, format!("Non trovo la cartella dei dati dell'app: {e}"))),
+    };
+    let archivio = match Archivio::apri(&cartella) {
+        Ok(a) => a,
+        Err(e) => return Err((registro, e)),
+    };
+    if archivio.messo_da_parte.is_some() {
+        registro.scrivi("archivio illeggibile messo da parte, ricomincio da capo");
+    }
+    match archivio.leggi() {
+        Ok(dati) => Ok(Arc::new(Stato::new(archivio, registro, dati))),
+        Err(e) => Err((registro, e)),
+    }
 }
 
 fn main() {
+    // l'avviso "resto nella barra di sistema" una volta sola per avvio
+    let avvisato = AtomicBool::new(false);
     tauri::Builder::default()
-        .manage(Ricerche::default())
-        .invoke_handler(tauri::generate_handler![attuale, cerca])
+        // una sola copia dell'app: due thread di controlli bloccherebbero due date e si cancellerebbero i dati
+        .plugin(tauri_plugin_single_instance::init(|app, args, _| {
+            // la seconda copia partita con il computer non deve aprire la finestra
+            if !args.iter().any(|a| a == "--nascosta") {
+                mostra(app);
+            }
+        }))
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--nascosta"])))
+        .setup(|app| {
+            let registro = Registro::new(&app.path().app_log_dir()?);
+            registro.scrivi(&format!("avvio, versione {}", app.package_info().version));
+            let stato = match prepara(app, registro) {
+                Ok(s) => s,
+                Err((registro, e)) => {
+                    // senza console (in release non c'e') l'utente deve vederlo: una finestra, poi si esce
+                    registro.scrivi(&format!("avvio non riuscito: {e}"));
+                    let h = app.handle().clone();
+                    app.dialog()
+                        .message(e)
+                        .title("CUP Piemonte non riesce a partire")
+                        .kind(MessageDialogKind::Error)
+                        .show(move |_| h.exit(1));
+                    return Ok(());
+                }
+            };
+            app.manage(stato.clone());
+
+            let apri = MenuItem::with_id(app, "apri", "Apri", true, None::<&str>)?;
+            let esci = MenuItem::with_id(app, "esci", "Esci (ferma i controlli)", true, None::<&str>)?;
+            TrayIconBuilder::with_id("cup")
+                .icon(app.default_window_icon().cloned().ok_or("icona mancante")?)
+                .tooltip("CUP Piemonte")
+                .menu(&Menu::with_items(app, &[&apri, &esci])?)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, ev| match ev.id.as_ref() {
+                    "apri" => mostra(app),
+                    "esci" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, ev| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left, button_state: MouseButtonState::Up, ..
+                    } = ev
+                    {
+                        mostra(tray.app_handle());
+                    }
+                })
+                .build(app)?;
+
+            // la finestra nasce nascosta: si mostra, tranne quando l'app parte con il computer
+            if !std::env::args().any(|a| a == "--nascosta") {
+                mostra(app.handle());
+            }
+            let (h1, h2) = (app.handle().clone(), app.handle().clone());
+            controlli::avvia(
+                stato,
+                move |notifiche| {
+                    for n in notifiche {
+                        avvisa(&h1, &n.titolo, &n.testo, &format!("ricetta {}, {}", n.ricetta, n.tipo));
+                    }
+                },
+                move || {
+                    let _ = h2.emit("ricette", ());
+                },
+            );
+            Ok(())
+        })
+        .on_window_event(move |w, ev| {
+            if let WindowEvent::CloseRequested { api, .. } = ev {
+                // chiudere la finestra non ferma i controlli: si esce dal menu dell'icona
+                api.prevent_close();
+                let _ = w.hide();
+                if !avvisato.swap(true, Ordering::Relaxed) {
+                    avvisa(
+                        w.app_handle(),
+                        "CUP Piemonte continua a controllare",
+                        "L'app resta nella barra di sistema. Per chiuderla: icona, poi Esci.",
+                        "l'app resta nella barra di sistema",
+                    );
+                }
+            }
+        })
+        .invoke_handler(tauri::generate_handler![
+            ricette,
+            aggiungi,
+            modifica,
+            elimina,
+            attiva,
+            impostazioni,
+            imposta_avvio,
+            registro
+        ])
         .run(tauri::generate_context!())
         .expect("avvio dell'app non riuscito");
 }

@@ -8,15 +8,46 @@
 </head>
 <body>
   <main>
-    <h1>CUP Piemonte</h1>
-    <p class="nota">Leggo la prenotazione e cerco date prima. Non sposto nulla.</p>
-    <form id="ricetta" autocomplete="off">
-      <label>Codice fiscale
-        <input name="cf" maxlength="16" required spellcheck="false" autocapitalize="characters">
+    <header>
+      <h1>CUP Piemonte</h1>
+      <button type="button" id="apri-impostazioni" class="icona" aria-expanded="false" title="Impostazioni">⚙</button>
+    </header>
+
+    <section id="impostazioni" class="avviso" hidden>
+      <label class="riga"><input type="checkbox" id="avvio"> Avvia con il computer (nella barra di sistema)</label>
+      <p id="protezione" class="nota"></p>
+      <p id="messo-da-parte" class="errore" hidden></p>
+      <details id="dettagli-registro">
+        <summary>Registro dell'app</summary>
+        <p class="nota">Cosa ha fatto l'app e quando: controlli, durate, errori, notifiche. Resta su questo computer,
+          senza codice fiscale né ricetta. File: <span id="file-registro"></span></p>
+        <pre id="registro"></pre>
+      </details>
+    </section>
+
+    <p id="avviso" class="errore" role="alert" hidden></p>
+    <p id="messaggio" role="status" hidden></p>
+
+    <section id="ricette" aria-live="polite"></section>
+    <p id="vuoto" class="nota" hidden>Nessuna ricetta. Aggiungine una: l'app controlla le date ogni 20 minuti e ti avvisa
+      con una notifica quando ne esce una prima della tua prenotazione.</p>
+
+    <button type="button" id="nuova">+ Aggiungi una ricetta</button>
+
+    <form id="modulo" class="avviso" autocomplete="off" hidden>
+      <h2 id="titolo-modulo">Nuova ricetta</h2>
+      <label>Nome
+        <input name="nome" maxlength="30" required placeholder="Per esempio: Papà, Ecografia">
       </label>
-      <label>Numero ricetta (NRE)
-        <input name="nre" maxlength="20" required spellcheck="false" autocapitalize="characters" placeholder="010A0 0000000001">
-      </label>
+      <div id="credenziali">
+        <label>Codice fiscale
+          <input name="cf" maxlength="16" spellcheck="false" autocapitalize="characters" class="maiuscolo">
+        </label>
+        <label>Numero ricetta (NRE)
+          <input name="nre" maxlength="20" spellcheck="false" autocapitalize="characters" class="maiuscolo"
+                 placeholder="010A0 0000000001">
+        </label>
+      </div>
       <fieldset>
         <legend>Dove cerco</legend>
         <select name="dove">
@@ -41,21 +72,16 @@
           <label><input type="checkbox" name="evita" value="6">dom</label>
         </div>
       </fieldset>
+      <label class="riga" id="riga-attiva"><input type="checkbox" name="attiva" checked> Inizia subito a cercare</label>
+      <p class="nota">Ogni controllo apre "Sposta appuntamento" sul portale: la data che il portale propone resta
+        bloccata per circa 40 minuti, anche per te dal sito del CUP. Per questo l'app controlla ogni ricetta al
+        massimo ogni 20 minuti, e non sposta mai nulla. Se segui la stessa ricetta anche con il bot Telegram, usa
+        uno solo dei due.</p>
       <div class="pulsanti">
-        <button type="submit" value="leggi" class="secondario">Leggi la prenotazione</button>
-        <button type="submit" value="cerca">Cerca date prima</button>
-      </div>
-      <div id="conferma" class="avviso" hidden>
-        <p>Per vedere le date apro "Sposta appuntamento" sul portale: la data che il portale propone resta
-          bloccata per circa 40 minuti, anche per te dal sito del CUP. Non sposto nulla.</p>
-        <p>Ogni ricerca ne blocca un'altra: per la stessa ricetta ne faccio al massimo una ogni 20 minuti.</p>
-        <div class="pulsanti">
-          <button type="button" id="annulla" class="secondario">Annulla</button>
-          <button type="button" id="procedi">Cerca</button>
-        </div>
+        <button type="button" id="annulla" class="secondario">Annulla</button>
+        <button type="submit" id="salva">Salva</button>
       </div>
     </form>
-    <section id="esito" aria-live="polite"></section>
   </main>
   <script src="app.js"></script>
 </body>

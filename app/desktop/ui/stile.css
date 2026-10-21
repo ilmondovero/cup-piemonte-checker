@@ -5,6 +5,7 @@
   --scheda: #ffffff;
   --bordo: #d9dde5;
   --accento: #0b6bcb;
+  --buono: #1a7f37;
   --errore: #b3261e;
   color-scheme: light dark;
 }
@@ -17,6 +18,7 @@
     --scheda: #1f242c;
     --bordo: #333a45;
     --accento: #5aa9f5;
+    --buono: #57c26f;
     --errore: #f2b8b5;
   }
 }
@@ -30,50 +32,57 @@ body {
   font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Ubuntu, sans-serif;
 }
 
-main { max-width: 520px; margin: 0 auto; padding: 20px 16px; }
-h1 { font-size: 1.3rem; margin: 0 0 4px; }
-.nota, .attesa, .altra { color: var(--tenue); }
-
-form { display: grid; gap: 12px; margin: 16px 0; }
-label { display: grid; gap: 4px; font-weight: 600; font-size: 0.9rem; }
-
-input {
-  font: inherit;
-  padding: 9px 10px;
-  border: 1px solid var(--bordo);
-  border-radius: 8px;
-  background: var(--scheda);
-  color: var(--testo);
-  text-transform: uppercase;
-}
+main { max-width: 560px; margin: 0 auto; padding: 16px; display: grid; gap: 12px; }
+header { display: flex; align-items: center; justify-content: space-between; }
+h1 { font-size: 1.3rem; margin: 0; }
+h2 { font-size: 1.05rem; margin: 0; }
+p { margin: 0; }
+.nota { color: var(--tenue); font-size: 0.9rem; }
+.piccola { font-size: 0.8rem; }
+.errore { color: var(--errore); font-weight: 600; }
 
 button {
   font: inherit;
   font-weight: 600;
-  padding: 10px;
+  padding: 9px 12px;
   border: 0;
   border-radius: 8px;
   background: var(--accento);
   color: #fff;
   cursor: pointer;
 }
-
 button:disabled { opacity: 0.6; cursor: wait; }
+button.secondario { background: transparent; color: var(--accento); border: 1px solid var(--accento); }
+button.pericolo { color: var(--errore); border-color: var(--errore); }
+button.icona { background: transparent; color: var(--tenue); font-size: 1.2rem; padding: 4px 8px; }
 
-.scheda {
-  background: var(--scheda);
+.avviso, .scheda {
   border: 1px solid var(--bordo);
   border-radius: 10px;
-  padding: 4px 14px;
+  padding: 12px 14px;
+  background: var(--scheda);
+  display: grid;
+  gap: 8px;
 }
+.avviso { border-left: 4px solid var(--accento); }
 
-.quando { font-weight: 700; font-size: 1.05rem; }
-.errore { color: var(--errore); font-weight: 600; }
+#ricette { display: grid; gap: 12px; }
+.scheda.ferma { opacity: 0.75; }
+.testa { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pillola { font-size: 0.75rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; border: 1px solid; }
+.pillola.attiva { color: var(--buono); }
+.pillola.pausa { color: var(--tenue); }
+.pillola.corso { color: var(--accento); }
+.quando { font-weight: 700; }
+.stato.buone { color: var(--buono); font-weight: 700; }
+.azioni { display: flex; flex-wrap: wrap; gap: 6px; }
+.azioni button { padding: 6px 10px; font-size: 0.85rem; }
 
-fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 6px; }
-legend { font-weight: 600; font-size: 0.9rem; padding: 0; margin-bottom: 4px; }
-
-select {
+form { display: grid; gap: 12px; }
+#credenziali { display: grid; gap: 12px; }
+label { display: grid; gap: 4px; font-weight: 600; font-size: 0.9rem; }
+label.riga { display: flex; align-items: center; gap: 8px; font-weight: 400; }
+input, select {
   font: inherit;
   padding: 8px 10px;
   border: 1px solid var(--bordo);
@@ -81,27 +90,26 @@ select {
   background: var(--scheda);
   color: var(--testo);
 }
-
-input[name=valore] { text-transform: none; }
-input[hidden] { display: none; }
-
+input.maiuscolo { text-transform: uppercase; }
+input[type=checkbox] { padding: 0; margin: 0; }
+[hidden] { display: none !important; }
+fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 6px; }
+legend { font-weight: 600; font-size: 0.9rem; padding: 0; margin-bottom: 4px; }
 .giorni { display: flex; flex-wrap: wrap; gap: 6px 12px; }
 .giorni label { display: flex; align-items: center; gap: 4px; font-weight: 400; }
-.giorni input { padding: 0; margin: 0; }
-
 .pulsanti { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-button.secondario { background: transparent; color: var(--accento); border: 1px solid var(--accento); }
 
-.avviso {
-  border: 1px solid var(--bordo);
-  border-left: 4px solid var(--accento);
-  border-radius: 8px;
-  padding: 2px 12px 12px;
-  background: var(--scheda);
+details summary { cursor: pointer; font-weight: 600; font-size: 0.9rem; }
+details[open] { display: grid; gap: 6px; }
+pre#registro {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  font: 0.75rem/1.4 ui-monospace, "Cascadia Mono", Menlo, monospace;
+  white-space: pre-wrap;
+  color: var(--tenue);
 }
-
-h2 { font-size: 1rem; margin: 18px 0 8px; }
-h2.buone { color: var(--accento); }
+#file-registro { word-break: break-all; }
 
 ul.date { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
 ul.date li {
@@ -109,11 +117,6 @@ ul.date li {
   gap: 2px;
   padding: 8px 12px;
   border-radius: 8px;
-  border: 1px solid var(--bordo);
-  background: var(--scheda);
+  border: 1px solid var(--buono);
 }
-ul.date li.buona { border-color: var(--accento); }
-ul.date li.buona .quando { font-weight: 700; }
-ul.date li.scartata { opacity: 0.6; }
 ul.date .dove { font-size: 0.9rem; }
-ul.date .motivo { font-size: 0.85rem; color: var(--tenue); font-style: italic; }

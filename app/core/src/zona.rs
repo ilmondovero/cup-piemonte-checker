@@ -289,17 +289,25 @@ impl Dove {
                 v.clone()
             }
         };
+        // senza prenotazione letta (o se non si legge) si dice "della prenotazione"
+        let quale = |v: String, prima: &str, dopo: &str| {
+            if v.is_empty() {
+                format!("{prima} della prenotazione")
+            } else {
+                format!("{dopo} {v}")
+            }
+        };
         match self {
-            Dove::Sede(v) => format!("solo nella sede {}", o(v, |l| l.sede.clone())),
+            Dove::Sede(v) => quale(o(v, |l| l.sede.clone()), "solo nella sede", "solo nella sede"),
             Dove::Sedi(s) => format!("in {} sedi scelte", s.len()),
-            Dove::Comune(v) => format!("solo nel comune di {}", titolo(&o(v, comune))),
+            Dove::Comune(v) => quale(titolo(&o(v, comune)), "solo nel comune", "solo nel comune di"),
             Dove::Comuni(c)
                 if c.iter().map(|x| chiave_comune(x)).eq(CINTURA_TORINO.iter().map(|x| chiave_comune(x))) =>
             {
                 "a Torino e nella prima cintura".into()
             }
             Dove::Comuni(c) => format!("nei comuni di {}", c.iter().map(|x| titolo(x)).collect::<Vec<_>>().join(", ")),
-            Dove::Provincia(v) => format!("solo in provincia di {}", o(v, provincia)),
+            Dove::Provincia(v) => quale(o(v, provincia), "solo nella provincia", "solo in provincia di"),
             Dove::Tutte => "in tutte le sedi proposte dal CUP".into(),
         }
     }
@@ -405,6 +413,11 @@ mod test {
         assert_eq!(descrivi("comuni", "san mauro torinese,Asti"), "nei comuni di San Mauro Torinese, Asti");
         assert_eq!(descrivi("provincia", ""), "solo in provincia di TO");
         assert_eq!(descrivi("sede", ""), "solo nella sede MOLINETTE");
+        let senza = |t| Dove::da_scelta(t, "").unwrap().descrizione(None);
+        assert_eq!(senza("comune"), "solo nel comune della prenotazione");
+        assert_eq!(senza("provincia"), "solo nella provincia della prenotazione");
+        assert_eq!(senza("sede"), "solo nella sede della prenotazione");
+        assert_eq!(Dove::da_scelta("comune", "asti").unwrap().descrizione(None), "solo nel comune di Asti");
         assert_eq!(giorno_settimana("Venerdì"), Some(4));
         assert_eq!(
             (giorno_settimana("ven"), giorno_settimana("lun"), giorno_settimana("do")),

@@ -1,7 +1,11 @@
 const { invoke } = window.__TAURI__.core;
-const form = document.getElementById("ricetta");
-const esito = document.getElementById("esito");
-const conferma = document.getElementById("conferma");
+const { listen } = window.__TAURI__.event;
+const $ = (id) => document.getElementById(id);
+const modulo = $("modulo");
+const messaggio = $("messaggio");
+let modifica = null; // id della ricetta in modifica, null per una nuova
+// "Elimina" chiede conferma per qualche secondo; resta valida anche se nel frattempo le schede si ridisegnano
+let daEliminare = { id: null, fino: 0 };
 
 // mai innerHTML: i testi arrivano dal portale
 function el(tag, classe, testo) {
@@ -11,97 +15,199 @@ function el(tag, classe, testo) {
   return e;
 }
 
-function scheda(v) {
-  const s = el("div", "scheda");
-  s.append(el("p", "quando", "📅 " + v.quando), el("p", "dove", "📍 " + v.luogo), el("p", "cosa", "🩺 " + v.cosa));
+function pulsante(testo, classe, azione) {
+  const b = el("button", classe, testo);
+  b.type = "button";
+  b.addEventListener("click", azione);
+  return b;
+}
+
+function avvisa(testo, errore = true) {
+  messaggio.textContent = testo;
+  messaggio.className = errore ? "errore" : "nota";
+  messaggio.hidden = !testo;
+}
+
+async function esegui(comando, argomenti, ok) {
+  try {
+    await invoke(comando, argomenti);
+    avvisa(ok || "", false);
+    return true;
+  } catch (e) {
+    avvisa(String(e));
+    return false;
+  }
+}
+
+function riepilogo(r) {
+  const e = r.esito;
+  if (r.in_corso) return el("p", "stato", "🔄 Controllo in corso… può volerci qualche minuto.");
+  if (!e || !e.controllo) return el("p", "stato", r.attiva ? "Primo controllo a breve." : "Nessun controllo ancora.");
+  if (e.errore) return el("p", "stato errore", `⚠️ Controllo delle ${e.ora}: ${e.errore}`);
+  const buone = e.buone.length;
+  const offerte = e.date === 1 ? "1 data offerta" : `${e.date} date offerte`;
+  return el("p", buone ? "stato buone" : "stato",
+    `Controllo delle ${e.ora}: ${offerte}, ` +
+    (buone ? (buone === 1 ? "1 va bene." : `${buone} vanno bene.`) : "nessuna prima della prenotazione."));
+}
+
+function scheda(r) {
+  const s = el("article", "scheda" + (r.attiva ? "" : " ferma"));
+  const testa = el("div", "testa");
+  testa.append(el("h2", "", r.nome),
+    el("span", "pillola " + (r.in_corso ? "corso" : r.attiva ? "attiva" : "pausa"),
+      r.in_corso ? "in controllo" : r.attiva ? "attiva" : "in pausa"));
+  s.append(testa);
+  const a = r.esito && r.esito.attuale;
+  if (a) s.append(el("p", "quando", "📅 " + a.quando), el("p", "dove", "📍 " + a.luogo), el("p", "cosa", "🩺 " + a.cosa));
+  s.append(el("p", "nota", `🔎 Cerco ${r.zona} · ${r.giorni}`), riepilogo(r));
+  if (r.esito && r.esito.buone.length && !r.in_corso) {
+    const lista = el("ul", "date");
+    for (const d of r.esito.buone) {
+      const li = el("li", "buona");
+      li.append(el("span", "quando", d.quando + (d.proposta ? " · proposta" : "")), el("span", "dove", d.luogo));
+      lista.append(li);
+    }
+    s.append(lista, el("p", "nota", "Per prenotarla: sito del CUP Piemonte o call center 800 000 500. L'app non sposta nulla."));
+  }
+  if (r.esito && r.esito.area_incompleta) {
+    s.append(el("p", "nota", "\"Estendi area\" non ha risposto in tempo: le date più lontane potrebbero mancare."));
+  }
+  if (r.attiva && r.prossimo && !r.in_corso) s.append(el("p", "nota", `Prossimo controllo: ${r.prossimo}`));
+  s.append(el("p", "nota piccola", `CF ${r.cf} · ricetta ${r.nre}`));
+
+  const azioni = el("div", "azioni");
+  azioni.append(pulsante(r.attiva ? "Pausa" : "Riprendi", "secondario",
+    () => esegui("attiva", { id: r.id, si: !r.attiva })));
+  azioni.append(pulsante("Modifica", "secondario", () => apri(r)));
+  const inConferma = daEliminare.id === r.id && Date.now() < daEliminare.fino;
+  const elimina = pulsante(inConferma ? "Sicuro? Elimina" : "Elimina", "secondario pericolo", () => {
+    if (daEliminare.id === r.id && Date.now() < daEliminare.fino) {
+      daEliminare = { id: null, fino: 0 };
+      esegui("elimina", { id: r.id });
+    } else {
+      // due tocchi: il primo chiede conferma per qualche secondo
+      daEliminare = { id: r.id, fino: Date.now() + 5000 };
+      elimina.textContent = "Sicuro? Elimina";
+      setTimeout(carica, 5100);
+    }
+  });
+  azioni.append(elimina);
+  s.append(azioni);
   return s;
 }
 
-function occupato(si) {
-  for (const b of form.querySelectorAll("button")) b.disabled = si;
-}
-
-async function chiedi(comando, argomenti, attesa) {
-  occupato(true);
-  esito.replaceChildren(el("p", "attesa", attesa));
+async function carica() {
   try {
-    return await invoke(comando, argomenti);
+    const { ricette, avviso } = await invoke("ricette");
+    $("ricette").replaceChildren(...ricette.map(scheda));
+    $("vuoto").hidden = ricette.length > 0;
+    $("avviso").textContent = avviso || "";
+    $("avviso").hidden = !avviso;
+    if (!$("impostazioni").hidden && $("dettagli-registro").open) caricaRegistro();
   } catch (e) {
-    esito.replaceChildren(el("p", "errore", String(e)));
-    return null;
-  } finally {
-    occupato(false);
+    avvisa(String(e));
   }
 }
 
-function ricetta() {
-  return { cf: form.cf.value, nre: form.nre.value };
-}
-
-async function leggi() {
-  const r = await chiedi("attuale", ricetta(), "Chiedo al portale… può volerci un minuto.");
-  if (!r) return;
-  esito.replaceChildren(scheda(r.attuale));
-  if (r.prenotate.length > 1) {
-    esito.append(el("p", "nota", `La ricetta ha ${r.prenotate.length} righe prenotate:`));
-    for (const p of r.prenotate) esito.append(el("p", "altra", `${p.quando} · ${p.sede} · ${p.cosa}`));
+async function caricaImpostazioni() {
+  const i = await invoke("impostazioni");
+  $("avvio").checked = i.avvio_automatico;
+  $("protezione").textContent = i.protezione === "portachiavi"
+    ? "🔒 Le ricette sono salvate cifrate su questo computer, con la chiave nel portachiavi del sistema."
+    : "🔒 Le ricette sono salvate cifrate, ma il portachiavi del sistema non c'è: la chiave è in un file accanto " +
+      "ai dati, nella cartella del tuo utente. È meno sicuro: chi può leggere i tuoi file può leggere anche le ricette.";
+  $("file-registro").textContent = i.registro;
+  const parte = $("messo-da-parte");
+  parte.hidden = !i.messo_da_parte;
+  if (i.messo_da_parte) {
+    parte.textContent = "Le ricette salvate prima non si potevano più aprire (chiave cambiata): le ho messe da parte " +
+      "in " + i.messo_da_parte + " e ho ricominciato da capo.";
+    $("impostazioni").hidden = false;
   }
 }
 
-async function cerca() {
-  const scelta = form.dove.value;
-  const argomenti = {
-    ...ricetta(),
-    dove: scelta === "altro" ? (form.valore.value.includes(",") ? "comuni" : "comune") : scelta,
-    valore: scelta === "altro" ? form.valore.value : "",
-    evita: [...form.querySelectorAll("input[name=evita]:checked")].map((x) => Number(x.value)),
-  };
-  if (scelta === "altro" && !form.valore.value.trim()) {
-    esito.replaceChildren(el("p", "errore", "Scrivi il comune in cui cercare."));
+async function caricaRegistro() {
+  try {
+    const righe = await invoke("registro");
+    $("registro").textContent = righe.length ? righe.join("\n") : "Ancora niente.";
+  } catch (e) {
+    $("registro").textContent = String(e);
+  }
+}
+
+function sceltaDove(dove, valore) {
+  // "comuni" e un "comune" scritto dall'utente si scrivono nella casella; il comune della prenotazione e' "comune" vuoto
+  if (dove === "comuni" || (dove === "comune" && valore)) return ["altro", valore];
+  return [dove, ""];
+}
+
+function apri(r) {
+  modifica = r ? r.id : null;
+  modulo.reset();
+  $("titolo-modulo").textContent = r ? `Modifica: ${r.nome}` : "Nuova ricetta";
+  $("credenziali").hidden = !!r; // codice fiscale e ricetta non si cambiano: si aggiunge un'altra ricetta
+  $("riga-attiva").hidden = !!r;
+  modulo.cf.required = modulo.nre.required = !r;
+  if (r) {
+    const [dove, valore] = sceltaDove(r.dove, r.valore);
+    modulo.nome.value = r.nome;
+    modulo.dove.value = dove;
+    modulo.valore.value = valore;
+    for (const c of modulo.querySelectorAll("input[name=evita]")) c.checked = r.evita.includes(Number(c.value));
+  }
+  modulo.valore.hidden = modulo.dove.value !== "altro";
+  modulo.hidden = false;
+  $("nuova").hidden = true;
+  modulo.nome.focus();
+}
+
+function chiudi() {
+  modulo.hidden = true;
+  $("nuova").hidden = false;
+  modifica = null;
+}
+
+modulo.dove.addEventListener("change", () => {
+  modulo.valore.hidden = modulo.dove.value !== "altro";
+  if (!modulo.valore.hidden) modulo.valore.focus();
+});
+
+modulo.addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const scelta = modulo.dove.value;
+  const valore = modulo.valore.value.trim();
+  if (scelta === "altro" && !valore) {
+    avvisa("Scrivi il comune in cui cercare.");
     return;
   }
-  const r = await chiedi("cerca", argomenti, "Cerco le date sul portale… con un'area ampia può volerci qualche minuto.");
-  if (!r) return;
-  esito.replaceChildren(scheda(r.attuale));
-  const titolo = r.buone
-    ? `${r.buone === 1 ? "1 data va bene" : r.buone + " date vanno bene"} (cerco ${r.zona})`
-    : `Nessuna data prima della prenotazione (cerco ${r.zona})`;
-  esito.append(el("h2", r.buone ? "buone" : "", titolo));
-  const lista = el("ul", "date");
-  for (const d of r.date) {
-    const riga = el("li", d.motivo ? "scartata" : "buona");
-    riga.append(el("span", "quando", d.quando + (d.proposta ? " · proposta" : "")), el("span", "dove", d.luogo));
-    if (d.motivo) riga.append(el("span", "motivo", d.motivo));
-    lista.append(riga);
-  }
-  esito.append(lista);
-  if (!r.date.length) esito.append(el("p", "nota", "Il portale non ha offerto date."));
-  if (r.area_incompleta) {
-    esito.append(el("p", "nota", "\"Estendi area\" non ha risposto in tempo: le date più lontane potrebbero mancare."));
-  }
-}
-
-form.dove.addEventListener("change", () => {
-  form.valore.hidden = form.dove.value !== "altro";
-  if (!form.valore.hidden) form.valore.focus();
+  const comune = { ...(scelta === "altro" ? { dove: valore.includes(",") ? "comuni" : "comune", valore } : { dove: scelta, valore: "" }) };
+  const evita = [...modulo.querySelectorAll("input[name=evita]:checked")].map((x) => Number(x.value));
+  const salva = $("salva");
+  salva.disabled = true;
+  if (modifica === null) avvisa("Leggo la prenotazione dal portale… può volerci un minuto.", false);
+  const ok = modifica === null
+    ? await esegui("aggiungi", { nome: modulo.nome.value, cf: modulo.cf.value, nre: modulo.nre.value, ...comune, evita,
+                                 attiva: modulo.attiva.checked }, "Ricetta aggiunta.")
+    : await esegui("modifica", { id: modifica, nome: modulo.nome.value, ...comune, evita }, "Modifiche salvate.");
+  salva.disabled = false;
+  if (ok) chiudi();
 });
 
-form.addEventListener("submit", (ev) => {
-  ev.preventDefault();
-  if (ev.submitter && ev.submitter.value === "cerca") {
-    conferma.hidden = false; // prima di aprire "Sposta" si chiede: blocca una data
-    document.getElementById("procedi").focus();
-  } else {
-    conferma.hidden = true;
-    leggi();
-  }
+$("annulla").addEventListener("click", () => { chiudi(); avvisa(""); });
+$("nuova").addEventListener("click", () => apri(null));
+$("apri-impostazioni").addEventListener("click", (ev) => {
+  const p = $("impostazioni");
+  p.hidden = !p.hidden;
+  ev.currentTarget.setAttribute("aria-expanded", String(!p.hidden));
+});
+$("dettagli-registro").addEventListener("toggle", (ev) => { if (ev.target.open) caricaRegistro(); });
+$("avvio").addEventListener("change", async (ev) => {
+  if (!(await esegui("imposta_avvio", { si: ev.target.checked }))) ev.target.checked = !ev.target.checked;
 });
 
-document.getElementById("annulla").addEventListener("click", () => {
-  conferma.hidden = true;
-});
-
-document.getElementById("procedi").addEventListener("click", () => {
-  conferma.hidden = true;
-  if (form.reportValidity()) cerca();
-});
+listen("ricette", carica);
+carica();
+caricaImpostazioni();
+// gli orari "prossimo controllo" e "oggi/ieri" cambiano col tempo
+setInterval(carica, 60000);
