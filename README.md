@@ -71,8 +71,9 @@ aggiornamenti: [`telegram-bot/README.md`](telegram-bot/README.md).
 ## App desktop (cartella [`app/`](app/), in sviluppo)
 
 Un progetto a sé, senza Telegram e senza server: un'app leggera per Windows, macOS e Linux che parla
-con il portale dal computer dell'utente. Per ora legge soltanto la prenotazione attuale di una
-ricetta. Stato e istruzioni: [`app/README.md`](app/README.md).
+con il portale dal computer dell'utente. Controlla le ricette ogni 20 minuti, avvisa con una notifica
+quando esce una data prima e, solo se lo chiedi, sposta o disdice la prenotazione. Mancano ancora gli
+installer. Stato e istruzioni: [`app/README.md`](app/README.md).
 
 ---
 

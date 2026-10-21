@@ -3,6 +3,7 @@
 
 mod archivio;
 mod controlli;
+mod operazioni;
 mod registro;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -10,6 +11,7 @@ use std::sync::Arc;
 
 use chrono::{Local, TimeZone};
 use cup_core::analisi::credenziali;
+use cup_core::operazioni::Attese;
 use cup_core::{Dove, Errore, Sessione};
 use serde::Serialize;
 use tauri::menu::{Menu, MenuItem};
@@ -20,7 +22,8 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_notification::NotificationExt;
 
 use archivio::{Archivio, Data, Esito, Protezione, Ricetta, Visita};
-use controlli::{adesso, Stato, INTERVALLO};
+use controlli::{adesso, zona_di, Attivita, Notifica, Stato, INTERVALLO};
+use operazioni::Fine;
 use registro::Registro;
 
 type Condiviso<'a> = State<'a, Arc<Stato>>;
@@ -55,6 +58,8 @@ struct EsitoUi {
     buone: Vec<Data>,
     area_incompleta: bool,
     errore: Option<String>,
+    nota: Option<String>,
+    note_visita: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -69,12 +74,15 @@ struct Scheda {
     zona: String,
     giorni: String,
     attiva: bool,
-    in_corso: bool,
+    /// "controllo", "spostamento" o "disdetta", se c'e' qualcosa in corso.
+    in_corso: Option<Attivita>,
+    /// Un'operazione dall'esito incerto, da controllare sul portale.
+    incerta: Option<String>,
     prossimo: Option<String>,
     esito: Option<EsitoUi>,
 }
 
-fn scheda(r: &Ricetta, in_corso: Option<u64>) -> Scheda {
+fn scheda(r: &Ricetta, in_corso: Option<Attivita>) -> Scheda {
     let zona = match &r.esito {
         Some(e) if !e.zona.is_empty() => e.zona.clone(),
         _ => Dove::da_scelta(&r.dove, &r.valore).map(|d| d.descrizione(None)).unwrap_or_default(),
@@ -100,7 +108,8 @@ fn scheda(r: &Ricetta, in_corso: Option<u64>) -> Scheda {
         zona,
         giorni,
         attiva: r.attiva,
-        in_corso: in_corso == Some(r.id),
+        in_corso,
+        incerta: r.incerta.clone(),
         prossimo: controlli::prossimo(r, adesso()).map(ora),
         esito: r.esito.as_ref().map(|e| EsitoUi {
             ora: ora(e.ts),
@@ -110,6 +119,8 @@ fn scheda(r: &Ricetta, in_corso: Option<u64>) -> Scheda {
             buone: e.buone.clone(),
             area_incompleta: e.area_incompleta,
             errore: e.errore.clone(),
+            nota: e.nota.clone(),
+            note_visita: e.note_visita.clone(),
         }),
     }
 }
@@ -131,7 +142,7 @@ struct Elenco {
 #[tauri::command]
 fn ricette(stato: Condiviso) -> Elenco {
     let in_corso = stato.in_corso();
-    let ricette = stato.dati().ricette.iter().map(|r| scheda(r, in_corso)).collect();
+    let ricette = stato.dati().ricette.iter().map(|r| scheda(r, in_corso.get(&r.id).copied())).collect();
     Elenco { ricette, avviso: stato.avviso() }
 }
 
@@ -195,16 +206,14 @@ async fn aggiungi(
         ultimo_tentativo,
         esito: Some(Esito {
             ts: adesso(),
-            attuale: Some(Visita {
-                quando: cup_core::analisi::breve(&a.quando),
-                luogo: a.luogo.to_string(),
-                cosa: a.cosa.clone(),
-            }),
+            attuale: Some(Visita::da(a)),
             zona: zona.descrizione(Some(a)),
             ..Default::default()
         }),
         notificate: vec![],
         assenze: 0,
+        operazione: None,
+        incerta: None,
     });
     stato.registro.scrivi(&format!("ricetta {id}: aggiunta{}", if attiva { "" } else { " (in pausa)" }));
     salva(&app, &stato, &d)
@@ -239,7 +248,12 @@ fn modifica(
 
 #[tauri::command]
 fn elimina(app: AppHandle, stato: Condiviso, id: u64) -> Result<(), String> {
+    let in_corso = controlli::blocca(&stato.in_corso);
+    if matches!(in_corso.get(&id), Some(Attivita::Spostamento | Attivita::Disdetta)) {
+        return Err("Aspetta la fine dell'operazione in corso su questa ricetta.".into());
+    }
     let mut d = stato.dati();
+    controlli::blocca(&stato.tenute).remove(&id);
     d.elimina(id, adesso(), INTERVALLO);
     stato.registro.scrivi(&format!("ricetta {id}: eliminata"));
     salva(&app, &stato, &d)
@@ -252,6 +266,84 @@ fn attiva(app: AppHandle, stato: Condiviso, id: u64, si: bool) -> Result<(), Str
     r.attiva = si;
     r.assenze = 0;
     stato.registro.scrivi(&format!("ricetta {id}: {}", if si { "controlli ripresi" } else { "controlli in pausa" }));
+    salva(&app, &stato, &d)
+}
+
+/// Mostra la notifica di un'operazione finita e dice all'interfaccia di ridisegnarsi.
+fn finita(app: &AppHandle, fine: Result<Fine, String>) -> Result<String, String> {
+    let _ = app.emit("ricette", ());
+    let fine = fine?;
+    if let Some(n) = &fine.notifica {
+        avvisa(app, &n.titolo, &n.testo, &format!("ricetta {}, {}", n.ricetta, n.tipo));
+    }
+    if fine.ok {
+        Ok(fine.messaggio)
+    } else {
+        Err(fine.messaggio)
+    }
+}
+
+/// Sposta la prenotazione su una delle date buone trovate (l'utente l'ha confermato nell'interfaccia).
+#[tauri::command]
+async fn sposta(app: AppHandle, stato: Condiviso<'_>, id: u64, chiave: String) -> Result<String, String> {
+    let st = stato.inner().clone();
+    let h = app.clone();
+    let fine = tauri::async_runtime::spawn_blocking(move || {
+        let motore = |r: &Ricetta, tenuta: Option<Sessione>, fasi: operazioni::Fasi| {
+            let (zona, cal) = zona_di(r)?;
+            let (cf, nre) = (r.cf.clone(), r.nre.clone());
+            cup_core::operazioni::sposta(
+                &|attesa| Sessione::con_limite(&cf, &nre, attesa),
+                tenuta,
+                &chiave,
+                &zona,
+                &cal,
+                false,
+                &Attese::default(),
+                fasi,
+            )
+        };
+        operazioni::sposta(&st, id, &chiave, &motore, &|| {
+            let _ = h.emit("ricette", ());
+        })
+    })
+    .await
+    .map_err(|_| "errore interno".to_string())?;
+    finita(&app, fine)
+}
+
+/// Disdice la prenotazione mostrata (l'utente l'ha confermato nell'interfaccia).
+#[tauri::command]
+async fn disdici(app: AppHandle, stato: Condiviso<'_>, id: u64) -> Result<String, String> {
+    let st = stato.inner().clone();
+    let h = app.clone();
+    let fine = tauri::async_runtime::spawn_blocking(move || {
+        let motore = |r: &Ricetta, quando, luogo: Option<&str>, fasi: operazioni::Fasi| {
+            let (cf, nre) = (r.cf.clone(), r.nre.clone());
+            cup_core::operazioni::disdici(
+                &|attesa| Sessione::con_limite(&cf, &nre, attesa),
+                quando,
+                luogo,
+                false,
+                &Attese::default(),
+                fasi,
+            )
+        };
+        operazioni::disdici(&st, id, &motore, &|| {
+            let _ = h.emit("ricette", ());
+        })
+    })
+    .await
+    .map_err(|_| "errore interno".to_string())?;
+    finita(&app, fine)
+}
+
+/// L'utente ha controllato sul portale l'esito di un'operazione incerta: si possono fare di nuovo operazioni.
+#[tauri::command]
+fn chiudi_incerta(app: AppHandle, stato: Condiviso, id: u64) -> Result<(), String> {
+    let mut d = stato.dati();
+    d.ricetta(id)?.incerta = None;
+    stato.registro.scrivi(&format!("ricetta {id}: esito incerto controllato dall'utente"));
     salva(&app, &stato, &d)
 }
 
@@ -289,6 +381,25 @@ fn imposta_avvio(app: AppHandle, stato: Condiviso, si: bool) -> Result<(), Strin
     Ok(())
 }
 
+/// Esce, ma non durante uno spostamento o una disdetta: a meta' l'esito resterebbe da verificare a mano.
+fn esci_se_libera(app: &AppHandle) {
+    let occupata = app
+        .try_state::<Arc<Stato>>()
+        .is_some_and(|s| s.in_corso().values().any(|a| matches!(a, Attivita::Spostamento | Attivita::Disdetta)));
+    if occupata {
+        mostra(app);
+        avvisa(
+            app,
+            "CUP Piemonte: aspetta un momento",
+            "C'è uno spostamento o una disdetta in corso: l'app esce quando ha verificato l'esito sul portale. \
+             Riprova tra qualche minuto.",
+            "uscita rimandata: operazione in corso",
+        );
+        return;
+    }
+    app.exit(0);
+}
+
 fn mostra(app: &AppHandle) {
     // se l'avvio non e' riuscito c'e' solo la finestra di errore: l'interfaccia non funzionerebbe
     if app.try_state::<Arc<Stato>>().is_none() {
@@ -313,7 +424,7 @@ fn avvisa(app: &AppHandle, titolo: &str, testo: &str, per_registro: &str) {
 }
 
 /// Lo stato dell'app, o perche' non si puo' aprire (portachiavi che non risponde, archivio di un'altra versione...).
-fn prepara(app: &tauri::App, registro: Registro) -> Result<Arc<Stato>, (Registro, String)> {
+fn prepara(app: &tauri::App, registro: Registro) -> Result<(Arc<Stato>, Vec<Notifica>), (Registro, String)> {
     let cartella = match app.path().app_data_dir() {
         Ok(c) => c,
         Err(e) => return Err((registro, format!("Non trovo la cartella dei dati dell'app: {e}"))),
@@ -325,10 +436,22 @@ fn prepara(app: &tauri::App, registro: Registro) -> Result<Arc<Stato>, (Registro
     if archivio.messo_da_parte.is_some() {
         registro.scrivi("archivio illeggibile messo da parte, ricomincio da capo");
     }
-    match archivio.leggi() {
-        Ok(dati) => Ok(Arc::new(Stato::new(archivio, registro, dati))),
-        Err(e) => Err((registro, e)),
+    let mut dati = match archivio.leggi() {
+        Ok(d) => d,
+        Err(e) => return Err((registro, e)),
+    };
+    // un'operazione rimasta a meta' (l'app si e' fermata dopo la Conferma): esito incerto, da dire all'utente
+    let interrotte = operazioni::riprendi(&mut dati);
+    if !interrotte.is_empty() {
+        for n in &interrotte {
+            registro.scrivi(&format!("ricetta {}: operazione interrotta dopo la conferma, esito incerto", n.ricetta));
+        }
+        if let Err(e) = archivio.scrivi(&dati) {
+            registro.scrivi(&format!("salvataggio non riuscito: {e}"));
+        }
     }
+    let stato = Arc::new(Stato::new(archivio, registro, dati));
+    Ok((stato, interrotte))
 }
 
 fn main() {
@@ -348,7 +471,7 @@ fn main() {
         .setup(|app| {
             let registro = Registro::new(&app.path().app_log_dir()?);
             registro.scrivi(&format!("avvio, versione {}", app.package_info().version));
-            let stato = match prepara(app, registro) {
+            let (stato, interrotte) = match prepara(app, registro) {
                 Ok(s) => s,
                 Err((registro, e)) => {
                     // senza console (in release non c'e') l'utente deve vederlo: una finestra, poi si esce
@@ -373,7 +496,7 @@ fn main() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, ev| match ev.id.as_ref() {
                     "apri" => mostra(app),
-                    "esci" => app.exit(0),
+                    "esci" => esci_se_libera(app),
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, ev| {
@@ -386,9 +509,13 @@ fn main() {
                 })
                 .build(app)?;
 
-            // la finestra nasce nascosta: si mostra, tranne quando l'app parte con il computer
-            if !std::env::args().any(|a| a == "--nascosta") {
+            // la finestra nasce nascosta: si mostra, tranne quando l'app parte con il computer (o quando c'e' da
+            // dire che un'operazione e' rimasta a meta')
+            if !interrotte.is_empty() || !std::env::args().any(|a| a == "--nascosta") {
                 mostra(app.handle());
+            }
+            for n in &interrotte {
+                avvisa(app.handle(), &n.titolo, &n.testo, &format!("ricetta {}, {}", n.ricetta, n.tipo));
             }
             let (h1, h2) = (app.handle().clone(), app.handle().clone());
             controlli::avvia(
@@ -427,7 +554,10 @@ fn main() {
             attiva,
             impostazioni,
             imposta_avvio,
-            registro
+            registro,
+            sposta,
+            disdici,
+            chiudi_incerta
         ])
         .run(tauri::generate_context!())
         .expect("avvio dell'app non riuscito");

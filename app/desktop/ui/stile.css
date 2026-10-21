@@ -54,6 +54,7 @@ button {
 button:disabled { opacity: 0.6; cursor: wait; }
 button.secondario { background: transparent; color: var(--accento); border: 1px solid var(--accento); }
 button.pericolo { color: var(--errore); border-color: var(--errore); }
+button.pericolo-pieno { background: var(--errore); color: var(--scheda); }
 button.icona { background: transparent; color: var(--tenue); font-size: 1.2rem; padding: 4px 8px; }
 
 .avviso, .scheda {
@@ -120,3 +121,15 @@ ul.date li {
   border: 1px solid var(--buono);
 }
 ul.date .dove { font-size: 0.9rem; }
+ul.date li button { justify-self: start; margin-top: 4px; padding: 5px 10px; font-size: 0.85rem; }
+.conferma {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 2px solid var(--accento);
+}
+.conferma.incerta { border-color: var(--errore); }
+.conferma .titolo { font-weight: 700; }
+.conferma .pulsanti button { padding: 7px 10px; }
+details.note summary { font-size: 0.85rem; color: var(--tenue); }

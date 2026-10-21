@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 
 use chacha20poly1305::aead::{Aead, AeadCore, KeyInit, OsRng};
 use chacha20poly1305::{Key, XChaCha20Poly1305, XNonce};
+use cup_core::analisi::breve;
+use cup_core::{Prenotazione, Slot};
 use serde::{Deserialize, Serialize};
 
 const FILE: &str = "ricette.cifrate";
@@ -26,6 +28,31 @@ pub struct Visita {
     pub quando: String,
     pub luogo: String,
     pub cosa: String,
+    /// Data e ora per il portale ("2027-01-07T11:45"): per disdirla.
+    #[serde(default)]
+    pub iso: String,
+    /// Sede e ambulatorio (`Luogo::chiave`): due prenotazioni alla stessa ora in sedi diverse.
+    #[serde(default)]
+    pub chiave_luogo: String,
+}
+
+pub const ISO: &str = "%Y-%m-%dT%H:%M";
+
+impl Visita {
+    pub fn da(p: &Prenotazione) -> Self {
+        Visita {
+            quando: breve(&p.quando),
+            luogo: p.luogo.to_string(),
+            cosa: p.cosa.clone(),
+            iso: p.quando.format(ISO).to_string(),
+            chiave_luogo: p.luogo.chiave(),
+        }
+    }
+
+    /// La prenotazione dopo uno spostamento: la data scelta, la prestazione di prima.
+    pub fn spostata(s: &Slot, cosa: &str) -> Self {
+        Visita::da(&Prenotazione { quando: s.quando, luogo: s.luogo.clone(), cosa: cosa.into() })
+    }
 }
 
 /// Una data buona trovata da un controllo.
@@ -56,6 +83,25 @@ pub struct Esito {
     pub buone: Vec<Data>,
     pub area_incompleta: bool,
     pub errore: Option<String>,
+    /// Una riga da mostrare al posto del riepilogo del controllo ("Prenotazione disdetta.").
+    #[serde(default)]
+    pub nota: Option<String>,
+    /// Le note del Riepilogo dell'ultimo spostamento (la preparazione all'esame).
+    #[serde(default)]
+    pub note_visita: Vec<String>,
+}
+
+/// Uno spostamento o una disdetta oltre la Conferma: salvato prima di inviarla, tolto quando l'esito e' noto. Se
+/// l'app trova un'operazione al riavvio, si e' fermata a meta': l'esito e' incerto.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Operazione {
+    /// "spostamento" o "disdetta".
+    pub tipo: String,
+    /// "conferma" o "verifica".
+    pub fase: String,
+    pub ts: i64,
+    /// Per l'utente: "al gio 01/12/2026 ore 09:00, MOLINETTE...".
+    pub descrizione: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,6 +128,12 @@ pub struct Ricetta {
     /// Controlli di fila in cui il portale non ha trovato la prenotazione (a volte sbaglia: si sospende dopo 3).
     #[serde(default)]
     pub assenze: u32,
+    /// Lo spostamento o la disdetta in corso oltre la Conferma (vedi `Operazione`).
+    #[serde(default)]
+    pub operazione: Option<Operazione>,
+    /// Un'operazione dall'esito incerto: finche' l'utente non dice di aver controllato sul portale, niente altre.
+    #[serde(default)]
+    pub incerta: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -331,6 +383,8 @@ mod test {
             esito: None,
             notificate: vec![],
             assenze: 0,
+            operazione: None,
+            incerta: None,
         }
     }
 

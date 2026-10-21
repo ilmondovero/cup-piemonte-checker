@@ -13,7 +13,9 @@ use std::time::Duration;
 use reqwest::blocking::Client;
 use reqwest::header::CONTENT_TYPE;
 
-use crate::analisi::{self, Elenco, Slot, A, L};
+use chrono::NaiveDateTime;
+
+use crate::analisi::{self, Elenco, Riepilogo, Slot, A, AVANTI, L, RIEPILOGO};
 use crate::errore::Errore;
 use crate::zona::{candidata, Calendario, Zona};
 
@@ -116,11 +118,16 @@ impl Modulo {
 
     /// Un POST "partial/ajax" del modulo con questi campi, nell'ordine del browser.
     fn invia(&self, client: &Client, base: &str, campi: Campi) -> Result<String, Errore> {
+        self.invia_come(client, base, &self.id, campi)
+    }
+
+    /// Come `invia`, ma a nome di un altro modulo della stessa pagina (il pulsante "Avanti" sta in un modulo suo).
+    fn invia_come(&self, client: &Client, base: &str, id: &str, campi: Campi) -> Result<String, Errore> {
         if !self.url.starts_with(&format!("{base}/")) {
             return Err(Errore::Inattesa("Il portale ha indicato un indirizzo esterno: non invio dati".into()));
         }
         let dati = Campi::default()
-            .metti(&self.id, &self.id)
+            .metti(id, id)
             .metti("javax.faces.encodedURL", &self.url)
             .metti("ice.window", &self.finestra)
             .metti("ice.view", &self.vista)
@@ -161,7 +168,7 @@ pub struct Controllo {
 struct Lista {
     modulo: Modulo,
     xml: String,
-    riga: usize,
+    elenco: Elenco,
 }
 
 /// Una sessione sul portale per una ricetta (codice fiscale + numero ricetta elettronica).
@@ -172,6 +179,9 @@ pub struct Sessione {
     cf: String,
     nre: String,
     lista: Option<Lista>,
+    /// La pagina degli appuntamenti aperta da "Sposta" e le date lette: servono per sceglierne una.
+    app: Option<Modulo>,
+    slots: Vec<Slot>,
 }
 
 impl Sessione {
@@ -180,11 +190,17 @@ impl Sessione {
         Self::verso(CUP, cf, nre)
     }
 
-    fn verso(base: &str, cf: &str, nre: &str) -> Result<Self, Errore> {
+    /// Come `nuova`, ma ogni risposta si aspetta al massimo `attesa` (se data, e mai oltre il solito): per le
+    /// letture di verifica, che devono finire entro un tempo fissato.
+    pub fn con_limite(cf: &str, nre: &str, attesa: Option<Duration>) -> Result<Self, Errore> {
+        Self::con_attesa(CUP, cf, nre, attesa.map_or(RISPOSTA, |a| a.min(RISPOSTA)))
+    }
+
+    pub(crate) fn verso(base: &str, cf: &str, nre: &str) -> Result<Self, Errore> {
         Self::con_attesa(base, cf, nre, RISPOSTA)
     }
 
-    fn con_attesa(base: &str, cf: &str, nre: &str, risposta: Duration) -> Result<Self, Errore> {
+    pub(crate) fn con_attesa(base: &str, cf: &str, nre: &str, risposta: Duration) -> Result<Self, Errore> {
         let (cf, nre) = analisi::credenziali(cf, nre)?;
         let client = Client::builder()
             .cookie_store(true)
@@ -194,11 +210,21 @@ impl Sessione {
             .timeout(risposta)
             .build()
             .map_err(|_| Errore::Inattesa("client HTTP non disponibile".into()))?;
-        Ok(Sessione { client, base: base.into(), cf, nre, lista: None })
+        Ok(Sessione { client, base: base.into(), cf, nre, lista: None, app: None, slots: vec![] })
     }
 
     fn pagina(&self, percorso: &str) -> Result<String, Errore> {
         Ok(self.client.get(format!("{}{percorso}", self.base)).send()?.error_for_status()?.text()?)
+    }
+
+    /// Il numero della ricetta di questa sessione (maiuscolo, senza spazi).
+    pub fn nre(&self) -> &str {
+        &self.nre
+    }
+
+    /// Le date lette dall'ultimo `alternative`.
+    pub fn slots(&self) -> &[Slot] {
+        &self.slots
     }
 
     /// I campi della ricerca per codice fiscale + NRE: il browser li rimanda a ogni POST dell'elenco.
@@ -223,7 +249,9 @@ impl Sessione {
             .metti("javax.faces.partial.ajax", "true");
         let xml = modulo.invia(&self.client, &self.base, campi)?;
         let elenco = analisi::elenco(&xml)?;
-        self.lista = Some(Lista { modulo, xml, riga: elenco.riga });
+        self.lista = Some(Lista { modulo, xml, elenco: elenco.clone() });
+        self.app = None;
+        self.slots.clear();
         Ok(elenco)
     }
 
@@ -232,7 +260,7 @@ impl Sessione {
     /// lontane compaiono solo se hanno posti). Blocca lo slot proposto per ~40 minuti.
     pub fn alternative(&mut self, estendi: usize) -> Result<Alternative, Errore> {
         let lista = self.lista.as_ref().ok_or_else(|| Errore::Inattesa("prima va letto l'elenco".into()))?;
-        let sposta = analisi::pulsante_riga(&lista.xml, lista.riga, "spostaButton")
+        let sposta = analisi::pulsante_riga(&lista.xml, lista.elenco.riga, "spostaButton")
             .ok_or_else(|| Errore::Inattesa("Pulsante 'Sposta appuntamento' non presente".into()))?;
         lista.modulo.invia(&self.client, &self.base, self.ricerca().con(evento(&sposta, Some("activate"), true)))?;
         let pagina = self.pagina(RICETTA)?; // qui il portale calcola le disponibilita': puo' essere lento
@@ -273,7 +301,112 @@ impl Sessione {
         let mut slots: Vec<Slot> = proposta.iter().cloned().collect();
         slots.extend(analisi::date_disponibili(&disp, proposta.as_ref()));
         slots.sort_by_key(|s| s.quando);
+        self.app = Some(app);
+        self.slots = slots.clone();
         Ok(Alternative { slots, area_incompleta })
+    }
+
+    /// Sceglie la data (il suo "Seleziona"; la proposta e' gia' selezionata) e preme "Avanti" fino al Riepilogo.
+    /// Non conferma nulla.
+    pub fn riepilogo(&mut self, slot: &Slot) -> Result<Riepilogo, Errore> {
+        let app = self.app.as_ref().ok_or_else(|| Errore::Inattesa("prima vanno lette le date".into()))?;
+        if slot.seleziona.is_none() && !slot.proposta {
+            return Err(Errore::Inattesa("Questa data non ha un pulsante 'Seleziona': non posso sceglierla".into()));
+        }
+        if let Some(sel) = &slot.seleziona {
+            let xml = app.invia(&self.client, &self.base, geo().con(evento(sel, None, true)))?;
+            if xml.contains("alert-danger") {
+                let e = analisi::errori(&xml);
+                return Err(Errore::Inattesa(format!(
+                    "Il portale ha rifiutato la selezione della data{}",
+                    e.first().map_or(String::new(), |e| format!(": {e}"))
+                )));
+            }
+        }
+        let avanti = format!("{AVANTI}:appuntamenti-nextButton-main");
+        let xml = app.invia_come(&self.client, &self.base, AVANTI, evento(&avanti, None, true))?;
+        let pagina = match analisi::redirect(&xml) {
+            Some(url) if !url.starts_with(&format!("{}/", self.base)) => {
+                return Err(Errore::Inattesa("Il portale ha indicato un indirizzo esterno: non proseguo".into()))
+            }
+            Some(url) => self.client.get(url).send()?.error_for_status()?.text()?,
+            None => xml.clone(),
+        };
+        if !pagina.contains("Riepilogo") || !pagina.contains(&format!("{RIEPILOGO}:riepilogo-nextButton-bottom")) {
+            let e = analisi::errori(&xml).into_iter().chain(analisi::errori(&pagina)).next();
+            return Err(Errore::Inattesa(format!(
+                "Non sono arrivato al Riepilogo{}",
+                e.map_or(String::new(), |e| format!(": {e}"))
+            )));
+        }
+        Ok(analisi::riepilogo(pagina))
+    }
+
+    /// I campi del modulo del Riepilogo, senza quelli dello stato JSF (li aggiunge `Modulo::invia`).
+    fn campi_riepilogo(pagina: &str) -> Campi {
+        let via = [RIEPILOGO, "javax.faces.encodedURL", "ice.window", "ice.view", "javax.faces.ViewState"];
+        Campi(
+            analisi::campi_modulo(pagina, RIEPILOGO).into_iter().filter(|(k, _)| !via.contains(&k.as_str())).collect(),
+        )
+    }
+
+    /// Se il Riepilogo ha delle note, il portale vuole "Conferma presa visione" prima di "Conferma" (dal vivo,
+    /// 2026-10-08: senza, risponde "Non e' stata effettuata la presa visione delle note" e non prenota). Ritorna il
+    /// ViewState nuovo, se il portale ne da' uno. Err se il click non risulta registrato: niente e' ancora partito.
+    pub fn presa_visione(&self, r: &Riepilogo) -> Result<Option<String>, Errore> {
+        let Some(id) = analisi::presa_visione(&r.pagina)? else { return Ok(None) };
+        let modulo = Modulo::da_pagina(&r.pagina, RIEPILOGO)?;
+        let xml =
+            modulo.invia(&self.client, &self.base, Self::campi_riepilogo(&r.pagina).con(evento(&id, None, true)))?;
+        if !analisi::presa_visione_registrata(&xml) {
+            return Err(Errore::Inattesa(
+                "Il portale non ha registrato la presa visione delle note: non confermo".into(),
+            ));
+        }
+        Ok(analisi::view_state(&xml))
+    }
+
+    /// Preme "Conferma" sul Riepilogo. Da qui la prenotazione puo' essere cambiata anche se la risposta non arriva.
+    pub fn conferma(&self, r: &Riepilogo, view_state: Option<String>) -> Result<String, Errore> {
+        let mut modulo = Modulo::da_pagina(&r.pagina, RIEPILOGO)?;
+        if let Some(vs) = view_state {
+            modulo.view_state = vs; // dopo la presa visione il portale ne ha dato uno nuovo
+        }
+        let conferma = format!("{RIEPILOGO}:riepilogo-nextButton-bottom");
+        modulo.invia(&self.client, &self.base, Self::campi_riepilogo(&r.pagina).con(evento(&conferma, None, true)))
+    }
+
+    /// Preme "Disdici" sulla prenotazione di questa data (e di questo luogo, `Luogo::chiave`, se dato: due
+    /// appuntamenti possono cadere alla stessa ora in sedi diverse) e ritorna il pulsante "Si'" del dialogo di
+    /// conferma, senza premerlo.
+    pub fn disdici_dialogo(&mut self, quando: NaiveDateTime, luogo: Option<&str>) -> Result<String, Errore> {
+        let ricerca = self.ricerca();
+        let lista = self.lista.as_mut().ok_or_else(|| Errore::Inattesa("prima va letto l'elenco".into()))?;
+        let e = &lista.elenco;
+        let righe: Vec<usize> = e
+            .prenotate
+            .iter()
+            .zip(&e.righe)
+            .filter(|(p, _)| p.quando == quando && luogo.is_none_or(|l| l == p.luogo.chiave()))
+            .map(|(_, r)| *r)
+            .collect();
+        let [riga] = righe[..] else {
+            return Err(Errore::Inattesa("Non trovo un'unica prenotazione a quella data: non disdico".into()));
+        };
+        let bottone = analisi::pulsante_riga(&lista.xml, riga, "disdiciButton")
+            .ok_or_else(|| Errore::Inattesa("Pulsante 'Disdici' non presente".into()))?;
+        let xml =
+            lista.modulo.invia(&self.client, &self.base, ricerca.con(evento(&bottone, Some("activate"), true)))?;
+        if let Some(vs) = analisi::view_state(&xml) {
+            lista.modulo.view_state = vs;
+        }
+        analisi::dialogo_si(&xml)
+    }
+
+    /// Preme "Si'" nel dialogo della disdetta. Da qui la disdetta puo' essere partita anche se la risposta non arriva.
+    pub fn premi_si(&self, si: &str) -> Result<String, Errore> {
+        let lista = self.lista.as_ref().ok_or_else(|| Errore::Inattesa("prima va letto l'elenco".into()))?;
+        lista.modulo.invia(&self.client, &self.base, self.ricerca().con(evento(si, Some("activate"), true)))
     }
 
     /// Un controllo come quelli del bot: la prenotazione, le date offerte e quelle che vanno bene.
@@ -302,59 +435,10 @@ impl Sessione {
 
 #[cfg(test)]
 mod test {
-    use std::io::{BufRead, BufReader, Read, Write};
     use std::net::TcpListener;
-    use std::thread;
 
     use super::*;
-
-    /// (riga iniziale, intestazioni in minuscolo, corpo) di una richiesta ricevuta dal finto portale.
-    type Vista = (String, String, String);
-
-    /// Un finto portale su 127.0.0.1: risponde con le pagine che `risposte` costruisce dal suo indirizzo, una
-    /// per richiesta, e restituisce le richieste ricevute. Il codice 0 e' una risposta che non arriva in tempo.
-    fn portale(risposte: impl FnOnce(&str) -> Vec<(u16, String)>) -> (String, thread::JoinHandle<Vec<Vista>>) {
-        let l = TcpListener::bind("127.0.0.1:0").unwrap();
-        let base = format!("http://{}", l.local_addr().unwrap());
-        let risposte = risposte(&base);
-        let h = thread::spawn(move || {
-            let mut viste = vec![];
-            for (codice, corpo) in risposte {
-                let (mut c, _) = l.accept().unwrap();
-                let mut r = BufReader::new(c.try_clone().unwrap());
-                let (mut riga, mut intest, mut lunghezza) = (String::new(), String::new(), 0);
-                r.read_line(&mut riga).unwrap();
-                loop {
-                    let mut h = String::new();
-                    r.read_line(&mut h).unwrap();
-                    if h.trim().is_empty() {
-                        break;
-                    }
-                    let h = h.to_lowercase();
-                    if let Some(v) = h.strip_prefix("content-length:") {
-                        lunghezza = v.trim().parse().unwrap();
-                    }
-                    intest.push_str(&h);
-                }
-                let mut b = vec![0; lunghezza];
-                r.read_exact(&mut b).unwrap();
-                viste.push((riga.trim().to_string(), intest, String::from_utf8(b).unwrap()));
-                if codice == 0 {
-                    thread::sleep(std::time::Duration::from_millis(1500));
-                    continue;
-                }
-                write!(
-                    c,
-                    "HTTP/1.1 {codice} X\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\n\
-                     Set-Cookie: JSESSIONID=abc; Path=/\r\nConnection: close\r\n\r\n{corpo}",
-                    corpo.len()
-                )
-                .unwrap();
-            }
-            viste
-        });
-        (base, h)
-    }
+    use crate::prova::{campi, portale};
 
     /// La pagina di Recupera Prenotazioni con lo stato JSF; `azione` e' dove il portale dice di mandare il POST.
     fn pagina_lista(azione: &str) -> String {
@@ -661,9 +745,5 @@ mod test {
     #[test]
     fn credenziali_sbagliate_non_partono() {
         assert!(matches!(Sessione::nuova("ABC", "010A00000000001"), Err(Errore::DatiNonValidi(_))));
-    }
-
-    fn campi(corpo: &str) -> Vec<(String, String)> {
-        serde_urlencoded::from_str(corpo).unwrap()
     }
 }

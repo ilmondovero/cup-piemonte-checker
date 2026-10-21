@@ -1,6 +1,7 @@
 //! I controlli automatici: ogni ricetta attiva al massimo una volta ogni 20 minuti (ogni controllo apre "Sposta"
 //! e blocca una data per ~40 minuti), una ricetta alla volta, in un thread a parte.
 
+use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
@@ -8,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use cup_core::analisi::breve;
 use cup_core::{Calendario, Controllo, Dove, Errore, Sessione, Slot, Zona};
+use serde::Serialize;
 
 use crate::archivio::{Archivio, Data, Dati, Esito, Ricetta, Visita, NOTIFICATE_MAX};
 use crate::registro::Registro;
@@ -20,33 +22,66 @@ pub const ASSENZE_PAUSA: u32 = 3;
 const NOTIFICA_DATE: usize = 3;
 /// Ogni quanto il thread guarda se c'e' un controllo da fare.
 const GIRO: Duration = Duration::from_secs(5);
+/// Per quanto la sessione di un controllo si tiene per uno spostamento: il portale tiene la proposta ~40 minuti.
+pub const TENUTA: i64 = 35 * 60;
+
+/// Cosa si sta facendo sul portale per una ricetta: una cosa alla volta.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Attivita {
+    Controllo,
+    Spostamento,
+    Disdetta,
+}
+
+/// La sessione del controllo che ha trovato date buone: "Sposta" e' aperto e la proposta e' tenuta per noi.
+pub struct Tenuta {
+    pub sessione: Sessione,
+    pub ts: i64,
+    /// Le impostazioni della ricetta al momento del controllo: se cambiano, la sessione non vale piu'.
+    pub impostazioni: Impostazioni,
+}
 
 pub struct Stato {
     pub archivio: Archivio,
     pub registro: Registro,
     pub dati: Mutex<Dati>,
-    /// La ricetta il cui controllo e' in corso.
-    pub in_corso: Mutex<Option<u64>>,
+    /// Le ricette su cui c'e' qualcosa in corso. Si prende prima di `dati`, mai dopo.
+    pub in_corso: Mutex<HashMap<u64, Attivita>>,
+    /// Le sessioni dei controlli, per spostare sulle date appena trovate.
+    pub tenute: Mutex<HashMap<u64, Tenuta>>,
     /// L'ultimo salvataggio fallito, da mostrare nell'interfaccia (None se l'ultimo e' riuscito).
     pub avviso: Mutex<Option<String>>,
 }
 
-fn blocca<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+pub fn blocca<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     // un thread caduto tenendo il lock non deve bloccare l'app: i dati restano quelli di prima
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 impl Stato {
     pub fn new(archivio: Archivio, registro: Registro, dati: Dati) -> Self {
-        Stato { archivio, registro, dati: Mutex::new(dati), in_corso: Mutex::new(None), avviso: Mutex::new(None) }
+        Stato {
+            archivio,
+            registro,
+            dati: Mutex::new(dati),
+            in_corso: Mutex::new(HashMap::new()),
+            tenute: Mutex::new(HashMap::new()),
+            avviso: Mutex::new(None),
+        }
     }
 
     pub fn dati(&self) -> MutexGuard<'_, Dati> {
         blocca(&self.dati)
     }
 
-    pub fn in_corso(&self) -> Option<u64> {
-        *blocca(&self.in_corso)
+    pub fn in_corso(&self) -> HashMap<u64, Attivita> {
+        blocca(&self.in_corso).clone()
+    }
+
+    /// Finita l'attivita' sulla ricetta.
+    pub fn libera(&self, id: u64) {
+        blocca(&self.in_corso).remove(&id);
     }
 
     pub fn avviso(&self) -> Option<String> {
@@ -86,7 +121,7 @@ pub fn zona_di(r: &Ricetta) -> Result<(Zona, Calendario), Errore> {
 }
 
 /// L'errore come va nel registro: il tipo, senza testi che possono contenere la prestazione o le date.
-fn tipo(e: &Errore) -> String {
+pub fn tipo(e: &Errore) -> String {
     match e {
         Errore::NonTrovata(_) => "il portale non trova la prenotazione".into(),
         Errore::NonAttiva { stati } => format!("prenotazione non attiva ({})", stati.join(", ")),
@@ -95,9 +130,11 @@ fn tipo(e: &Errore) -> String {
         Errore::Timeout => "timeout".into(),
         Errore::Sovraccarico(m) => format!("portale sovraccarico ({m})"),
         Errore::Inattesa(m) => format!("risposta inattesa ({m})"),
+        Errore::Incerto(_) => "esito incerto".into(),
     }
 }
 
+#[derive(Debug)]
 pub struct Notifica {
     /// Per il registro, che non scrive titolo e testo (nome scelto dall'utente, date della visita).
     pub ricetta: u64,
@@ -148,12 +185,14 @@ pub fn applica(r: &mut Ricetta, esito: Result<Controllo, Errore>, zona: &Zona, t
             r.esito = Some(Esito {
                 ts,
                 controllo: true,
-                attuale: Some(Visita { quando: breve(&a.quando), luogo: a.luogo.to_string(), cosa: a.cosa.clone() }),
+                attuale: Some(Visita::da(a)),
                 zona: zona.dove.descrizione(Some(a)),
                 date: c.slots.len(),
                 buone,
                 area_incompleta: c.area_incompleta,
                 errore: None,
+                nota: None,
+                note_visita: prima.note_visita,
             });
             notifiche
         }
@@ -165,9 +204,17 @@ pub fn applica(r: &mut Ricetta, esito: Result<Controllo, Errore>, zona: &Zona, t
                 }
                 Errore::NonAttiva { .. } | Errore::Doppione(_) | Errore::DatiNonValidi(_) => Some(e.to_string()),
                 // portale lento, sovraccarico o cambiato: si riprova al prossimo giro
-                Errore::Timeout | Errore::Sovraccarico(_) | Errore::Inattesa(_) => None,
+                Errore::Timeout | Errore::Sovraccarico(_) | Errore::Inattesa(_) | Errore::Incerto(_) => None,
             };
-            r.esito = Some(Esito { ts, controllo: true, errore: Some(e.to_string()), buone: vec![], date: 0, ..prima });
+            r.esito = Some(Esito {
+                ts,
+                controllo: true,
+                errore: Some(e.to_string()),
+                buone: vec![],
+                date: 0,
+                nota: None,
+                ..prima
+            });
             match pausa {
                 Some(motivo) => {
                     r.attiva = false;
@@ -184,38 +231,49 @@ pub fn applica(r: &mut Ricetta, esito: Result<Controllo, Errore>, zona: &Zona, t
     }
 }
 
+pub type Impostazioni = (String, String, String, String, Vec<u32>);
+
 /// Le impostazioni da cui dipende un controllo: se cambiano mentre e' in corso, il suo esito non vale piu'.
-fn impostazioni(r: &Ricetta) -> (String, String, String, String, Vec<u32>) {
+pub fn impostazioni(r: &Ricetta) -> Impostazioni {
     (r.cf.clone(), r.nre.clone(), r.dove.clone(), r.valore.clone(), r.evita.clone())
 }
 
+/// L'esito di un controllo e la sua sessione (con "Sposta" aperto), se c'e'.
+pub type Risultato = Result<(Controllo, Option<Sessione>), Errore>;
+
 /// Un controllo vero sul portale.
-pub fn sul_portale(r: &Ricetta, zona: &Zona, cal: &Calendario) -> Result<Controllo, Errore> {
-    Sessione::nuova(&r.cf, &r.nre)?.controlla(zona, cal)
+pub fn sul_portale(r: &Ricetta, zona: &Zona, cal: &Calendario) -> Risultato {
+    let mut s = Sessione::nuova(&r.cf, &r.nre)?;
+    let c = s.controlla(zona, cal)?;
+    Ok((c, Some(s)))
 }
 
 /// Un giro: se c'e' una ricetta da controllare la controlla con `controlla` e ne salva l'esito. `inizio` si chiama
 /// quando il controllo parte (per mostrarlo nell'interfaccia). None se non c'era niente da fare.
 pub fn giro(
     stato: &Stato,
-    controlla: &dyn Fn(&Ricetta, &Zona, &Calendario) -> Result<Controllo, Errore>,
+    controlla: &dyn Fn(&Ricetta, &Zona, &Calendario) -> Risultato,
     inizio: &dyn Fn(),
 ) -> Option<Vec<Notifica>> {
     let r = {
+        let mut in_corso = blocca(&stato.in_corso);
         let mut d = stato.dati();
         let ora = adesso();
-        let r = d.ricette.iter_mut().find(|r| dovuta(r, ora))?;
+        // una ricetta che si sta spostando o disdicendo aspetta il giro dopo
+        let r = d.ricette.iter_mut().find(|r| dovuta(r, ora) && !in_corso.contains_key(&r.id))?;
         r.ultimo_tentativo = Some(ora); // da qui si contano i 20 minuti, anche se il controllo fallisce
         let r = r.clone();
         // senza l'orario salvato, dopo un riavvio si ricontrollerebbe prima dei 20 minuti: meglio non partire
         // (in memoria l'orario resta, quindi il prossimo tentativo e' tra 20 minuti)
         stato.salva(&d).ok()?;
+        in_corso.insert(r.id, Attivita::Controllo);
         r
     };
-    *blocca(&stato.in_corso) = Some(r.id);
     inizio();
     stato.registro.scrivi(&format!("ricetta {}: controllo", r.id));
     let partito = Instant::now();
+    // "Sposta" si apre all'inizio del controllo: l'eta' della sessione si conta da qui
+    let partito_ts = adesso();
     let esito = zona_di(&r).map(|(zona, cal)| {
         // un errore imprevisto nel motore non deve fermare i controlli: vale come una risposta inattesa
         let c = catch_unwind(AssertUnwindSafe(|| controlla(&r, &zona, &cal)))
@@ -224,7 +282,16 @@ pub fn giro(
     });
     let secondi = partito.elapsed().as_secs();
     let (zona, esito) = match esito {
-        Ok((zona, c)) => (zona, c),
+        Ok((zona, Ok((c, sessione)))) => {
+            // la sessione si tiene solo se ha trovato date da proporre; quella di prima non vale piu'
+            let mut tenute = blocca(&stato.tenute);
+            tenute.remove(&r.id);
+            if let Some(sessione) = sessione.filter(|_| !c.migliori.is_empty()) {
+                tenute.insert(r.id, Tenuta { sessione, ts: partito_ts, impostazioni: impostazioni(&r) });
+            }
+            (zona, Ok(c))
+        }
+        Ok((zona, Err(e))) => (zona, Err(e)),
         Err(e) => (Zona::new(Dove::Tutte), Err(e)),
     };
     stato.registro.scrivi(&match &esito {
@@ -252,13 +319,14 @@ pub fn giro(
                 n
             }
             None => {
+                blocca(&stato.tenute).remove(&r.id); // la sessione di una ricetta cambiata o eliminata non serve
                 stato.registro.scrivi(&format!("ricetta {}: cambiata o eliminata durante il controllo", r.id));
                 vec![]
             }
         };
         notifiche
     };
-    *blocca(&stato.in_corso) = None;
+    stato.libera(r.id);
     Some(notifiche)
 }
 
@@ -278,7 +346,8 @@ pub fn avvia(
             }
             Ok(None) => {}
             Err(_) => {
-                *blocca(&stato.in_corso) = None;
+                // solo i controlli: uno spostamento in corso nell'altro thread resta segnato
+                blocca(&stato.in_corso).retain(|_, a| *a != Attivita::Controllo);
                 stato.registro.scrivi("errore interno nel giro dei controlli");
                 aggiornato();
             }
@@ -311,6 +380,8 @@ mod test {
             esito: None,
             notificate: vec![],
             assenze: 0,
+            operazione: None,
+            incerta: None,
         }
     }
 
@@ -334,7 +405,13 @@ mod test {
             cosa: "VISITA".into(),
         };
         Controllo {
-            elenco: Elenco { attuale: attuale.clone(), prenotate: vec![attuale], n_prenotate: 1, riga: 0 },
+            elenco: Elenco {
+                attuale: attuale.clone(),
+                prenotate: vec![attuale],
+                righe: vec![0],
+                n_prenotate: 1,
+                riga: 0,
+            },
             slots: migliori.clone(),
             migliori,
             area_incompleta: false,
@@ -437,11 +514,11 @@ mod test {
         let controlla = |r: &Ricetta, _: &Zona, _: &Calendario| {
             chiamate.set(chiamate.get() + 1);
             assert_eq!(r.id, 1); // quella in pausa non si controlla
-            Ok(controllo(vec![slot(1, "MAURIZIANO")]))
+            Ok((controllo(vec![slot(1, "MAURIZIANO")]), None))
         };
         let n = giro(&s, &controlla, &|| iniziato.set(true)).unwrap();
         assert!(iniziato.get() && chiamate.get() == 1 && n.len() == 1);
-        assert_eq!(s.in_corso(), None);
+        assert!(s.in_corso().is_empty());
         // salvato sul disco: esito e orario del controllo
         let d = s.archivio.leggi().unwrap();
         assert!(d.ricette[1].ultimo_tentativo.is_some() && d.ricette[1].esito.as_ref().unwrap().buone.len() == 1);
@@ -458,17 +535,17 @@ mod test {
         // durante il controllo l'utente cambia la zona: l'esito non vale piu'
         let cambia = |_: &Ricetta, _: &Zona, _: &Calendario| {
             s.dati().ricette[0].dove = "tutte".into();
-            Ok(controllo(vec![slot(1, "MAURIZIANO")]))
+            Ok((controllo(vec![slot(1, "MAURIZIANO")]), None))
         };
         assert!(giro(&s, &cambia, &|| {}).unwrap().is_empty());
         assert!(s.dati().ricette[0].esito.is_none() && s.dati().ricette[0].ultimo_tentativo.is_some());
         // un panic nel motore: il controllo vale come risposta inattesa, e in_corso si azzera
         s.dati().ricette[0].ultimo_tentativo = None;
-        let rotto = |_: &Ricetta, _: &Zona, _: &Calendario| -> Result<Controllo, Errore> { panic!("indice fuori") };
+        let rotto = |_: &Ricetta, _: &Zona, _: &Calendario| -> Risultato { panic!("indice fuori") };
         assert!(giro(&s, &rotto, &|| {}).unwrap().is_empty());
         let e = s.dati().ricette[0].esito.clone().unwrap();
         assert_eq!(e.errore.as_deref(), Some("errore interno del controllo"));
-        assert_eq!(s.in_corso(), None);
+        assert!(s.in_corso().is_empty());
         std::fs::remove_dir_all(&c).unwrap();
     }
 
@@ -476,7 +553,7 @@ mod test {
     fn senza_salvataggio_il_controllo_non_parte() {
         let (s, c) = stato("nonsalva", vec![ricetta()]);
         std::fs::create_dir(c.join("ricette.cifrate")).unwrap(); // non si puo' scrivere
-        let mai = |_: &Ricetta, _: &Zona, _: &Calendario| -> Result<Controllo, Errore> { panic!("non deve partire") };
+        let mai = |_: &Ricetta, _: &Zona, _: &Calendario| -> Risultato { panic!("non deve partire") };
         assert!(giro(&s, &mai, &|| {}).is_none());
         assert!(s.avviso().is_some() && s.dati().ricette[0].ultimo_tentativo.is_some());
         std::fs::remove_dir_all(&c).unwrap();

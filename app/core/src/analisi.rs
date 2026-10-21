@@ -16,6 +16,13 @@ pub struct Luogo {
     pub indirizzo: String,
 }
 
+impl Luogo {
+    /// Sede e ambulatorio: lo stesso posto scritto in due pagine ha la stessa chiave.
+    pub fn chiave(&self) -> String {
+        norm(&format!("{}{}", self.sede, self.ambulatorio))
+    }
+}
+
 impl fmt::Display for Luogo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // senza via il portale scrive "- TORINO (TO)": a chi legge il trattino iniziale non dice nulla
@@ -48,11 +55,7 @@ pub struct Slot {
 impl Slot {
     /// Data e luogo: la stessa data letta in due controlli ha la stessa chiave.
     pub fn chiave(&self) -> String {
-        format!(
-            "{}|{}",
-            self.quando.format("%Y%m%d%H%M"),
-            norm(&format!("{}{}", self.luogo.sede, self.luogo.ambulatorio))
-        )
+        format!("{}|{}", self.quando.format("%Y%m%d%H%M"), self.luogo.chiave())
     }
 }
 
@@ -63,6 +66,8 @@ pub struct Elenco {
     pub attuale: Prenotazione,
     /// Tutte le righe PRENOTATO con una data leggibile (una per prestazione, se piu' d'una).
     pub prenotate: Vec<Prenotazione>,
+    /// La riga dell'elenco di ciascuna di `prenotate`: i suoi pulsanti hanno quel numero.
+    pub righe: Vec<usize>,
     /// Righe PRENOTATO, anche quelle di cui non si legge la data.
     pub n_prenotate: usize,
     /// La riga dell'elenco della prenotazione attuale: i suoi pulsanti ("Sposta", "Disdici") hanno il suo numero.
@@ -202,17 +207,19 @@ pub fn elenco(xml: &str) -> Result<Elenco, Errore> {
     let Some(&prima) = pren.first() else {
         return Err(Errore::NonAttiva { stati: stati.iter().map(|s| s.to_uppercase()).collect() });
     };
-    let prenotate = pren
+    let (prenotate, righe_prenotate): (Vec<Prenotazione>, Vec<usize>) = pren
         .iter()
         .filter_map(|&i| {
-            data(&testo(righe[i])).map(|quando| Prenotazione { quando, luogo: luogo(righe[i]), cosa: cosa(righe[i]) })
+            data(&testo(righe[i]))
+                .map(|quando| (Prenotazione { quando, luogo: luogo(righe[i]), cosa: cosa(righe[i]) }, i))
         })
-        .collect();
+        .unzip();
     let quando = data(&testo(righe[prima]))
         .ok_or_else(|| Errore::Inattesa("Data dell'appuntamento attuale non leggibile".into()))?;
     Ok(Elenco {
         attuale: Prenotazione { quando, luogo: luogo(righe[prima]), cosa: cosa(righe[prima]) },
         prenotate,
+        righe: righe_prenotate,
         n_prenotate: pren.len(),
         riga: prima,
     })
@@ -305,7 +312,7 @@ pub fn doppione(prenotate: &[Prenotazione], adesso: NaiveDateTime) -> Option<(Pr
             None => gruppi.push((norm(&x.cosa), vec![x])),
         }
     }
-    let chiave = |x: &Prenotazione| (x.quando, norm(&format!("{}{}", x.luogo.sede, x.luogo.ambulatorio)));
+    let chiave = |x: &Prenotazione| (x.quando, x.luogo.chiave());
     gruppi
         .into_iter()
         .filter_map(|(_, mut righe)| {
@@ -314,6 +321,311 @@ pub fn doppione(prenotate: &[Prenotazione], adesso: NaiveDateTime) -> Option<(Pr
             diverse.then(|| (righe[0].clone(), righe[righe.len() - 1].clone()))
         })
         .max_by_key(|(_, lontana)| lontana.quando)
+}
+
+/// Il modulo del Riepilogo, l'ultimo passo prima della Conferma.
+pub const RIEPILOGO: &str = "_ricettaelettronica_WAR_cupprenotazione_:riepilogoForm";
+/// Il modulo del pulsante "Avanti" della pagina degli appuntamenti.
+pub const AVANTI: &str = "_ricettaelettronica_WAR_cupprenotazione_:appuntamenti-form-main";
+
+re!(ERRORE, r#"(?s)class="messagifyMsg alert-danger">(.*?)</div>"#);
+re!(CAMPO_ERRORE, r"^\*+[^*]*\*+:\s*");
+re!(INPUT, r"<input\b[^>]*>");
+re!(NOME, r#"name="([^"]+)""#);
+re!(TIPO, r#"type="([^"]+)""#);
+re!(VALORE, r#"value="([^"]*)""#);
+re!(SELECT, r#"(?s)<select\b[^>]*name="([^"]+)"[^>]*>(.*?)</select>"#);
+re!(OPZIONE, r#"<option\b([^>]*)value="([^"]*)"([^>]*)>"#);
+re!(TEXTAREA, r#"(?s)<textarea\b[^>]*name="([^"]+)"[^>]*>(.*?)</textarea>"#);
+re!(REDIRECT, r#"<redirect url="([^"]+)""#);
+re!(VIEW_STATE, r#"(?s)<update id="[^"]*javax\.faces\.ViewState[^"]*"[^>]*><!\[CDATA\[(.*?)\]\]>"#);
+re!(PRESA_VISIONE, r#"icon-check"[^>]*></i>\s*<span[^>]*>\s*Presa visione delle note"#);
+re!(DICHIARATE, r"Prestazioni selezionate:?\s*(\d+)");
+re!(ALLE_ORE, r"(?i)alle\s+ore");
+re!(
+    MESE_ANNO,
+    r"(?i)\b(?:gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre)\s+\d{4}\b"
+);
+re!(QUANDO, r"\bQuando\b");
+re!(DATA_CIFRE, r"\b\d{1,2}[/.-]\d{1,2}[/.-]\d{4}\b");
+re!(
+    TITOLI_NOTE,
+    r#"(?s)<h3 class="popoverTitle">.*?</h3>|<h5 class="popoverSede">.*?</h5>|<h6 class="popoverUnita">.*?</h6>"#
+);
+re!(TAG_TAGLIATO, r"<[^>]*$");
+re!(
+    ELEMENTO_LISTA,
+    r#"<(?:a|button|input|span|div)\b[^>]*\sid="(_listaprenotazioni_WAR_cupprenotazione_:prescrizioniForm:_t\d+)"[^>]*>"#
+);
+re!(VALORE_ATTRIBUTO, r#"\svalue="([^"]*)""#);
+re!(DENTRO_BUTTON, r"(?s)<button\b[^>]*>(.*?)</button>");
+re!(DISDETTA_OK, r"(?i)disdett\w* con successo");
+
+/// L'indice di byte valido piu' vicino a `i`, andando indietro (mai a meta' di un carattere).
+fn confine(s: &str, i: usize) -> usize {
+    let mut i = i.min(s.len());
+    while !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// I messaggi di errore del portale (riquadri rossi), senza il prefisso del campo ("***nre***: ...").
+pub fn errori(xml: &str) -> Vec<String> {
+    ERRORE.captures_iter(xml).map(|c| CAMPO_ERRORE.replace(&testo(&c[1]), "").into_owned()).collect()
+}
+
+/// I campi di un modulo come li serializza il browser: input (anche nascosti), caselle spuntate, select, textarea.
+pub fn campi_modulo(pagina: &str, id: &str) -> Vec<(String, String)> {
+    let f = modulo(pagina, id).unwrap_or("");
+    let dec = |s: &str| html_escape::decode_html_entities(s).into_owned();
+    let mut campi: Vec<(String, String)> = vec![];
+    let mut metti = |k: String, v: String| match campi.iter_mut().find(|(n, _)| *n == k) {
+        Some(c) => c.1 = v,
+        None => campi.push((k, v)),
+    };
+    for tag in INPUT.find_iter(f).map(|m| m.as_str()) {
+        let Some(nome) = NOME.captures(tag) else { continue };
+        let tipo = TIPO.captures(tag).map_or("text".to_string(), |c| c[1].to_lowercase());
+        if ["submit", "button", "image", "reset", "file"].contains(&tipo.as_str()) {
+            continue;
+        }
+        if (tipo == "checkbox" || tipo == "radio") && !tag.contains("checked") {
+            continue;
+        }
+        let valore = VALORE.captures(tag).map(|c| dec(&c[1]));
+        metti(dec(&nome[1]), valore.unwrap_or_else(|| if tipo == "checkbox" { "on".into() } else { String::new() }));
+    }
+    for c in SELECT.captures_iter(f) {
+        let opzioni: Vec<(String, String)> =
+            OPZIONE.captures_iter(&c[2]).map(|o| (format!("{}{}", &o[1], &o[3]), o[2].to_string())).collect();
+        let scelta = opzioni.iter().find(|(a, _)| a.contains("selected")).or(opzioni.first());
+        if let Some((_, v)) = scelta {
+            metti(dec(&c[1]), dec(v));
+        }
+    }
+    for c in TEXTAREA.captures_iter(f) {
+        metti(dec(&c[1]), dec(&c[2]));
+    }
+    campi
+}
+
+/// L'indirizzo a cui il portale rimanda dopo un "Avanti", se c'e'.
+pub fn redirect(xml: &str) -> Option<String> {
+    REDIRECT.captures(xml).map(|c| html_escape::decode_html_entities(&c[1]).into_owned())
+}
+
+/// Il ViewState nuovo che il portale manda in una risposta parziale, se c'e'.
+pub fn view_state(xml: &str) -> Option<String> {
+    VIEW_STATE.captures(xml).map(|c| c[1].to_string())
+}
+
+/// Il Riepilogo letto: il testo da "Prestazioni selezionate" in poi, la prima data e il testo subito dopo (sede e
+/// ambulatorio), e la pagina intera per la Conferma.
+#[derive(Debug, Clone)]
+pub struct Riepilogo {
+    pub testo: String,
+    pub data: Option<NaiveDateTime>,
+    pub dopo_data: String,
+    pub pagina: String,
+}
+
+pub fn riepilogo(pagina: String) -> Riepilogo {
+    let t = testo(&pagina);
+    let t = t.find("Prestazioni selezionate").map_or(String::new(), |i| t[i..].to_string());
+    let (data_letta, dopo_data) = match DATA.find(&t) {
+        Some(m) => (data(m.as_str()), primi(&t[m.end()..], 250).to_string()),
+        None => (None, String::new()),
+    };
+    Riepilogo { testo: t, data: data_letta, dopo_data, pagina }
+}
+
+/// Il pulsante "Conferma presa visione" delle note del Riepilogo, se c'e'. Il suo id cambia a ogni pagina: si legge
+/// nei 900 caratteri prima dell'etichetta. Err se l'etichetta c'e' ma il pulsante non si riconosce.
+pub fn presa_visione(pagina: &str) -> Result<Option<String>, Errore> {
+    let Some(i) = pagina.find(r#"aria-describedby="Conferma presa visione""#) else { return Ok(None) };
+    let re = Regex::new(&format!(r#"id="({}:_t\d+)""#, regex::escape(RIEPILOGO))).expect("regex");
+    let prima = &pagina[confine(pagina, i.saturating_sub(900))..i];
+    match re.captures_iter(prima).last() {
+        Some(c) => Ok(Some(c[1].to_string())),
+        None => Err(Errore::Inattesa("Pulsante 'Conferma presa visione' non riconosciuto: non confermo".into())),
+    }
+}
+
+/// La risposta al click su "Conferma presa visione" dice che il portale l'ha registrata.
+pub fn presa_visione_registrata(xml: &str) -> bool {
+    !xml.contains("alert-danger") && PRESA_VISIONE.is_match(xml)
+}
+
+/// Le righe di un riquadro di note, senza le intestazioni del portale.
+fn righe_note(blocco: &str) -> Vec<String> {
+    let b = TITOLI_NOTE.replace_all(blocco, "");
+    let b = TAG_TAGLIATO.replace(&b, "");
+    let b = TAG.replace_all(&b, "\n");
+    let b = html_escape::decode_html_entities(&b);
+    let mut fuori = vec![];
+    let mut tot = 0;
+    for r in b.split('\n').map(|r| r.split_whitespace().collect::<Vec<_>>().join(" ")) {
+        if r.is_empty() || r.starts_with("id=") || ["note", "note paziente"].contains(&r.to_lowercase().as_str()) {
+            continue;
+        }
+        // limiti larghi: solo contro pagine anomale, le note vere restano intere
+        tot += r.len();
+        if fuori.len() >= 80 || tot > 12000 {
+            break;
+        }
+        fuori.push(r);
+    }
+    fuori
+}
+
+/// Le note dell'appuntamento che il Riepilogo mostra (di solito la preparazione all'esame), una riga per voce.
+pub fn note_riepilogo(pagina: &str) -> Vec<String> {
+    let Some(i) = pagina.find(r#"id="noteDialog""#) else { return vec![] };
+    let fine = pagina[i..].find(r#"aria-describedby="Conferma presa visione""#).map_or(i + 15000, |j| i + j);
+    righe_note(&pagina[i..confine(pagina, fine)])
+}
+
+/// Il pulsante "Si'" del dialogo di conferma della disdetta (risposta al click su "Disdici"), letto ogni volta: il
+/// portale lo numera a ogni apertura. Err se non ce n'e' esattamente uno.
+pub fn dialogo_si(xml: &str) -> Result<String, Errore> {
+    let t = html_escape::decode_html_entities(xml).into_owned();
+    let elementi: Vec<_> = ELEMENTO_LISTA.captures_iter(&t).collect();
+    let mut si: Vec<String> = vec![];
+    for (n, c) in elementi.iter().enumerate() {
+        let tutto = c.get(0).expect("match");
+        let fine_tag = tutto.end();
+        let mut etichette = vec![match VALORE_ATTRIBUTO.captures(tutto.as_str()) {
+            Some(v) => v[1].to_string(),
+            None => testo(primi(&t[fine_tag..], 300).split('<').next().unwrap_or("")),
+        }];
+        // ottobre 2026: l'id e' sul contenitore e l'etichetta nel <button><span>Si</span></button> dentro, fino al
+        // prossimo elemento con id
+        let prossimo = elementi.get(n + 1).map_or(t.len(), |x| x.get(0).expect("match").start());
+        let fine = prossimo.min(confine(&t, fine_tag + 1500)).max(fine_tag);
+        if let Some(b) = DENTRO_BUTTON.captures(&t[fine_tag..fine]) {
+            etichette.push(testo(&b[1]));
+        }
+        // "Si'" con o senza accento, come i nomi dei comuni
+        if etichette.iter().any(|x| crate::zona::chiave_comune(x) == "SI") && !si.iter().any(|x| *x == c[1]) {
+            si.push(c[1].to_string());
+        }
+    }
+    match si.as_slice() {
+        [uno] => Ok(uno.clone()),
+        _ => Err(Errore::Inattesa("Dialogo di conferma della disdetta non riconosciuto: non disdico".into())),
+    }
+}
+
+/// Il portale scrive che la disdetta e' andata.
+pub fn disdetta_riuscita(xml: &str) -> bool {
+    DISDETTA_OK.is_match(&testo(&html_escape::decode_html_entities(xml)))
+}
+
+/// Quante volte il testo riporta ciascuna prestazione, come parole intere: i nomi piu' lunghi per primi e tolti dal
+/// testo, cosi' "ECOGRAFIA ADDOME" non si ritrova dentro "ECOGRAFIA ADDOME COMPLETO".
+pub fn conta_nomi(testo: &str, nomi: &[String]) -> Vec<(String, usize)> {
+    let compatto = |s: &str| s.to_uppercase().split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut t = format!(" {} ", compatto(testo));
+    let mut unici: Vec<&String> = vec![];
+    for n in nomi {
+        if !unici.contains(&n) {
+            unici.push(n);
+        }
+    }
+    unici.sort_by_key(|n| std::cmp::Reverse(n.len()));
+    let parola = |c: Option<char>| c.is_some_and(|c| c.is_ascii_uppercase() || c.is_ascii_digit());
+    let mut conta = vec![];
+    for n in unici {
+        let nome = compatto(n);
+        let mut trovati = vec![];
+        if !nome.is_empty() {
+            // niente lookaround nel crate regex: i confini di parola si controllano a mano
+            let mut da = 0;
+            while let Some(i) = t[da..].find(&nome).map(|i| da + i) {
+                let fine = i + nome.len();
+                if !parola(t[..i].chars().next_back()) && !parola(t[fine..].chars().next()) {
+                    trovati.push((i, fine));
+                    da = fine;
+                } else {
+                    da = i + t[i..].chars().next().map_or(1, char::len_utf8);
+                }
+            }
+        }
+        for (a, b) in trovati.iter().rev() {
+            t.replace_range(*a..*b, " ");
+        }
+        conta.push((n.clone(), trovati.len()));
+    }
+    conta
+}
+
+/// Ogni nome compare nel testo almeno tante volte quante e' ripetuto in `nomi`.
+fn ci_sono_tutti(testo: &str, nomi: &[String]) -> bool {
+    let conta = conta_nomi(testo, nomi);
+    let quante = |nome: &String| conta.iter().find(|(n, _)| n == nome).map_or(0, |(_, k)| *k);
+    nomi.iter().all(|n| quante(n) >= nomi.iter().filter(|x| *x == n).count())
+}
+
+/// Il numero di "Prestazioni selezionate" che il Riepilogo dichiara.
+pub fn dichiarate(testo: &str) -> Option<usize> {
+    DICHIARATE.captures(testo).and_then(|c| c[1].parse().ok())
+}
+
+/// Il Riepilogo riporta tutte le prestazioni prenotate insieme: tante quante ne dichiara, ciascuna nominata.
+pub fn tutte_nel_riepilogo(testo: &str, nomi: &[String]) -> bool {
+    dichiarate(testo) == Some(nomi.len()) && ci_sono_tutti(testo, nomi)
+}
+
+/// Ogni appuntamento del Riepilogo e' quello scelto: stessa data e ora e, subito dopo, lo stesso luogo. Nessuna data
+/// in un altro formato: tanti "alle ore", "Quando" e mesi con l'anno quante date riconosciute, e nessuna in cifre.
+pub fn stesso_appuntamento(testo: &str, slot: &Slot) -> bool {
+    let date: Vec<_> = DATA.find_iter(testo).collect();
+    let quando = QUANDO.find_iter(testo).count();
+    if date.is_empty()
+        || ALLE_ORE.find_iter(testo).count() != date.len()
+        || MESE_ANNO.find_iter(testo).count() != date.len()
+        || (quando > 0 && quando != date.len())
+        || DATA_CIFRE.is_match(testo)
+    {
+        return false;
+    }
+    date.iter().all(|m| {
+        data(m.as_str()) == Some(slot.quando) && norm(primi(&testo[m.end()..], 250)).starts_with(&slot.luogo.chiave())
+    })
+}
+
+/// Dopo la Conferma: le righe prenotate al posto scelto coprono tutte le prestazioni (una riga per prestazione, o
+/// righe che le nominano tutte) e, spostandone piu' d'una insieme, nessuna e' rimasta alla data `vecchia`.
+pub fn tutte_al_posto(righe: &[Prenotazione], slot: &Slot, nomi: &[String], vecchia: Option<NaiveDateTime>) -> bool {
+    if vecchia.is_some_and(|v| righe.iter().any(|x| x.quando == v)) {
+        return false;
+    }
+    let al_posto: Vec<&Prenotazione> =
+        righe.iter().filter(|x| x.quando == slot.quando && x.luogo.chiave() == slot.luogo.chiave()).collect();
+    if nomi.len() <= 1 {
+        return !al_posto.is_empty();
+    }
+    let cose = al_posto.iter().map(|x| x.cosa.as_str()).collect::<Vec<_>>().join(" | ");
+    al_posto.len() >= nomi.len() || ci_sono_tutti(&cose, nomi)
+}
+
+/// Il Riepilogo e' quello della data scelta: stessa data, stessa prestazione, stesso luogo subito dopo la data.
+pub fn verifica_riepilogo(r: &Riepilogo, slot: &Slot, cosa: &str) -> Result<(), Errore> {
+    let no = |m: &str| Err(Errore::Inattesa(m.into()));
+    if slot.luogo.sede.is_empty() || cosa.is_empty() {
+        return no("Luogo o prestazione non leggibili: non confermo");
+    }
+    if r.data != Some(slot.quando) {
+        return no("Il Riepilogo riporta una data diversa da quella scelta: non confermo");
+    }
+    if !norm(&r.testo).contains(&norm(cosa)) {
+        return no("Il Riepilogo non riporta la stessa prestazione della prenotazione attuale: non confermo");
+    }
+    if !norm(&r.dopo_data).starts_with(&slot.luogo.chiave()) {
+        return no("Il Riepilogo riporta un luogo diverso da quello scelto: non confermo");
+    }
+    Ok(())
 }
 
 /// Codice fiscale e numero ricetta come li vuole il portale (maiuscoli, senza spazi), o perche' non vanno.

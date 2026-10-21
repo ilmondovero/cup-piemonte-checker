@@ -23,6 +23,9 @@ pub enum Errore {
     /// Pagina diversa da quella attesa: sito cambiato, manutenzione, risposta inattesa.
     #[error("{0}")]
     Inattesa(String),
+    /// Conferma (o disdetta) inviata, ma l'esito non si e' potuto verificare: va controllato sul portale.
+    #[error("{0}")]
+    Incerto(String),
 }
 
 impl Errore {
