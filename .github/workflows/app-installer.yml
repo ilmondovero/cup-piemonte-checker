@@ -47,6 +47,7 @@ jobs:
     uses: ./.github/workflows/app-prove.yml
 
   installer:
+    name: installer ${{ matrix.os }}
     needs: [versione, prove]
     strategy:
       fail-fast: false
@@ -120,10 +121,31 @@ jobs:
             exit 1
           fi
 
-      - name: Installa con NSIS (Windows)
+      # prima l'MSI, su una macchina pulita: dopo un'installazione NSIS l'MSI riusa la sua cartella
+      - name: Installa con MSI (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          $msi = Get-ChildItem pacchetti -Filter '*.msi' | Select-Object -First 1
+          $p = Start-Process -Wait -PassThru -FilePath msiexec.exe -ArgumentList '/i', "`"$($msi.FullName)`"", '/qn', '/norestart', '/l*v', 'msi.log'
+          $exe = Join-Path $env:ProgramFiles 'CUP Piemonte\cup-piemonte.exe'
+          if ($p.ExitCode -ne 0 -or -not (Test-Path $exe)) {
+            Get-Content msi.log -Tail 60
+            throw "msiexec: codice $($p.ExitCode), $exe presente: $(Test-Path $exe)"
+          }
+
+      - name: Avvia l'app installata con MSI (Windows)
+        if: runner.os == 'Windows'
+        run: bash .github/scripts/prova-avvio.sh "$V" "$PROGRAMFILES/CUP Piemonte/cup-piemonte.exe"
+
+      - name: Disinstalla l'MSI e installa con NSIS (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem pacchetti -Filter '*.msi' | Select-Object -First 1
+          $p = Start-Process -Wait -PassThru -FilePath msiexec.exe -ArgumentList '/x', "`"$($msi.FullName)`"", '/qn', '/norestart'
+          if ($p.ExitCode -ne 0) { throw "disinstallazione MSI: codice $($p.ExitCode)" }
+          if (Test-Path (Join-Path $env:ProgramFiles 'CUP Piemonte\cup-piemonte.exe')) { throw "la disinstallazione MSI ha lasciato l'app" }
           $setup = Get-ChildItem pacchetti -Filter '*-setup.exe' | Select-Object -First 1
           $p = Start-Process -Wait -PassThru -FilePath $setup.FullName -ArgumentList '/S'
           if ($p.ExitCode -ne 0) { throw "installer NSIS: codice $($p.ExitCode)" }
@@ -132,7 +154,7 @@ jobs:
         if: runner.os == 'Windows'
         run: bash .github/scripts/prova-avvio.sh "$V" "$LOCALAPPDATA/CUP Piemonte/cup-piemonte.exe"
 
-      - name: Disinstalla e installa con MSI (Windows)
+      - name: Disinstalla con NSIS (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -141,18 +163,6 @@ jobs:
           $p = Start-Process -Wait -PassThru -FilePath (Join-Path $dir 'uninstall.exe') -ArgumentList '/S', "_?=$dir"
           if ($p.ExitCode -ne 0) { throw "disinstallazione NSIS: codice $($p.ExitCode)" }
           if (Test-Path (Join-Path $dir 'cup-piemonte.exe')) { throw "la disinstallazione NSIS ha lasciato l'app" }
-          $msi = Get-ChildItem pacchetti -Filter '*.msi' | Select-Object -First 1
-          $p = Start-Process -Wait -PassThru -FilePath msiexec.exe -ArgumentList '/i', "`"$($msi.FullName)`"", '/qn', '/norestart', '/l*v', 'msi.log'
-          $exe = Join-Path $env:ProgramFiles 'CUP Piemonte\cup-piemonte.exe'
-          if ($p.ExitCode -ne 0 -or -not (Test-Path $exe)) {
-            Get-Content msi.log -Tail 60
-            Get-ChildItem $env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:LOCALAPPDATA -Recurse -Filter 'cup-piemonte.exe' -ErrorAction SilentlyContinue | ForEach-Object FullName
-            throw "msiexec: codice $($p.ExitCode), $exe presente: $(Test-Path $exe)"
-          }
-
-      - name: Avvia l'app installata con MSI (Windows)
-        if: runner.os == 'Windows'
-        run: bash .github/scripts/prova-avvio.sh "$V" "$PROGRAMFILES/CUP Piemonte/cup-piemonte.exe"
 
       - name: Prova il dmg (macOS)
         if: runner.os == 'macOS'
