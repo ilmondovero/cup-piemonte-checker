@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CUP Piemonte: scarica l'app</title>
+<meta name="description" content="App gratuita per Windows, macOS e Linux: controlla il CUP Piemonte ogni 20 minuti e ti avvisa quando si libera una data prima della tua prenotazione.">
+<meta property="og:title" content="CUP Piemonte: l'app che cerca una data prima">
+<meta property="og:description" content="Controlla il CUP Piemonte al posto tuo e ti avvisa quando si libera una data prima. Gratuita, open source, i dati restano sul tuo computer.">
+<meta property="og:image" content="https://ilmondovero.github.io/cup-piemonte-checker/img/app.png">
+<link rel="icon" href="img/icona.png">
+<style>
+:root {
+  --sfondo: #f5f7fa; --carta: #ffffff; --testo: #1d2430; --tenue: #5b6575; --bordo: #d9dee7;
+  --blu: #0b6bcb; --blu-scuro: #0956a3; --verde: #1a7f37; --giallo: #fff6d6; --giallo-bordo: #e7c75a;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --sfondo: #12161c; --carta: #1b2129; --testo: #e6e9ee; --tenue: #a3adbb; --bordo: #2f3946;
+    --blu: #3d8fe0; --blu-scuro: #5aa2ea; --verde: #4cc26a; --giallo: #2d2814; --giallo-bordo: #7a6420;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--sfondo); color: var(--testo);
+  font: 17px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif; }
+a { color: var(--blu); }
+main { max-width: 980px; margin: 0 auto; padding: 0 16px 48px; }
+header.testa { display: flex; align-items: center; gap: 12px; padding: 20px 0; }
+header.testa img { width: 40px; height: 40px; }
+header.testa b { font-size: 20px; }
+header.testa nav { margin-left: auto; display: flex; gap: 16px; font-size: 15px; }
+.eroe { display: grid; grid-template-columns: 1.15fr .85fr; gap: 40px; align-items: center; padding: 24px 0 40px; }
+h1 { font-size: clamp(30px, 5vw, 44px); line-height: 1.15; margin: 0 0 16px; }
+.sotto { font-size: 19px; color: var(--tenue); margin: 0 0 28px; }
+.scarica { display: inline-flex; flex-direction: column; align-items: flex-start; background: var(--blu); color: #fff;
+  text-decoration: none; padding: 14px 26px; border-radius: 12px; font-weight: 700; font-size: 19px; }
+.scarica:hover { background: var(--blu-scuro); }
+.scarica small { font-weight: 400; font-size: 14px; opacity: .9; }
+.dopo { margin: 14px 0 0; font-size: 15px; color: var(--tenue); }
+.schermo { width: 100%; max-width: 360px; justify-self: center; border-radius: 14px; border: 1px solid var(--bordo);
+  box-shadow: 0 12px 40px rgba(0,0,0,.12); }
+.schermo.scuro { display: none; }
+@media (prefers-color-scheme: dark) { .schermo.chiaro { display: none; } .schermo.scuro { display: block; } }
+h2 { font-size: 26px; margin: 48px 0 16px; }
+.griglia { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.carta { background: var(--carta); border: 1px solid var(--bordo); border-radius: 14px; padding: 20px; }
+.carta h3 { margin: 0 0 6px; font-size: 19px; }
+.carta p { margin: 0 0 12px; color: var(--tenue); font-size: 15px; }
+.carta.tuo { border: 2px solid var(--blu); }
+.file { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; padding: 10px 12px;
+  border: 1px solid var(--bordo); border-radius: 10px; text-decoration: none; color: var(--testo); margin-top: 8px; }
+.file:hover { border-color: var(--blu); }
+.file b { color: var(--blu); }
+.file span { color: var(--tenue); font-size: 13px; white-space: nowrap; }
+.punti { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+.punti .carta p { color: var(--testo); margin: 0; }
+.avviso { background: var(--giallo); border: 1px solid var(--giallo-bordo); border-radius: 14px; padding: 16px 20px; }
+.avviso h3 { margin: 0 0 8px; font-size: 17px; }
+.avviso p { margin: 6px 0; font-size: 15px; }
+code { font: 14px ui-monospace, SFMono-Regular, Consolas, monospace; background: var(--carta); border: 1px solid var(--bordo);
+  border-radius: 6px; padding: 1px 6px; overflow-wrap: anywhere; }
+.copia { font: inherit; font-size: 13px; margin-left: 6px; padding: 2px 10px; border-radius: 6px; border: 1px solid var(--bordo);
+  background: var(--carta); color: var(--testo); cursor: pointer; }
+.passi { padding-left: 22px; } .passi li { margin: 6px 0; }
+footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--bordo); color: var(--tenue); font-size: 14px; }
+.telefono { display: none; }
+@media (max-width: 760px) {
+  .eroe, .griglia, .punti { grid-template-columns: 1fr; }
+  .eroe { gap: 24px; padding-top: 8px; }
+  header.testa nav { display: none; }
+  .scarica { width: 100%; }
+}
+</style>
+</head>
+<body>
+<main>
+  <header class="testa">
+    <img src="img/icona.png" alt="">
+    <b>CUP Piemonte</b>
+    <nav>
+      <a href="#scarica">Scarica</a>
+      <a href="#come">Come funziona</a>
+      <a href="https://github.com/ilmondovero/cup-piemonte-checker">Codice sorgente</a>
+    </nav>
+  </header>
+
+  <section class="eroe">
+    <div>
+      <h1>Una data prima per la tua visita, senza ricontrollare il CUP ogni ora</h1>
+      <p class="sotto">L'app controlla il portale CUP Piemonte ogni 20 minuti e ti avvisa con una notifica appena si
+        libera una data prima della tua prenotazione. Sposta la prenotazione solo quando lo chiedi tu.</p>
+      <a class="scarica" id="principale" href="https://github.com/ilmondovero/cup-piemonte-checker/releases">
+        Scarica l'app<small id="principale-info">Windows, macOS e Linux · gratuita</small>
+      </a>
+      <p class="dopo" id="versione">Gratuita e open source · Windows 10 e 11, macOS, Linux</p>
+      <p class="dopo telefono" id="telefono">Sei sul telefono: l'app è per il computer. Apri questa pagina dal PC,
+        oppure usa il <a href="https://github.com/ilmondovero/cup-piemonte-checker/tree/master/telegram-bot">bot Telegram</a>.</p>
+    </div>
+    <img class="schermo chiaro" src="img/app.png" alt="L'app con una prenotazione e due date prima trovate dal controllo, ognuna con il pulsante Sposta qui" width="460" height="760">
+    <img class="schermo scuro" src="img/app-scuro.png" alt="" width="460" height="760">
+  </section>
+
+  <section id="scarica">
+    <h2>Scarica</h2>
+    <div class="griglia">
+      <div class="carta" data-os="windows">
+        <h3>Windows</h3>
+        <p>Windows 10 e 11, 64 bit.</p>
+        <a class="file" data-file="setup"><b>Installer (.exe)</b><span>consigliato</span></a>
+        <a class="file" data-file="msi"><b>Pacchetto .msi</b><span>per tutti gli utenti</span></a>
+      </div>
+      <div class="carta" data-os="macos">
+        <h3>macOS</h3>
+        <p>Un solo file per Mac Intel e Apple Silicon (M1 e successivi).</p>
+        <a class="file" data-file="dmg"><b>Immagine disco (.dmg)</b><span></span></a>
+      </div>
+      <div class="carta" data-os="linux">
+        <h3>Linux</h3>
+        <p>64 bit (x86_64).</p>
+        <a class="file" data-file="deb"><b>.deb</b><span>Ubuntu 22.04+, Debian 12+, Mint</span></a>
+        <a class="file" data-file="rpm"><b>.rpm</b><span>Fedora, openSUSE</span></a>
+        <a class="file" data-file="appimage"><b>.AppImage</b><span>tutte le altre</span></a>
+      </div>
+    </div>
+    <p class="dopo">Somme SHA-256 per controllare i file: <a data-file="somme" href="#">SHA256SUMS.txt</a> ·
+      Tutte le versioni: <a href="https://github.com/ilmondovero/cup-piemonte-checker/releases">pagina Releases</a></p>
+  </section>
+
+  <section>
+    <h2>Al primo avvio</h2>
+    <div class="avviso">
+      <h3>Gli installer non sono firmati, quindi il sistema avvisa una volta</h3>
+      <p>La firma digitale costa e richiede un'identità registrata. Il codice è pubblico e gli installer li costruisce
+        GitHub a partire da quel codice, dopo averli installati e provati.</p>
+      <p><b>Windows</b> ("Windows ha protetto il PC"): premi <i>Ulteriori informazioni</i>, poi <i>Esegui comunque</i>.</p>
+      <p><b>macOS</b> ("non può essere aperta" o "è danneggiata"): trascina l'app in Applicazioni, poi in
+        <i>Impostazioni di Sistema &gt; Privacy e sicurezza</i> premi <i>Apri comunque</i>. Se il pulsante non c'è, nel Terminale:<br>
+        <code id="xattr">xattr -dr com.apple.quarantine "/Applications/CUP Piemonte.app"</code><button class="copia" data-copia="xattr">Copia</button></p>
+      <p><b>Linux</b>: l'AppImage va resa eseguibile (<code>chmod +x</code> o dalle proprietà del file).</p>
+    </div>
+  </section>
+
+  <section id="come">
+    <h2>Come funziona</h2>
+    <ol class="passi">
+      <li>Aggiungi la ricetta: un nome a piacere, codice fiscale e numero della ricetta elettronica (NRE) di una visita
+        <b>già prenotata</b> sul CUP Piemonte.</li>
+      <li>Scegli dove cercare (la stessa sede, il tuo comune, Torino e prima cintura, la provincia o dove propone il CUP)
+        e i giorni da evitare.</li>
+      <li>L'app controlla ogni 20 minuti, anche con la finestra chiusa (resta nella barra di sistema). Quando esce una data
+        prima arriva una notifica con data, ora e luogo.</li>
+      <li>Se ti va bene premi <i>Sposta qui</i>: l'app mostra la data attuale e quella nuova e sposta solo dopo il tuo
+        <i>Sì</i>, poi controlla sul portale che lo spostamento sia andato.</li>
+    </ol>
+    <div class="punti">
+      <div class="carta"><h3>I dati restano sul tuo computer</h3>
+        <p>Codice fiscale e ricetta vanno solo al portale CUP, come quando lo usi dal browser. Sul computer sono
+          cifrati, con la chiave nel portachiavi del sistema. Nessun server, nessun account, nessuna telemetria.</p></div>
+      <div class="carta"><h3>Non sposta mai niente da sola</h3>
+        <p>Ogni spostamento o disdetta parte solo da un tuo clic e chiede conferma mostrando data, ora e luogo.
+          Se l'esito non è certo, l'app lo dice e ti chiede di controllare sul sito del CUP.</p></div>
+      <div class="carta"><h3>Rispetta il portale</h3>
+        <p>Un controllo ogni 20 minuti per ricetta, non di più: ogni controllo apre "Sposta appuntamento" come faresti tu.</p></div>
+      <div class="carta"><h3>Leggera</h3>
+        <p>Pochi MB, usa il browser già presente nel sistema. Si può far partire con il computer dalle impostazioni.</p></div>
+    </div>
+    <p><img class="schermo" src="img/app-conferma.png" alt="La conferma prima di spostare: data attuale, data nuova e i pulsanti Annulla e Sì, sposta" width="460" height="760" style="margin-top:24px"></p>
+  </section>
+
+  <section>
+    <h2>Domande</h2>
+    <p><b>È un'app ufficiale?</b> No. È un progetto indipendente e gratuito, non collegato alla Regione Piemonte né al
+      CSI Piemonte. Usa il portale pubblico <a href="https://cup.isan.csi.it/">cup.isan.csi.it</a> come lo useresti tu.</p>
+    <p><b>Funziona con una ricetta non ancora prenotata?</b> No, l'app cerca date prima di una prenotazione che esiste già.
+      Il <a href="https://github.com/ilmondovero/cup-piemonte-checker/tree/master/telegram-bot">bot Telegram</a> ha anche
+      una funzione sperimentale per le ricette mai prenotate.</p>
+    <p><b>Posso seguire più ricette?</b> Sì, anche di familiari, ognuna con la sua zona e i suoi giorni.</p>
+    <p><b>Come la aggiorno?</b> Scarichi la versione nuova da questa pagina e la installi sopra la vecchia: le ricette restano.</p>
+    <p><b>Ho trovato un problema.</b> Il codice e la documentazione completa sono su
+      <a href="https://github.com/ilmondovero/cup-piemonte-checker/tree/master/app">GitHub</a>.</p>
+  </section>
+
+  <footer>
+    Progetto open source, non ufficiale. Il codice è su
+    <a href="https://github.com/ilmondovero/cup-piemonte-checker">github.com/ilmondovero/cup-piemonte-checker</a>.
+    Questa pagina non usa cookie né statistiche; per sapere quale versione è la più recente chiede l'elenco delle release a GitHub.
+  </footer>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  var REPO = "ilmondovero/cup-piemonte-checker";
+  // se GitHub non risponde (limite di richieste, rete): i file della versione pubblicata con questa pagina
+  var RISERVA = { tag: "app-v0.1.0", base: "https://github.com/" + REPO + "/releases/download/app-v0.1.0/",
+    file: { setup: "CUP-Piemonte_0.1.0_x64-setup.exe", msi: "CUP-Piemonte_0.1.0_x64.msi",
+      dmg: "CUP-Piemonte_0.1.0_universal.dmg", deb: "CUP-Piemonte_0.1.0_amd64.deb",
+      rpm: "CUP-Piemonte-0.1.0-1.x86_64.rpm", appimage: "CUP-Piemonte_0.1.0_amd64.AppImage", somme: "SHA256SUMS.txt" } };
+  var TIPI = { setup: /-setup\.exe$/, msi: /\.msi$/, dmg: /\.dmg$/, deb: /\.deb$/, rpm: /\.rpm$/,
+    appimage: /\.AppImage$/, somme: /^SHA256SUMS\.txt$/ };
+  var NOMI = { windows: "Windows", macos: "macOS", linux: "Linux" };
+
+  function sistema() {
+    var ua = navigator.userAgent || "";
+    if (/Android|iPhone|iPad|iPod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) return "telefono";
+    if (/Windows/i.test(ua)) return "windows";
+    if (/Mac OS X|Macintosh/i.test(ua)) return "macos";
+    if (/Linux|X11|CrOS/i.test(ua)) return "linux";
+    return null;
+  }
+
+  function mb(byte) { return byte ? (byte / 1048576).toFixed(1).replace(".", ",") + " MB" : ""; }
+
+  function mostra(rel) {
+    var file = rel.file, os = sistema();
+    document.querySelectorAll("[data-file]").forEach(function (a) {
+      var f = file[a.dataset.file];
+      if (!f) return;
+      a.href = f.url;
+      var s = a.querySelector("span");
+      if (s && f.size && !("fisso" in s.dataset)) s.dataset.fisso = s.textContent;
+      if (s && f.size) s.textContent = (s.dataset.fisso ? s.dataset.fisso + " · " : "") + mb(f.size);
+    });
+    var v = rel.tag.replace(/^app-v/, "");
+    document.getElementById("versione").textContent = "Versione " + v + (rel.prova ? " (versione di prova)" : "") +
+      " · gratuita e open source · Windows 10 e 11, macOS, Linux";
+    var principale = document.getElementById("principale"), info = document.getElementById("principale-info");
+    var scelta = { windows: "setup", macos: "dmg", linux: "appimage" }[os];
+    if (os === "linux" && /Ubuntu|Debian/i.test(navigator.userAgent)) scelta = "deb";
+    if (os === "telefono") {
+      document.getElementById("telefono").style.display = "block";
+      principale.href = "#scarica";
+      return;
+    }
+    if (scelta && file[scelta]) {
+      principale.href = file[scelta].url;
+      principale.firstChild.textContent = "Scarica per " + NOMI[os];
+      info.textContent = "versione " + v + " · " + mb(file[scelta].size);
+      var carta = document.querySelector('.carta[data-os="' + os + '"]');
+      if (carta) carta.classList.add("tuo");
+    } else {
+      principale.href = "#scarica";
+    }
+  }
+
+  var riserva = { tag: RISERVA.tag, prova: true, file: {} };
+  Object.keys(RISERVA.file).forEach(function (k) { riserva.file[k] = { url: RISERVA.base + RISERVA.file[k] }; });
+  mostra(riserva);
+
+  fetch("https://api.github.com/repos/" + REPO + "/releases?per_page=30", { headers: { Accept: "application/vnd.github+json" } })
+    .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+    .then(function (elenco) {
+      // la piu' recente dell'app, anche se e' una versione di prova
+      var rel = elenco.filter(function (x) { return !x.draft && /^app-v/.test(x.tag_name); })[0];
+      if (!rel) return;
+      var file = {};
+      rel.assets.forEach(function (a) {
+        Object.keys(TIPI).forEach(function (k) {
+          if (TIPI[k].test(a.name)) file[k] = { url: a.browser_download_url, size: a.size };
+        });
+      });
+      mostra({ tag: rel.tag_name, prova: rel.prerelease, file: file });
+    })
+    .catch(function () { /* restano i link della versione di riserva */ });
+
+  document.querySelectorAll("[data-copia]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var t = document.getElementById(b.dataset.copia).textContent;
+      if (navigator.clipboard) navigator.clipboard.writeText(t).then(function () { b.textContent = "Copiato"; });
+    });
+  });
+})();
+</script>
+</body>
+</html>

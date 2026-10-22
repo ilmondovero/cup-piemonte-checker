@@ -215,6 +215,10 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}
     steps:
+      - uses: actions/checkout@v7 # solo per lo script delle note
+        with:
+          persist-credentials: false
+
       - uses: actions/download-artifact@v8
         with:
           pattern: installer-*
@@ -229,12 +233,9 @@ jobs:
           cat SHA256SUMS.txt
 
       - name: Bozza della release
-        env:
-          CORPO: >-
-            Installer dell'app desktop CUP Piemonte. Gli installer non sono firmati: la prima volta Windows
-            e macOS mostrano un avviso. Istruzioni e quale file scaricare:
-            https://github.com/${{ github.repository }}/tree/${{ github.event.repository.default_branch }}/app#installarla
         run: |
+          bash .github/scripts/note-release.sh "${GITHUB_REF_NAME}" pacchetti > note.md
+          cat note.md
           esistenti=$(gh api --paginate "repos/${GH_REPO}/releases" \
             --jq ".[] | select(.tag_name == \"${GITHUB_REF_NAME}\") | \"\(.id) \(.draft)\"")
           while read -r id bozza; do
@@ -247,4 +248,4 @@ jobs:
             echo "bozza vecchia $id cancellata"
           done <<< "$esistenti"
           gh release create "${GITHUB_REF_NAME}" pacchetti/* --draft --verify-tag \
-            --title "App desktop ${GITHUB_REF_NAME}" --notes "${CORPO}"
+            --title "App desktop ${GITHUB_REF_NAME#app-v}" --notes-file note.md

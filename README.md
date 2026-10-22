@@ -1,13 +1,75 @@
-# CUP Piemonte - controllo disponibilità automatico
+# CUP Piemonte: trova una data prima per la tua visita
 
-Questo fork aggiunge un **bot Telegram multiutente che non usa il browser** e si installa su
-qualsiasi VPS. Lo script originale, con il browser, è più sotto ed è rimasto invariato.
+[![Ultima versione dell'app](https://img.shields.io/github/v/release/ilmondovero/cup-piemonte-checker?include_prereleases&filter=app-v*&label=app&color=0b6bcb)](https://github.com/ilmondovero/cup-piemonte-checker/releases)
+[![Test dell'app](https://github.com/ilmondovero/cup-piemonte-checker/actions/workflows/app-prove.yml/badge.svg)](https://github.com/ilmondovero/cup-piemonte-checker/actions/workflows/app-prove.yml)
+[![Pagina di download](https://img.shields.io/badge/scarica-pagina%20di%20download-1a7f37)](https://ilmondovero.github.io/cup-piemonte-checker/)
+
+Hai una visita prenotata sul [CUP Piemonte](https://cup.isan.csi.it/) tra mesi? Le date si liberano di
+continuo, ma bisogna ricontrollare il portale a mano. Questi strumenti lo fanno al posto tuo e ti
+avvisano quando esce una data **prima** della tua prenotazione, con data, ora e luogo.
+
+Progetto indipendente e gratuito, **non ufficiale**: non è collegato alla Regione Piemonte né al CSI
+Piemonte. Usa il portale pubblico come lo useresti tu dal browser.
+
+## 📥 Scarica l'app
+
+L'app per il computer è il modo più semplice: si installa, si aggiunge la ricetta e controlla da sola
+ogni 20 minuti. Gratuita, senza account e senza server.
+
+| Sistema | Download | |
+|---|---|---|
+| **Windows** 10 e 11 | [**Installer (.exe)**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte_0.1.0_x64-setup.exe) | consigliato · oppure [.msi](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte_0.1.0_x64.msi) per tutti gli utenti |
+| **macOS** (Intel e Apple Silicon) | [**Immagine disco (.dmg)**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte_0.1.0_universal.dmg) | trascina l'app in Applicazioni |
+| **Linux** 64 bit | [**.deb**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte_0.1.0_amd64.deb) · [**.rpm**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte-0.1.0-1.x86_64.rpm) · [**.AppImage**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte_0.1.0_amd64.AppImage) | Ubuntu e Debian · Fedora e openSUSE · le altre |
+
+Versione 0.1.0 (versione di prova). La [**pagina di download**](https://ilmondovero.github.io/cup-piemonte-checker/)
+propone sempre l'ultima versione per il tuo sistema; tutte le versioni e le somme SHA-256 sono nella
+pagina [Releases](https://github.com/ilmondovero/cup-piemonte-checker/releases).
+
+> **Al primo avvio** Windows e macOS avvisano, perché gli installer non sono firmati con un certificato.
+> Windows: *Ulteriori informazioni* → *Esegui comunque*. macOS: *Impostazioni di Sistema* → *Privacy e
+> sicurezza* → *Apri comunque*. I dettagli sono in [`app/README.md`](app/README.md#installarla).
+
+<p align="center">
+  <img src="docs/img/app.png" width="300" alt="L'app con una prenotazione e due date prima trovate dal controllo, ognuna con il pulsante Sposta qui">
+  &nbsp;&nbsp;
+  <img src="docs/img/app-conferma.png" width="300" alt="La conferma prima di spostare: data attuale, data nuova e i pulsanti Annulla e Sì, sposta">
+</p>
+
+**Cosa fa l'app**
+- Legge la tua prenotazione (codice fiscale e numero ricetta) e la controlla ogni 20 minuti, anche con
+  la finestra chiusa: resta nella barra di sistema.
+- Cerca dove vuoi tu: la stessa sede, il tuo comune o un altro, Torino e prima cintura, la provincia o
+  dove propone il CUP. Puoi escludere dei giorni.
+- Quando esce una data prima arriva una notifica con data, ora e luogo.
+- **Non sposta mai nulla da sola.** "Sposta qui" mostra la data attuale e quella nuova e sposta solo
+  dopo il tuo "Sì", poi controlla sul portale che sia andata. Puoi anche disdire.
+- Più ricette, anche di familiari, ognuna con la sua zona.
+- **I dati restano sul tuo computer**, cifrati: codice fiscale e ricetta vanno solo al portale CUP.
+  Nessuna telemetria.
+
+Come funziona dentro, limiti e privacy: [`app/README.md`](app/README.md).
+
+## Quale scegliere
+
+| | App per il computer | Bot Telegram | Script originale |
+|---|---|---|---|
+| Per chi | chiunque | chi ha un server e lo offre ad altri | chi ha Python sul PC |
+| Dove gira | sul tuo computer | su un server (VPS) | sul tuo computer |
+| Avvisi | notifiche del sistema | messaggi Telegram, anche sul telefono | messaggi Telegram |
+| Sposta la prenotazione | sì, solo con il tuo "Sì" | sì, con un tocco (o in automatico, se lo attivi) | no |
+| Ricetta mai prenotata | no | sì (sperimentale) | sì, solo avviso |
+| Installazione | un installer | server Linux, Docker o systemd | Python, Playwright, Chromium |
+| Cartella | [`app/`](app/) | [`telegram-bot/`](telegram-bot/) | questa |
+
+Sono tre progetti separati, senza codice in comune. Se segui la stessa ricetta con l'app e con il bot,
+usane uno solo: ogni controllo tiene bloccata una data per circa 40 minuti.
 
 ## Bot Telegram senza browser (cartella [`telegram-bot/`](telegram-bot/))
 
-Il bot controlla il portale [CUP Piemonte](https://cup.isan.csi.it/) al posto tuo. Ti avvisa quando si
-libera una data **prima** della tua prenotazione e, se vuoi, la sposta per te. Con una ricetta **non
-ancora prenotata** cerca il primo appuntamento libero (funzione sperimentale, vedi sotto).
+Il bot controlla il portale al posto tuo. Ti avvisa quando si libera una data **prima** della tua
+prenotazione e, se vuoi, la sposta per te. Con una ricetta **non ancora prenotata** cerca il primo
+appuntamento libero (funzione sperimentale, vedi sotto).
 
 - **Niente browser.** Parla con il portale via HTTP e replica le richieste che farebbe il browser. Il
   "controllo anti-bot" di cui parla lo script originale, verificato a settembre 2026, risulta
@@ -68,17 +130,19 @@ docker compose up -d
 Configurazione, limiti (ogni controllo tiene bloccata una data per circa 40 minuti), privacy e
 aggiornamenti: [`telegram-bot/README.md`](telegram-bot/README.md).
 
-## App desktop (cartella [`app/`](app/), in sviluppo)
+## Licenza e crediti
 
-Un progetto a sé, senza Telegram e senza server: un'app leggera per Windows, macOS e Linux che parla
-con il portale dal computer dell'utente. Controlla le ricette ogni 20 minuti, avvisa con una notifica
-quando esce una data prima e, solo se lo chiedi, sposta o disdice la prenotazione. Gli installer sono
-nella pagina [Releases](https://github.com/ilmondovero/cup-piemonte-checker/releases). Stato e
-istruzioni: [`app/README.md`](app/README.md).
+- L'app per il computer ([`app/`](app/)) è distribuita con licenza [MIT](app/LICENSE).
+- Lo script originale e l'immagine qui sotto sono di [nickchinaski](https://github.com/nickchinaski/cup-piemonte-checker),
+  da cui è nato questo fork.
+- Il repository contiene solo codice: nessun codice fiscale, token o dato personale.
 
 ---
 
 # Script originale (con browser)
+
+Lo script da cui è nato tutto, scritto da [nickchinaski](https://github.com/nickchinaski/cup-piemonte-checker)
+e rimasto invariato in questo fork: avvisa su Telegram quando compare un appuntamento per una ricetta.
 
 ![Il checker ce la fa (al posto tuo)](banner.png)
 
