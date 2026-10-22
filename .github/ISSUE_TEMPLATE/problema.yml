@@ -1,0 +1,52 @@
+name: Problema con l'app
+description: Qualcosa non funziona nell'app per il computer (installazione, controlli, notifiche, spostamenti)
+labels: ["app"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Non scrivere mai codice fiscale, numero della ricetta, nome, prestazione, date o luogo della visita.**
+        Questa pagina è pubblica e la legge chiunque. Per le ricette usa il numero che l'app mostra nel
+        registro ("ricetta 2").
+  - type: input
+    id: versione
+    attributes:
+      label: Versione dell'app
+      description: La trovi nel registro, alla riga "avvio, versione".
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: sistema
+    attributes:
+      label: Sistema
+      options:
+        - Windows
+        - macOS
+        - Linux (.deb)
+        - Linux (.rpm)
+        - Linux (AppImage)
+    validations:
+      required: true
+  - type: textarea
+    id: cosa
+    attributes:
+      label: Cosa è successo
+      description: Cosa hai fatto, cosa ti aspettavi e cosa è successo invece.
+    validations:
+      required: true
+  - type: textarea
+    id: registro
+    attributes:
+      label: Righe del registro (facoltativo)
+      description: |
+        Impostazioni > Registro dell'app. Il registro non contiene codice fiscale, ricetta, prestazione o date
+        della visita, ma rileggilo prima di incollarlo.
+      render: text
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy
+      options:
+        - label: Ho controllato di non aver scritto dati personali o sanitari
+          required: true

@@ -1,12 +1,12 @@
 # CUP Piemonte: trova una data prima per la tua visita
 
-[![Ultima versione dell'app](https://img.shields.io/github/v/release/ilmondovero/cup-piemonte-checker?include_prereleases&filter=app-v*&label=app&color=0b6bcb)](https://github.com/ilmondovero/cup-piemonte-checker/releases)
+[![Ultima versione dell'app](https://img.shields.io/github/v/release/ilmondovero/cup-piemonte-checker?include_prereleases&filter=app-v*&display_name=release&label=app&color=0b6bcb)](https://github.com/ilmondovero/cup-piemonte-checker/releases)
 [![Test dell'app](https://github.com/ilmondovero/cup-piemonte-checker/actions/workflows/app-prove.yml/badge.svg)](https://github.com/ilmondovero/cup-piemonte-checker/actions/workflows/app-prove.yml)
 [![Pagina di download](https://img.shields.io/badge/scarica-pagina%20di%20download-1a7f37)](https://ilmondovero.github.io/cup-piemonte-checker/)
 
 Hai una visita prenotata sul [CUP Piemonte](https://cup.isan.csi.it/) tra mesi? Le date si liberano di
-continuo, ma bisogna ricontrollare il portale a mano. Questi strumenti lo fanno al posto tuo e ti
-avvisano quando esce una data **prima** della tua prenotazione, con data, ora e luogo.
+continuo, ma bisogna ricontrollare il portale a mano. L'app e il bot di questo repository lo fanno al
+posto tuo e ti avvisano quando esce una data **prima** della tua prenotazione, con data, ora e luogo.
 
 Progetto indipendente e gratuito, **non ufficiale**: non è collegato alla Regione Piemonte né al CSI
 Piemonte. Usa il portale pubblico come lo useresti tu dal browser.
@@ -20,10 +20,10 @@ ogni 20 minuti. Gratuita, senza account e senza server.
 |---|---|---|
 | **Windows** 10 e 11 | [**Installer (.exe)**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte_0.1.0_x64-setup.exe) | consigliato · oppure [.msi](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte_0.1.0_x64.msi) per tutti gli utenti |
 | **macOS** (Intel e Apple Silicon) | [**Immagine disco (.dmg)**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte_0.1.0_universal.dmg) | trascina l'app in Applicazioni |
-| **Linux** 64 bit | [**.deb**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte_0.1.0_amd64.deb) · [**.rpm**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte-0.1.0-1.x86_64.rpm) · [**.AppImage**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte_0.1.0_amd64.AppImage) | Ubuntu e Debian · Fedora e openSUSE · le altre |
+| **Linux** 64 bit (x86_64) | [**.deb**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte_0.1.0_amd64.deb) · [**.rpm**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte-0.1.0-1.x86_64.rpm) · [**.AppImage**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte_0.1.0_amd64.AppImage) | Ubuntu 22.04+, Debian 12+, Mint 21+ · Fedora e openSUSE · le altre |
 
 Versione 0.1.0 (versione di prova). La [**pagina di download**](https://ilmondovero.github.io/cup-piemonte-checker/)
-propone sempre l'ultima versione per il tuo sistema; tutte le versioni e le somme SHA-256 sono nella
+propone l'ultima versione per il tuo sistema; tutte le versioni e le somme SHA-256 sono nella
 pagina [Releases](https://github.com/ilmondovero/cup-piemonte-checker/releases).
 
 > **Al primo avvio** Windows e macOS avvisano, perché gli installer non sono firmati con un certificato.
@@ -38,7 +38,8 @@ pagina [Releases](https://github.com/ilmondovero/cup-piemonte-checker/releases).
 
 **Cosa fa l'app**
 - Legge la tua prenotazione (codice fiscale e numero ricetta) e la controlla ogni 20 minuti, anche con
-  la finestra chiusa: resta nella barra di sistema.
+  la finestra chiusa: resta nella barra di sistema (su macOS nella barra dei menu). Il computer deve
+  essere acceso e non in sospensione.
 - Cerca dove vuoi tu: la stessa sede, il tuo comune o un altro, Torino e prima cintura, la provincia o
   dove propone il CUP. Puoi escludere dei giorni.
 - Quando esce una data prima arriva una notifica con data, ora e luogo.
@@ -46,9 +47,12 @@ pagina [Releases](https://github.com/ilmondovero/cup-piemonte-checker/releases).
   dopo il tuo "Sì", poi controlla sul portale che sia andata. Puoi anche disdire.
 - Più ricette, anche di familiari, ognuna con la sua zona.
 - **I dati restano sul tuo computer**, cifrati: codice fiscale e ricetta vanno solo al portale CUP.
-  Nessuna telemetria.
+  L'app non manda niente a nessuno.
 
-Come funziona dentro, limiti e privacy: [`app/README.md`](app/README.md).
+Come funziona dentro, limiti e privacy: [`app/README.md`](app/README.md). Disinstallazione, dove stanno i
+dati e altre domande: nella [pagina di download](https://ilmondovero.github.io/cup-piemonte-checker/#domande).
+Problemi: [Issues](https://github.com/ilmondovero/cup-piemonte-checker/issues/new/choose), senza mai
+scrivere codice fiscale, ricetta o dati della visita.
 
 ## Quale scegliere
 
@@ -57,8 +61,9 @@ Come funziona dentro, limiti e privacy: [`app/README.md`](app/README.md).
 | Per chi | chiunque | chi ha un server e lo offre ad altri | chi ha Python sul PC |
 | Dove gira | sul tuo computer | su un server (VPS) | sul tuo computer |
 | Avvisi | notifiche del sistema | messaggi Telegram, anche sul telefono | messaggi Telegram |
+| Visita già prenotata: cerca date prima | sì | sì | no |
 | Sposta la prenotazione | sì, solo con il tuo "Sì" | sì, con un tocco (o in automatico, se lo attivi) | no |
-| Ricetta mai prenotata | no | sì (sperimentale) | sì, solo avviso |
+| Ricetta mai prenotata | no | sì, cerca e prenota (sperimentale) | sì, avvisa quando c'è posto |
 | Installazione | un installer | server Linux, Docker o systemd | Python, Playwright, Chromium |
 | Cartella | [`app/`](app/) | [`telegram-bot/`](telegram-bot/) | questa |
 
@@ -79,12 +84,13 @@ appuntamento libero (funzione sperimentale, vedi sotto).
 - **Pulsante "Prenota".** Quando esce una data migliore arriva un messaggio con data, ora e luogo; un
   tocco sposta la prenotazione. Poi il bot verifica con una sessione nuova che lo spostamento sia
   avvenuto davvero.
-- **Dove cercare.** Stessa sede, un comune, la provincia o ovunque proponga il CUP. Per comune e
+- **Dove cercare.** Stessa sede, sedi scelte, un comune o più comuni (per esempio Torino e prima
+  cintura), la provincia o ovunque proponga il CUP. Si possono escludere delle sedi. Per comune e
   provincia il bot estende l'area di ricerca del portale, così vede anche le aziende sanitarie lontane.
 - **Più ricette per chat.** Con `/aggiungi` si segue anche la ricetta di un familiare, con nome, area e
   impostazioni proprie.
 - **Conferma automatica facoltativa (`/auto`).** Il bot prenota da solo la prima data migliore,
-  rispettando le sedi scelte e un anticipo minimo.
+  rispettando le sedi scelte e un calendario dei giorni sì e no.
 - **Mini App facoltativa.** Un'app dentro Telegram per gestire le ricette: aggiungere, cambiare e
   cancellare, scegliere dove cercare, vedere tutte le date dell'ultimo controllo e prenotarne una con un
   tocco, storico della prima data utile. Serve un indirizzo HTTPS pubblico.
@@ -92,7 +98,7 @@ appuntamento libero (funzione sperimentale, vedi sotto).
   vengono cancellati dalla chat. L'utente ha `/dati`, `/modifica` e `/cancella`. I dati si cancellano
   da soli quando la visita è passata.
 
-Comandi: `/stato` `/controlla` `/aggiungi` `/dati` `/modifica` `/sede` `/auto` `/pausa` `/riprendi`
+Comandi: `/stato` `/date` `/calendario` `/escluse` `/controlla` `/aggiungi` `/dati` `/modifica` `/sede` `/auto` `/pausa` `/riprendi`
 `/cancella` `/privacy` `/help`.
 
 Funziona per appuntamenti **già prenotati** sul CUP, che anticipa, e per ricette **mai prenotate**: trova
@@ -132,7 +138,8 @@ aggiornamenti: [`telegram-bot/README.md`](telegram-bot/README.md).
 
 ## Licenza e crediti
 
-- L'app per il computer ([`app/`](app/)) è distribuita con licenza [MIT](app/LICENSE).
+- L'app per il computer ([`app/`](app/)) è distribuita con licenza [MIT](app/LICENSE). Il bot e lo script
+  originale non hanno una licenza dichiarata.
 - Lo script originale e l'immagine qui sotto sono di [nickchinaski](https://github.com/nickchinaski/cup-piemonte-checker),
   da cui è nato questo fork.
 - Il repository contiene solo codice: nessun codice fiscale, token o dato personale.

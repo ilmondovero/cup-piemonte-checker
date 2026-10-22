@@ -1,0 +1,32 @@
+name: Bot Telegram, script o altro
+description: Un problema o una proposta per il bot Telegram, lo script originale o la documentazione
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Non scrivere mai codice fiscale, numero della ricetta, nome, prestazione, date o luogo della visita,
+        né token, indirizzi o nomi di server.** Questa pagina è pubblica e la legge chiunque.
+  - type: dropdown
+    id: parte
+    attributes:
+      label: Riguarda
+      options:
+        - Bot Telegram
+        - Script originale (con browser)
+        - Pagina di download o documentazione
+        - Altro
+    validations:
+      required: true
+  - type: textarea
+    id: cosa
+    attributes:
+      label: Descrizione
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy
+      options:
+        - label: Ho controllato di non aver scritto dati personali o sanitari
+          required: true

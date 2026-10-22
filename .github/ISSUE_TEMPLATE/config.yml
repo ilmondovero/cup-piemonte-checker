@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Pagina di download e domande frequenti
+    url: https://ilmondovero.github.io/cup-piemonte-checker/
+    about: Installazione, avvisi del primo avvio, disinstallazione e dove stanno i dati.
+  - name: Istruzioni complete dell'app
+    url: https://github.com/ilmondovero/cup-piemonte-checker/tree/master/app#readme
+    about: Come funzionano controlli, spostamenti e disdette, e i loro limiti.

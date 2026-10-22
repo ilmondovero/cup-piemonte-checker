@@ -65,25 +65,25 @@ da evitare ed è prima della prenotazione.
 
 La [pagina di download](https://ilmondovero.github.io/cup-piemonte-checker/) propone il file giusto per
 il tuo sistema. Tutte le versioni sono nella pagina [Releases](https://github.com/ilmondovero/cup-piemonte-checker/releases)
-("App desktop app-v…"). I file della versione 0.1.0:
+("App desktop X.Y.Z"). I file della versione 0.1.0:
 
 - **Windows**: [`CUP-Piemonte_0.1.0_x64-setup.exe`](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte_0.1.0_x64-setup.exe), che installa per il solo utente e non chiede i permessi di
   amministratore; il [`.msi`](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte_0.1.0_x64.msi) installa per tutti gli utenti. Se manca WebView2 lo scarica l'installer.
 - **macOS** (Intel e Apple Silicon): [`CUP-Piemonte_0.1.0_universal.dmg`](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte_0.1.0_universal.dmg); si trascina l'app in Applicazioni.
-- **Linux**: [`.deb`](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte_0.1.0_amd64.deb) (Ubuntu 22.04+, Debian 12+), [`.rpm`](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte-0.1.0-1.x86_64.rpm)
-  (Fedora, openSUSE) oppure [`.AppImage`](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte_0.1.0_amd64.AppImage) (le altre; va reso
+- **Linux**: [`.deb`](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte_0.1.0_amd64.deb) (Ubuntu 22.04+, Debian 12+, Mint 21+), [`.rpm`](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte-0.1.0-1.x86_64.rpm)
+  (Fedora, openSUSE) oppure [`.AppImage`](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte_0.1.0_amd64.AppImage) (le altre; va resa
   eseguibile con `chmod +x`).
 
 [`SHA256SUMS.txt`](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/SHA256SUMS.txt) contiene le somme SHA-256 dei file, per controllare che il download sia integro
 (`sha256sum -c SHA256SUMS.txt --ignore-missing` su Linux, `shasum -a 256 -c SHA256SUMS.txt --ignore-missing`
-su macOS).
+su macOS, `Get-FileHash .\nome-del-file -Algorithm SHA256` in PowerShell su Windows).
 
 Gli installer non sono firmati con un certificato, perché costa e richiede un'identità registrata. Per
 questo la prima volta il sistema avvisa:
 
 - **Windows** (SmartScreen, "Windows ha protetto il PC"): "Ulteriori informazioni", poi "Esegui comunque".
-- **macOS** ("non può essere aperta" o "è danneggiata"): in Impostazioni di Sistema > Privacy e sicurezza,
-  "Apri comunque". Se il pulsante non c'è, da Terminale:
+- **macOS** ("non può essere aperta" o "è danneggiata"): prova ad aprirla una volta, poi in Impostazioni di
+  Sistema > Privacy e sicurezza (fino a macOS 12: Preferenze di Sistema > Sicurezza e privacy) "Apri comunque". Se il pulsante non c'è, da Terminale:
   `xattr -dr com.apple.quarantine "/Applications/CUP Piemonte.app"`.
 
 Gli installer li costruisce GitHub Actions a partire dal codice di questo repository
@@ -92,6 +92,23 @@ tre sistemi, poi ogni installer si installa e si avvia su una macchina pulita di
 parte senza errori finisce nella release. Un tag `app-vX.Y.Z` crea la release in bozza, che si pubblica a
 mano dopo averla provata. L'app non si aggiorna da sola: per una versione nuova si scarica e si installa
 sopra la vecchia, e le ricette restano.
+
+I controlli girano solo con il computer acceso e non in sospensione. Su Linux con GNOME (Fedora, Debian)
+l'icona nella barra compare solo con l'estensione "AppIndicator and KStatusNotifierItem Support"; senza,
+la finestra si riapre lanciando di nuovo l'app e si chiude del tutto con `pkill -x cup-piemonte`.
+
+**Disinstallare e cancellare i dati.** Prima, nell'app, eliminare le ricette e spegnere l'avvio con il
+computer; poi disinstallare come le altre app. Ricette cifrate (`ricette.cifrate`, ed eventualmente
+`chiave.segreta`) e registro restano nelle cartelle dell'app, da cancellare a mano:
+- Windows: `%APPDATA%\io.github.ilmondovero.cup` e `%LOCALAPPDATA%\io.github.ilmondovero.cup`;
+- macOS: `~/Library/Application Support/io.github.ilmondovero.cup` e `~/Library/Logs/io.github.ilmondovero.cup`;
+- Linux: `~/.local/share/io.github.ilmondovero.cup`.
+
+La chiave sta nel portachiavi del sistema alla voce `cup-piemonte`, utente `chiave-archivio`.
+
+**Problemi.** Nelle [Issues](https://github.com/ilmondovero/cup-piemonte-checker/issues/new/choose): la
+pagina è pubblica, quindi mai codice fiscale, numero ricetta o dati della visita. Le righe del registro
+si possono incollare (non contengono questi dati), dopo averle rilette.
 
 ## Com'è fatta
 
@@ -138,13 +155,16 @@ Nell'interfaccia codice fiscale e ricetta compaiono solo in parte (RSS…19X).
 ## Pubblicare una versione nuova
 
 1. Alzare la versione in `desktop/tauri.conf.json` e in `Cargo.toml` (`workspace.package`), poi
-   `cargo build` per aggiornare `Cargo.lock`.
-2. Aggiornare i link diretti con la versione nuova: `README.md` (in cima), la sezione [Installarla](#installarla)
-   qui sopra e `RISERVA` in `docs/index.html` (la pagina di download trova da sola l'ultima versione;
-   `RISERVA` serve solo se GitHub non risponde).
-3. Commit, poi il tag: `git tag -a app-vX.Y.Z -m "App desktop X.Y.Z" && git push origin app-vX.Y.Z`.
-4. Il workflow prova e carica tutto in una release in **bozza**, con le note generate da
-   `.github/scripts/note-release.sh`. La si controlla e la si pubblica dalla pagina Releases.
+   `cargo build` per aggiornare `Cargo.lock`. Il workflow controlla che le due versioni coincidano.
+2. Commit, poi il tag: `git tag -a app-vX.Y.Z -m "App desktop X.Y.Z" && git push origin app-vX.Y.Z`.
+3. Il workflow prova e carica tutto in una release in **bozza**, con le note generate da
+   `.github/scripts/note-release.sh`. La si controlla e la si pubblica dalla pagina Releases, come
+   versione di prova (pre-release) o stabile.
+4. **Solo dopo la pubblicazione** (prima i file non esistono e i link darebbero 404) aggiornare i link
+   diretti con la versione nuova: `README.md` (in cima), la sezione [Installarla](#installarla) qui sopra,
+   la riga in cima a questo file e in `docs/index.html` gli `href` dei file, `RISERVA` e la versione
+   mostrata. La pagina di download trova comunque da sola l'ultima versione; i link scritti servono
+   senza JavaScript o se GitHub non risponde.
 
 ## Licenza
 
