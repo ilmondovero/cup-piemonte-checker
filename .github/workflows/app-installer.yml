@@ -38,6 +38,11 @@ jobs:
         run: |
           v=$(jq -r .version app/desktop/tauri.conf.json)
           echo "v=$v" >> "$GITHUB_OUTPUT"
+          cargo=$(grep -m1 '^version = ' app/Cargo.toml | cut -d'"' -f2)
+          if [ "$cargo" != "$v" ]; then
+            echo "Versione diversa: $v in tauri.conf.json, $cargo in app/Cargo.toml"
+            exit 1
+          fi
           if [ "$RILASCIO" = "true" ] && [ "${GITHUB_REF_NAME}" != "app-v$v" ]; then
             echo "Il tag ${GITHUB_REF_NAME} non corrisponde alla versione $v di tauri.conf.json"
             exit 1

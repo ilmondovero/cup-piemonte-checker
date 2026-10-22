@@ -135,6 +135,17 @@ cifrato (XChaCha20-Poly1305) nella cartella dei dati dell'app, con la chiave nel
 c'è, la chiave sta in un file leggibile solo dall'utente, e l'app lo dice nelle impostazioni.
 Nell'interfaccia codice fiscale e ricetta compaiono solo in parte (RSS…19X).
 
+## Pubblicare una versione nuova
+
+1. Alzare la versione in `desktop/tauri.conf.json` e in `Cargo.toml` (`workspace.package`), poi
+   `cargo build` per aggiornare `Cargo.lock`.
+2. Aggiornare i link diretti con la versione nuova: `README.md` (in cima), la sezione [Installarla](#installarla)
+   qui sopra e `RISERVA` in `docs/index.html` (la pagina di download trova da sola l'ultima versione;
+   `RISERVA` serve solo se GitHub non risponde).
+3. Commit, poi il tag: `git tag -a app-vX.Y.Z -m "App desktop X.Y.Z" && git push origin app-vX.Y.Z`.
+4. Il workflow prova e carica tutto in una release in **bozza**, con le note generate da
+   `.github/scripts/note-release.sh`. La si controlla e la si pubblica dalla pagina Releases.
+
 ## Licenza
 
 [MIT](LICENSE). Progetto indipendente, non ufficiale: non è collegato alla Regione Piemonte né al CSI
