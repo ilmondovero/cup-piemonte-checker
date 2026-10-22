@@ -517,6 +517,8 @@ fn main() {
             for n in &interrotte {
                 avvisa(app.handle(), &n.titolo, &n.testo, &format!("ricetta {}, {}", n.ricetta, n.tipo));
             }
+            // archivio, icona e finestra pronti (la prova degli installer su GitHub aspetta questa riga)
+            stato.registro.scrivi("avvio completato");
             let (h1, h2) = (app.handle().clone(), app.handle().clone());
             controlli::avvia(
                 stato,

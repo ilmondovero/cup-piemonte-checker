@@ -1,8 +1,11 @@
 # Installer dell'app desktop per Windows, macOS e Linux.
-# - tag "app-vX.Y.Z" (uguale alla versione in app/desktop/tauri.conf.json): crea una release in BOZZA con
-#   gli installer e le loro somme SHA-256; la si pubblica a mano dalla pagina Releases dopo averla provata.
-# - avvio a mano (workflow_dispatch): solo gli installer come artifact del workflow, nessuna release.
-# Ogni installer si installa e si avvia sulla macchina di GitHub prima di essere caricato.
+# - push di un tag "app-vX.Y.Z" (uguale alla versione in app/desktop/tauri.conf.json): crea una release in
+#   BOZZA con gli installer e le loro somme SHA-256; la si pubblica a mano dalla pagina Releases dopo
+#   averla provata. Rifacendo il tag si ricomincia da una bozza nuova; una release pubblicata non si tocca.
+#   Se un sistema fallisce la bozza resta senza installer: "Re-run failed jobs" riprova senza ricrearla.
+# - avvio a mano (workflow_dispatch, anche su un tag): solo gli installer come artifact, nessuna release.
+# Ogni installer si installa e si avvia sulla macchina di GitHub prima di essere caricato (prova-avvio.sh).
+# I job che costruiscono hanno solo permessi di lettura: carica nella release un job a parte.
 # Gli installer non sono firmati: vedi app/README.md per gli avvisi di Windows e macOS.
 name: App desktop - installer
 
@@ -14,16 +17,28 @@ on:
 permissions:
   contents: read
 
+# un tag rifatto mentre gira ancora quello prima: vince l'ultimo, mai due bozze insieme
+concurrency:
+  group: app-installer-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   versione:
     runs-on: ubuntu-24.04
+    outputs:
+      v: ${{ steps.leggi.outputs.v }}
     steps:
       - uses: actions/checkout@v7
-      - name: Il tag corrisponde alla versione dell'app
-        if: github.ref_type == 'tag'
+        with:
+          persist-credentials: false
+      - id: leggi
+        name: La versione dell'app (e il tag, se e' un rilascio)
+        env:
+          RILASCIO: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
         run: |
           v=$(jq -r .version app/desktop/tauri.conf.json)
-          if [ "${GITHUB_REF_NAME}" != "app-v$v" ]; then
+          echo "v=$v" >> "$GITHUB_OUTPUT"
+          if [ "$RILASCIO" = "true" ] && [ "${GITHUB_REF_NAME}" != "app-v$v" ]; then
             echo "Il tag ${GITHUB_REF_NAME} non corrisponde alla versione $v di tauri.conf.json"
             exit 1
           fi
@@ -31,58 +46,31 @@ jobs:
   prove:
     uses: ./.github/workflows/app-prove.yml
 
-  # Una sola bozza, creata qui: se la creassero i job degli installer, ognuno ne farebbe una sua.
-  # Rifacendo il tag si ricomincia: la bozza vecchia si cancella, una release gia' pubblicata no.
-  bozza:
-    if: github.ref_type == 'tag'
-    needs: [versione, prove]
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    steps:
-      - env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CORPO: >-
-            Installer dell'app desktop CUP Piemonte. Gli installer non sono firmati: la prima volta Windows
-            e macOS mostrano un avviso. Istruzioni e quale file scaricare:
-            https://github.com/${{ github.repository }}/tree/master/app#installarla
-        run: |
-          esistenti=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" \
-            --jq ".[] | select(.tag_name == \"${GITHUB_REF_NAME}\") | \"\(.id) \(.draft)\"")
-          while read -r id bozza; do
-            [ -z "$id" ] && continue
-            if [ "$bozza" != "true" ]; then
-              echo "La release ${GITHUB_REF_NAME} e' gia' pubblicata: serve una versione nuova"
-              exit 1
-            fi
-            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/$id"
-            echo "bozza vecchia $id cancellata"
-          done <<< "$esistenti"
-          gh api "repos/${GITHUB_REPOSITORY}/releases" -f tag_name="${GITHUB_REF_NAME}" \
-            -f name="App desktop ${GITHUB_REF_NAME}" -f body="${CORPO}" -F draft=true --jq .html_url
-
   installer:
-    needs: [versione, prove, bozza]
-    # anche quando "bozza" e' saltato (avvio a mano), ma non se qualcosa prima e' fallito
-    if: ${{ !failure() && !cancelled() }}
-    permissions:
-      contents: write # solo per caricare gli installer nella bozza
+    needs: [versione, prove]
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: windows-latest
             args: ""
+            attesi: 2 # setup.exe, msi
           - os: macos-latest # un solo pacchetto per Mac Intel e Apple Silicon
             args: "--target universal-apple-darwin"
+            attesi: 1 # dmg
           - os: ubuntu-22.04 # la glibc piu' vecchia: il pacchetto gira anche sulle distribuzioni meno recenti
             args: ""
+            attesi: 3 # deb, rpm, AppImage
     runs-on: ${{ matrix.os }}
     defaults:
       run:
         shell: bash
+    env:
+      V: ${{ needs.versione.outputs.v }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v7
         with:
@@ -105,95 +93,148 @@ jobs:
       - name: Tauri CLI
         run: npm install -g @tauri-apps/cli@2.12.4
 
-      # solo la build: gli installer si caricano piu' sotto, dopo averli provati
+      # niente bundle vecchi dalla cache: si caricano solo quelli costruiti adesso
+      - name: Pulisci i bundle
+        run: rm -rf app/target/release/bundle app/target/*/release/bundle
+
       - uses: tauri-apps/tauri-action@v1
         with:
           projectPath: app/desktop
           tauriScript: tauri
           args: ${{ matrix.args }}
-          uploadWorkflowArtifacts: ${{ github.ref_type != 'tag' }}
 
       # gli installer con nomi senza spazi, in una cartella sola
       - name: Raccogli gli installer
         run: |
           mkdir -p pacchetti
-          find app/target -path '*/release/bundle/*' -type f \
+          find app/target -path '*/release/bundle/*' -type f -name "*${V}*" \
             \( -name '*-setup.exe' -o -name '*.msi' -o -name '*.dmg' -o -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \) |
             while read -r f; do
               nome=$(basename "$f" | sed -e 's/CUP Piemonte/CUP-Piemonte/' -e 's/_it-IT\.msi$/.msi/')
               cp "$f" "pacchetti/$nome"
             done
           ls -l pacchetti
-          [ "$(ls pacchetti | wc -l)" -ge 1 ]
+          n=$(ls pacchetti | wc -l)
+          if [ "$n" -ne ${{ matrix.attesi }} ]; then
+            echo "Attesi ${{ matrix.attesi }} installer, trovati $n"
+            exit 1
+          fi
 
       - name: Installa con NSIS (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $setup = Get-ChildItem pacchetti -Filter '*-setup.exe' | Select-Object -First 1
-          Start-Process -Wait -FilePath $setup.FullName -ArgumentList '/S'
+          $p = Start-Process -Wait -PassThru -FilePath $setup.FullName -ArgumentList '/S'
+          if ($p.ExitCode -ne 0) { throw "installer NSIS: codice $($p.ExitCode)" }
 
       - name: Avvia l'app installata con NSIS (Windows)
         if: runner.os == 'Windows'
-        run: bash .github/scripts/prova-avvio.sh "$LOCALAPPDATA/CUP Piemonte/cup-piemonte.exe"
+        run: bash .github/scripts/prova-avvio.sh "$V" "$LOCALAPPDATA/CUP Piemonte/cup-piemonte.exe"
 
       - name: Disinstalla e installa con MSI (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Start-Process -Wait -FilePath (Join-Path $env:LOCALAPPDATA 'CUP Piemonte\uninstall.exe') -ArgumentList '/S'
-          Start-Sleep -Seconds 5 # il disinstallatore NSIS si rilancia da una copia e torna subito
+          $dir = Join-Path $env:LOCALAPPDATA 'CUP Piemonte'
+          # "_?=" tiene il disinstallatore nel suo processo: senza, si rilancia da una copia e -Wait torna subito
+          $p = Start-Process -Wait -PassThru -FilePath (Join-Path $dir 'uninstall.exe') -ArgumentList '/S', "_?=$dir"
+          if ($p.ExitCode -ne 0) { throw "disinstallazione NSIS: codice $($p.ExitCode)" }
+          if (Test-Path (Join-Path $dir 'cup-piemonte.exe')) { throw "la disinstallazione NSIS ha lasciato l'app" }
           $msi = Get-ChildItem pacchetti -Filter '*.msi' | Select-Object -First 1
-          $p = Start-Process -Wait -PassThru -FilePath msiexec.exe -ArgumentList '/i', "`"$($msi.FullName)`"", '/qn', '/norestart'
-          if ($p.ExitCode -ne 0) { throw "msiexec: codice $($p.ExitCode)" }
+          $p = Start-Process -Wait -PassThru -FilePath msiexec.exe -ArgumentList '/i', "`"$($msi.FullName)`"", '/qn', '/norestart', '/l*v', 'msi.log'
+          $exe = Join-Path $env:ProgramFiles 'CUP Piemonte\cup-piemonte.exe'
+          if ($p.ExitCode -ne 0 -or -not (Test-Path $exe)) {
+            Get-Content msi.log -Tail 60
+            Get-ChildItem $env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:LOCALAPPDATA -Recurse -Filter 'cup-piemonte.exe' -ErrorAction SilentlyContinue | ForEach-Object FullName
+            throw "msiexec: codice $($p.ExitCode), $exe presente: $(Test-Path $exe)"
+          }
 
       - name: Avvia l'app installata con MSI (Windows)
         if: runner.os == 'Windows'
-        run: bash .github/scripts/prova-avvio.sh "$PROGRAMFILES/CUP Piemonte/cup-piemonte.exe"
+        run: bash .github/scripts/prova-avvio.sh "$V" "$PROGRAMFILES/CUP Piemonte/cup-piemonte.exe"
 
       - name: Prova il dmg (macOS)
         if: runner.os == 'macOS'
         run: |
-          dmg=$(ls pacchetti/*.dmg | head -1)
-          hdiutil attach -nobrowse -mountpoint /tmp/cup "$dmg"
+          hdiutil attach -nobrowse -mountpoint /tmp/cup pacchetti/*.dmg
           cp -R "/tmp/cup/CUP Piemonte.app" /Applications/
           hdiutil detach /tmp/cup
           app="/Applications/CUP Piemonte.app"
           codesign --verify --deep --strict --verbose=2 "$app"
           lipo -archs "$app/Contents/MacOS/cup-piemonte" | grep -q arm64
           lipo -archs "$app/Contents/MacOS/cup-piemonte" | grep -q x86_64
-          bash .github/scripts/prova-avvio.sh "$app/Contents/MacOS/cup-piemonte"
+          bash .github/scripts/prova-avvio.sh "$V" "$app/Contents/MacOS/cup-piemonte"
 
-      - name: Prova deb e AppImage (Linux)
+      # con un bus di sessione, come su un desktop vero (icona, notifiche, una sola copia)
+      - name: Prova deb e AppImage (Ubuntu)
         if: runner.os == 'Linux'
         run: |
-          deb=$(ls pacchetti/*.deb | head -1)
+          deb=$(ls pacchetti/*.deb)
           dpkg-deb -f "$deb" Package Version Depends
           sudo apt-get install -y "./$deb"
-          bash .github/scripts/prova-avvio.sh /usr/bin/cup-piemonte xvfb-run -a
+          bash .github/scripts/prova-avvio.sh "$V" /usr/bin/cup-piemonte dbus-run-session -- xvfb-run -a
           sudo apt-get remove -y "$(dpkg-deb -f "$deb" Package)"
           chmod +x pacchetti/*.AppImage
-          APPIMAGE_EXTRACT_AND_RUN=1 bash .github/scripts/prova-avvio.sh "$(ls "$PWD"/pacchetti/*.AppImage | head -1)" xvfb-run -a
-      - name: Carica nella bozza
-        if: github.ref_type == 'tag'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${GITHUB_REF_NAME}" pacchetti/* --clobber
+          APPIMAGE_EXTRACT_AND_RUN=1 bash .github/scripts/prova-avvio.sh "$V" "$(ls "$PWD"/pacchetti/*.AppImage)" \
+            dbus-run-session -- xvfb-run -a
 
-  somme:
-    if: github.ref_type == 'tag'
+      - name: Prova rpm (Fedora)
+        if: runner.os == 'Linux'
+        run: |
+          docker run --rm -e CI=true -v "$PWD:/w" -w /w fedora:latest bash -c '
+            set -e
+            dnf install -y -q ./pacchetti/*.rpm xorg-x11-server-Xvfb xorg-x11-xauth dbus-daemon procps-ng
+            rpm -qR "$(rpm -qp --qf "%{NAME}" pacchetti/*.rpm)" | sort -u
+            bash .github/scripts/prova-avvio.sh "'"$V"'" /usr/bin/cup-piemonte dbus-run-session -- xvfb-run -a'
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: installer-${{ runner.os }}
+          path: pacchetti/
+          if-no-files-found: error
+
+  # solo questo job scrive nel repository, e non esegue niente della build
+  carica:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
     needs: installer
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
     steps:
-      - name: Somme SHA-256 degli installer
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: installer-*
+          path: pacchetti
+          merge-multiple: true
+
+      - name: Somme SHA-256
+        working-directory: pacchetti
         run: |
-          mkdir pacchetti && cd pacchetti
-          gh release download "${GITHUB_REF_NAME}" -R "${GITHUB_REPOSITORY}" --skip-existing
-          rm -f SHA256SUMS.txt
-          sha256sum -- * > ../SHA256SUMS.txt
-          cat ../SHA256SUMS.txt
-          gh release upload "${GITHUB_REF_NAME}" -R "${GITHUB_REPOSITORY}" ../SHA256SUMS.txt --clobber
+          ls -l
+          sha256sum -- * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Bozza della release
+        env:
+          CORPO: >-
+            Installer dell'app desktop CUP Piemonte. Gli installer non sono firmati: la prima volta Windows
+            e macOS mostrano un avviso. Istruzioni e quale file scaricare:
+            https://github.com/${{ github.repository }}/tree/${{ github.event.repository.default_branch }}/app#installarla
+        run: |
+          esistenti=$(gh api --paginate "repos/${GH_REPO}/releases" \
+            --jq ".[] | select(.tag_name == \"${GITHUB_REF_NAME}\") | \"\(.id) \(.draft)\"")
+          while read -r id bozza; do
+            [ -z "$id" ] && continue
+            if [ "$bozza" != "true" ]; then
+              echo "La release ${GITHUB_REF_NAME} e' gia' pubblicata: serve una versione nuova"
+              exit 1
+            fi
+            gh api -X DELETE "repos/${GH_REPO}/releases/$id"
+            echo "bozza vecchia $id cancellata"
+          done <<< "$esistenti"
+          gh release create "${GITHUB_REF_NAME}" pacchetti/* --draft --verify-tag \
+            --title "App desktop ${GITHUB_REF_NAME}" --notes "${CORPO}"
