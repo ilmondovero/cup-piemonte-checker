@@ -30,10 +30,33 @@ jobs:
   prove:
     uses: ./.github/workflows/app-prove.yml
 
-  installer:
+  # Una sola bozza, creata qui: se la creassero i job degli installer, ognuno ne farebbe una sua.
+  bozza:
+    if: github.ref_type == 'tag'
     needs: [versione, prove]
+    runs-on: ubuntu-latest
     permissions:
-      contents: write # solo per creare la release in bozza
+      contents: write
+    outputs:
+      id: ${{ steps.crea.outputs.id }}
+    steps:
+      - id: crea
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CORPO: >-
+            Installer dell'app desktop CUP Piemonte. Gli installer non sono firmati: la prima volta Windows
+            e macOS mostrano un avviso. Istruzioni:
+            https://github.com/${{ github.repository }}/tree/master/app#installarla
+        run: |
+          id=$(gh api "repos/${GITHUB_REPOSITORY}/releases" -f tag_name="${GITHUB_REF_NAME}" -f name="App desktop ${GITHUB_REF_NAME}" -f body="${CORPO}" -F draft=true --jq .id)
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
+  installer:
+    needs: [versione, prove, bozza]
+    # anche quando "bozza" e' saltato (avvio a mano), ma non se qualcosa prima e' fallito
+    if: ${{ !failure() && !cancelled() }}
+    permissions:
+      contents: write # solo per caricare gli installer nella bozza
     strategy:
       fail-fast: false
       matrix:
@@ -76,10 +99,5 @@ jobs:
           projectPath: app/desktop
           tauriScript: tauri
           args: ${{ matrix.args }}
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
-          releaseName: ${{ github.ref_type == 'tag' && format('App desktop {0}', github.ref_name) || '' }}
-          releaseBody: |
-            Installer dell'app desktop CUP Piemonte. Gli installer non sono firmati: la prima volta Windows
-            e macOS mostrano un avviso. Istruzioni: https://github.com/${{ github.repository }}/tree/master/app#installarla
-          releaseDraft: true
+          releaseId: ${{ needs.bozza.outputs.id }}
           uploadWorkflowArtifacts: ${{ github.ref_type != 'tag' }}
