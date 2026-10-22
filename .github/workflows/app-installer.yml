@@ -1,7 +1,8 @@
 # Installer dell'app desktop per Windows, macOS e Linux.
 # - tag "app-vX.Y.Z" (uguale alla versione in app/desktop/tauri.conf.json): crea una release in BOZZA con
-#   gli installer; la si pubblica a mano dalla pagina Releases dopo averla provata.
+#   gli installer e le loro somme SHA-256; la si pubblica a mano dalla pagina Releases dopo averla provata.
 # - avvio a mano (workflow_dispatch): solo gli installer come artifact del workflow, nessuna release.
+# Ogni installer si installa e si avvia sulla macchina di GitHub prima di essere caricato.
 # Gli installer non sono firmati: vedi app/README.md per gli avvisi di Windows e macOS.
 name: App desktop - installer
 
@@ -15,7 +16,7 @@ permissions:
 
 jobs:
   versione:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - name: Il tag corrisponde alla versione dell'app
@@ -31,25 +32,34 @@ jobs:
     uses: ./.github/workflows/app-prove.yml
 
   # Una sola bozza, creata qui: se la creassero i job degli installer, ognuno ne farebbe una sua.
+  # Rifacendo il tag si ricomincia: la bozza vecchia si cancella, una release gia' pubblicata no.
   bozza:
     if: github.ref_type == 'tag'
     needs: [versione, prove]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
-    outputs:
-      id: ${{ steps.crea.outputs.id }}
     steps:
-      - id: crea
-        env:
+      - env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CORPO: >-
             Installer dell'app desktop CUP Piemonte. Gli installer non sono firmati: la prima volta Windows
-            e macOS mostrano un avviso. Istruzioni:
+            e macOS mostrano un avviso. Istruzioni e quale file scaricare:
             https://github.com/${{ github.repository }}/tree/master/app#installarla
         run: |
-          id=$(gh api "repos/${GITHUB_REPOSITORY}/releases" -f tag_name="${GITHUB_REF_NAME}" -f name="App desktop ${GITHUB_REF_NAME}" -f body="${CORPO}" -F draft=true --jq .id)
-          echo "id=$id" >> "$GITHUB_OUTPUT"
+          esistenti=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" \
+            --jq ".[] | select(.tag_name == \"${GITHUB_REF_NAME}\") | \"\(.id) \(.draft)\"")
+          while read -r id bozza; do
+            [ -z "$id" ] && continue
+            if [ "$bozza" != "true" ]; then
+              echo "La release ${GITHUB_REF_NAME} e' gia' pubblicata: serve una versione nuova"
+              exit 1
+            fi
+            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/$id"
+            echo "bozza vecchia $id cancellata"
+          done <<< "$esistenti"
+          gh api "repos/${GITHUB_REPOSITORY}/releases" -f tag_name="${GITHUB_REF_NAME}" \
+            -f name="App desktop ${GITHUB_REF_NAME}" -f body="${CORPO}" -F draft=true --jq .html_url
 
   installer:
     needs: [versione, prove, bozza]
@@ -68,6 +78,9 @@ jobs:
           - os: ubuntu-22.04 # la glibc piu' vecchia: il pacchetto gira anche sulle distribuzioni meno recenti
             args: ""
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v7
 
@@ -83,7 +96,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libdbus-1-dev pkg-config patchelf
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libdbus-1-dev pkg-config patchelf xvfb xauth
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -92,12 +105,95 @@ jobs:
       - name: Tauri CLI
         run: npm install -g @tauri-apps/cli@2.12.4
 
+      # solo la build: gli installer si caricano piu' sotto, dopo averli provati
       - uses: tauri-apps/tauri-action@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: app/desktop
           tauriScript: tauri
           args: ${{ matrix.args }}
-          releaseId: ${{ needs.bozza.outputs.id }}
           uploadWorkflowArtifacts: ${{ github.ref_type != 'tag' }}
+
+      # gli installer con nomi senza spazi, in una cartella sola
+      - name: Raccogli gli installer
+        run: |
+          mkdir -p pacchetti
+          find app/target -path '*/release/bundle/*' -type f \
+            \( -name '*-setup.exe' -o -name '*.msi' -o -name '*.dmg' -o -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \) |
+            while read -r f; do
+              nome=$(basename "$f" | sed -e 's/CUP Piemonte/CUP-Piemonte/' -e 's/_it-IT\.msi$/.msi/')
+              cp "$f" "pacchetti/$nome"
+            done
+          ls -l pacchetti
+          [ "$(ls pacchetti | wc -l)" -ge 1 ]
+
+      - name: Installa con NSIS (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem pacchetti -Filter '*-setup.exe' | Select-Object -First 1
+          Start-Process -Wait -FilePath $setup.FullName -ArgumentList '/S'
+
+      - name: Avvia l'app installata con NSIS (Windows)
+        if: runner.os == 'Windows'
+        run: bash .github/scripts/prova-avvio.sh "$LOCALAPPDATA/CUP Piemonte/cup-piemonte.exe"
+
+      - name: Disinstalla e installa con MSI (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Start-Process -Wait -FilePath (Join-Path $env:LOCALAPPDATA 'CUP Piemonte\uninstall.exe') -ArgumentList '/S'
+          Start-Sleep -Seconds 5 # il disinstallatore NSIS si rilancia da una copia e torna subito
+          $msi = Get-ChildItem pacchetti -Filter '*.msi' | Select-Object -First 1
+          $p = Start-Process -Wait -PassThru -FilePath msiexec.exe -ArgumentList '/i', "`"$($msi.FullName)`"", '/qn', '/norestart'
+          if ($p.ExitCode -ne 0) { throw "msiexec: codice $($p.ExitCode)" }
+
+      - name: Avvia l'app installata con MSI (Windows)
+        if: runner.os == 'Windows'
+        run: bash .github/scripts/prova-avvio.sh "$PROGRAMFILES/CUP Piemonte/cup-piemonte.exe"
+
+      - name: Prova il dmg (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          dmg=$(ls pacchetti/*.dmg | head -1)
+          hdiutil attach -nobrowse -mountpoint /tmp/cup "$dmg"
+          cp -R "/tmp/cup/CUP Piemonte.app" /Applications/
+          hdiutil detach /tmp/cup
+          app="/Applications/CUP Piemonte.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          lipo -archs "$app/Contents/MacOS/cup-piemonte" | grep -q arm64
+          lipo -archs "$app/Contents/MacOS/cup-piemonte" | grep -q x86_64
+          bash .github/scripts/prova-avvio.sh "$app/Contents/MacOS/cup-piemonte"
+
+      - name: Prova deb e AppImage (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          deb=$(ls pacchetti/*.deb | head -1)
+          dpkg-deb -f "$deb" Package Version Depends
+          sudo apt-get install -y "./$deb"
+          bash .github/scripts/prova-avvio.sh /usr/bin/cup-piemonte xvfb-run -a
+          sudo apt-get remove -y "$(dpkg-deb -f "$deb" Package)"
+          chmod +x pacchetti/*.AppImage
+          APPIMAGE_EXTRACT_AND_RUN=1 bash .github/scripts/prova-avvio.sh "$(ls "$PWD"/pacchetti/*.AppImage | head -1)" xvfb-run -a
+      - name: Carica nella bozza
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${GITHUB_REF_NAME}" pacchetti/* --clobber
+
+  somme:
+    if: github.ref_type == 'tag'
+    needs: installer
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Somme SHA-256 degli installer
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir pacchetti && cd pacchetti
+          gh release download "${GITHUB_REF_NAME}" -R "${GITHUB_REPOSITORY}" --skip-existing
+          rm -f SHA256SUMS.txt
+          sha256sum -- * > ../SHA256SUMS.txt
+          cat ../SHA256SUMS.txt
+          gh release upload "${GITHUB_REF_NAME}" -R "${GITHUB_REPOSITORY}" ../SHA256SUMS.txt --clobber

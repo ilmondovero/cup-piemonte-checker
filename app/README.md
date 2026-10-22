@@ -61,10 +61,15 @@ da evitare ed è prima della prenotazione.
 Gli installer sono nella pagina [Releases](https://github.com/ilmondovero/cup-piemonte-checker/releases)
 del repository, nelle versioni "App desktop app-v…":
 
-- **Windows**: `CUP Piemonte_…_x64-setup.exe` (oppure il `.msi`). Se manca WebView2 lo scarica l'installer.
-- **macOS** (Intel e Apple Silicon): `CUP Piemonte_…_universal.dmg`; si trascina l'app in Applicazioni.
+- **Windows**: `CUP-Piemonte_…_x64-setup.exe`, che installa per il solo utente e non chiede i permessi di
+  amministratore; il `.msi` installa per tutti gli utenti. Se manca WebView2 lo scarica l'installer.
+- **macOS** (Intel e Apple Silicon): `CUP-Piemonte_…_universal.dmg`; si trascina l'app in Applicazioni.
 - **Linux**: `.deb` (Debian, Ubuntu), `.rpm` (Fedora, openSUSE) oppure `.AppImage` (le altre; va reso
   eseguibile con `chmod +x`).
+
+`SHA256SUMS.txt` contiene le somme SHA-256 dei file, per controllare che il download sia integro
+(`sha256sum -c SHA256SUMS.txt --ignore-missing` su Linux, `shasum -a 256 -c SHA256SUMS.txt --ignore-missing`
+su macOS).
 
 Gli installer non sono firmati con un certificato, perché costa e richiede un'identità registrata. Per
 questo la prima volta il sistema avvisa:
@@ -76,9 +81,10 @@ questo la prima volta il sistema avvisa:
 
 Gli installer li costruisce GitHub Actions a partire dal codice di questo repository
 ([`.github/workflows/app-installer.yml`](../.github/workflows/app-installer.yml)): prima girano i test sui
-tre sistemi, poi un tag `app-vX.Y.Z` crea una release in bozza, che si pubblica a mano dopo averla
-provata. L'app non si aggiorna da sola: per una versione nuova si scarica e si installa sopra la vecchia,
-e le ricette restano.
+tre sistemi, poi ogni installer si installa e si avvia su una macchina pulita di GitHub; solo se l'app
+parte senza errori finisce nella release. Un tag `app-vX.Y.Z` crea la release in bozza, che si pubblica a
+mano dopo averla provata. L'app non si aggiorna da sola: per una versione nuova si scarica e si installa
+sopra la vecchia, e le ricette restano.
 
 ## Com'è fatta
 

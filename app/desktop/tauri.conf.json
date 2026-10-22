@@ -31,6 +31,9 @@
     "windows": {
       "nsis": {
         "languages": ["Italian"]
+      },
+      "wix": {
+        "language": "it-IT"
       }
     },
     "macOS": {
