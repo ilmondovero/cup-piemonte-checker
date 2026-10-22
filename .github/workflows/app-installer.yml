@@ -1,0 +1,85 @@
+# Installer dell'app desktop per Windows, macOS e Linux.
+# - tag "app-vX.Y.Z" (uguale alla versione in app/desktop/tauri.conf.json): crea una release in BOZZA con
+#   gli installer; la si pubblica a mano dalla pagina Releases dopo averla provata.
+# - avvio a mano (workflow_dispatch): solo gli installer come artifact del workflow, nessuna release.
+# Gli installer non sono firmati: vedi app/README.md per gli avvisi di Windows e macOS.
+name: App desktop - installer
+
+on:
+  push:
+    tags: ["app-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  versione:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Il tag corrisponde alla versione dell'app
+        if: github.ref_type == 'tag'
+        run: |
+          v=$(jq -r .version app/desktop/tauri.conf.json)
+          if [ "${GITHUB_REF_NAME}" != "app-v$v" ]; then
+            echo "Il tag ${GITHUB_REF_NAME} non corrisponde alla versione $v di tauri.conf.json"
+            exit 1
+          fi
+
+  prove:
+    uses: ./.github/workflows/app-prove.yml
+
+  installer:
+    needs: [versione, prove]
+    permissions:
+      contents: write # solo per creare la release in bozza
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            args: ""
+          - os: macos-latest # un solo pacchetto per Mac Intel e Apple Silicon
+            args: "--target universal-apple-darwin"
+          - os: ubuntu-22.04 # la glibc piu' vecchia: il pacchetto gira anche sulle distribuzioni meno recenti
+            args: ""
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Librerie di sistema (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libdbus-1-dev pkg-config patchelf
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app
+
+      - name: Tauri CLI
+        run: npm install -g @tauri-apps/cli@2.12.4
+
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: app/desktop
+          tauriScript: tauri
+          args: ${{ matrix.args }}
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          releaseName: ${{ github.ref_type == 'tag' && format('App desktop {0}', github.ref_name) || '' }}
+          releaseBody: |
+            Installer dell'app desktop CUP Piemonte. Gli installer non sono firmati: la prima volta Windows
+            e macOS mostrano un avviso. Istruzioni: https://github.com/${{ github.repository }}/tree/master/app#installarla
+          releaseDraft: true
+          uploadWorkflowArtifacts: ${{ github.ref_type != 'tag' }}

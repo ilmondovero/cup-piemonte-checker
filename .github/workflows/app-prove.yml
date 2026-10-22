@@ -1,0 +1,47 @@
+# Test e clippy dell'app desktop (cartella app/) sui tre sistemi.
+# Nessun accesso al portale: i test usano un portale finto in locale.
+name: App desktop - prove
+
+on:
+  push:
+    branches: [master]
+    paths: ["app/**", ".github/workflows/app-*.yml"]
+  pull_request:
+    paths: ["app/**", ".github/workflows/app-*.yml"]
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  prove:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Librerie di sistema (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libdbus-1-dev pkg-config
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app
+
+      - name: Test
+        run: cargo test --workspace --locked
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings

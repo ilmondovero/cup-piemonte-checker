@@ -13,7 +13,7 @@ comportamento del portale, che lì sono già state verificate.
 | 2 | Ricerca delle date alternative (zona, giorni da evitare), senza spostare nulla | ✅ fatto |
 | 3 | Ricette salvate e cifrate, controlli ogni 20 minuti, notifiche, icona nella barra di sistema | ✅ fatto |
 | 4 | Spostamento e disdetta, solo quando lo chiedi tu | ✅ fatto |
-| 5 | Installer per i tre sistemi (GitHub Actions) | da fare |
+| 5 | Installer per i tre sistemi (GitHub Actions) | ✅ fatto |
 
 **Come si usa.** Si aggiunge una ricetta con nome, codice fiscale e numero ricetta, la zona e i giorni da
 evitare. L'app legge la prenotazione (solo lettura) e poi, se la ricetta è attiva, la controlla da sola ogni
@@ -55,6 +55,30 @@ Torino e prima cintura, la provincia o dove propone il CUP. Per comune, comuni e
 "Estendi area di ricerca", così compaiono anche le aziende sanitarie più lontane. I comuni del Piemonte
 sono in `core/data/comuni_piemonte.txt` (ISTAT). Una data va bene se è nella zona, non cade in un giorno
 da evitare ed è prima della prenotazione.
+
+## Installarla
+
+Gli installer sono nella pagina [Releases](https://github.com/ilmondovero/cup-piemonte-checker/releases)
+del repository, nelle versioni "App desktop app-v…":
+
+- **Windows**: `CUP Piemonte_…_x64-setup.exe` (oppure il `.msi`). Se manca WebView2 lo scarica l'installer.
+- **macOS** (Intel e Apple Silicon): `CUP Piemonte_…_universal.dmg`; si trascina l'app in Applicazioni.
+- **Linux**: `.deb` (Debian, Ubuntu), `.rpm` (Fedora, openSUSE) oppure `.AppImage` (le altre; va reso
+  eseguibile con `chmod +x`).
+
+Gli installer non sono firmati con un certificato, perché costa e richiede un'identità registrata. Per
+questo la prima volta il sistema avvisa:
+
+- **Windows** (SmartScreen, "Windows ha protetto il PC"): "Ulteriori informazioni", poi "Esegui comunque".
+- **macOS** ("non può essere aperta" o "è danneggiata"): in Impostazioni di Sistema > Privacy e sicurezza,
+  "Apri comunque". Se il pulsante non c'è, da Terminale:
+  `xattr -dr com.apple.quarantine "/Applications/CUP Piemonte.app"`.
+
+Gli installer li costruisce GitHub Actions a partire dal codice di questo repository
+([`.github/workflows/app-installer.yml`](../.github/workflows/app-installer.yml)): prima girano i test sui
+tre sistemi, poi un tag `app-vX.Y.Z` crea una release in bozza, che si pubblica a mano dopo averla
+provata. L'app non si aggiorna da sola: per una versione nuova si scarica e si installa sopra la vecchia,
+e le ricette restano.
 
 ## Com'è fatta
 
