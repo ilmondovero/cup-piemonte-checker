@@ -89,13 +89,19 @@ pub struct Esito {
     /// Le note del Riepilogo dell'ultimo spostamento (la preparazione all'esame).
     #[serde(default)]
     pub note_visita: Vec<String>,
+    /// Le prestazioni di una ricetta mai prenotata, dal carrello del portale ("ECOGRAFIA + VISITA").
+    #[serde(default)]
+    pub cosa: String,
+    /// Ricetta mai prenotata con piu' prestazioni: va bene solo la data proposta, per tutte insieme.
+    #[serde(default)]
+    pub solo_proposta: bool,
 }
 
 /// Uno spostamento o una disdetta oltre la Conferma: salvato prima di inviarla, tolto quando l'esito e' noto. Se
 /// l'app trova un'operazione al riavvio, si e' fermata a meta': l'esito e' incerto.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Operazione {
-    /// "spostamento" o "disdetta".
+    /// "spostamento", "prenotazione" o "disdetta".
     pub tipo: String,
     /// "conferma" o "verifica".
     pub fase: String,
@@ -134,6 +140,9 @@ pub struct Ricetta {
     /// Un'operazione dall'esito incerto: finche' l'utente non dice di aver controllato sul portale, niente altre.
     #[serde(default)]
     pub incerta: Option<String>,
+    /// Ricetta mai prenotata: i controlli cercano il primo appuntamento libero (Ricerca e Prestazioni, non "Sposta").
+    #[serde(default)]
+    pub nuova: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -385,6 +394,7 @@ mod test {
             assenze: 0,
             operazione: None,
             incerta: None,
+            nuova: false,
         }
     }
 

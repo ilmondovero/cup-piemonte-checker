@@ -6,7 +6,8 @@
 
 Hai una visita prenotata sul [CUP Piemonte](https://cup.isan.csi.it/) tra mesi? Le date si liberano di
 continuo, ma bisogna ricontrollare il portale a mano. L'app e il bot di questo repository lo fanno al
-posto tuo e ti avvisano quando esce una data **prima** della tua prenotazione, con data, ora e luogo.
+posto tuo e ti avvisano quando esce una data **prima** della tua prenotazione, con data, ora e luogo. Se
+la ricetta non è ancora prenotata, cercano il primo posto libero.
 
 Progetto indipendente e gratuito, **non ufficiale**: non è collegato alla Regione Piemonte né al CSI
 Piemonte. Usa il portale pubblico come lo useresti tu dal browser.
@@ -45,6 +46,10 @@ pagina [Releases](https://github.com/ilmondovero/cup-piemonte-checker/releases).
 - Quando esce una data prima arriva una notifica con data, ora e luogo.
 - **Non sposta mai nulla da sola.** "Sposta qui" mostra la data attuale e quella nuova e sposta solo
   dopo il tuo "Sì", poi controlla sul portale che sia andata. Puoi anche disdire.
+- **Ricetta non ancora prenotata** (dalla versione 0.2.0): cerca il primo posto libero nella zona scelta e
+  te lo propone; prenota solo con "Prenota qui" e il tuo "Sì", poi cerca date prima. È una funzione nuova:
+  un passo del portale non è ancora stato visto con una ricetta vera, e se qualcosa non torna l'app si
+  ferma senza prenotare.
 - Più ricette, anche di familiari, ognuna con la sua zona.
 - **I dati restano sul tuo computer**, cifrati: codice fiscale e ricetta vanno solo al portale CUP.
   L'app non manda niente a nessuno.
@@ -63,7 +68,7 @@ scrivere codice fiscale, ricetta o dati della visita.
 | Avvisi | notifiche del sistema | messaggi Telegram, anche sul telefono | messaggi Telegram |
 | Visita già prenotata: cerca date prima | sì | sì | no |
 | Sposta la prenotazione | sì, solo con il tuo "Sì" | sì, con un tocco (o in automatico, se lo attivi) | no |
-| Ricetta mai prenotata | no | sì, cerca e prenota (sperimentale) | sì, avvisa quando c'è posto |
+| Ricetta mai prenotata | sì, cerca e prenota col tuo "Sì" (dalla 0.2.0, sperimentale) | sì, cerca e prenota (sperimentale) | sì, avvisa quando c'è posto |
 | Installazione | un installer | server Linux, Docker o systemd | Python, Playwright, Chromium |
 | Cartella | [`app/`](app/) | [`telegram-bot/`](telegram-bot/) | questa |
 

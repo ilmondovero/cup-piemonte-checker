@@ -17,6 +17,9 @@ pub enum Errore {
     /// 502/503/504, connessione rifiutata o caduta: si riprova piu' tardi.
     #[error("portale sovraccarico ({0})")]
     Sovraccarico(String),
+    /// Una ricetta seguita come mai prenotata ha (o ha appena avuto) un appuntamento: non si prenota di nuovo.
+    #[error("{0}")]
+    GiaPrenotata(String),
     /// La stessa prestazione e' prenotata in due appuntamenti: prima se ne disdice uno, poi si cerca.
     #[error("{0}")]
     Doppione(String),

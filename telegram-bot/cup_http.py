@@ -1140,7 +1140,11 @@ def _prenota(cf, nre, slot, sessione, zona, dry_run, libera, nuova, tappa, calen
             time.sleep(3)
             try:
                 att2 = CupSession(cf, nre).attuale()
-            except (NonTrovata, NonAttiva):
+            except NonTrovata:
+                att2 = None
+            except NonAttiva as e2:
+                if not e2.solo_disdette():  # erogata, in corso...: come alla prima lettura, non si prenota
+                    raise CupError(f"{e2}: non prenoto, verifica sul portale")
                 att2 = None
             if att2:
                 raise GiaPrenotata(f"Nel frattempo la ricetta risulta prenotata al {att2.quando:%d/%m/%Y %H:%M}")

@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::thread;
 
-use crate::analisi::{A, L, RIEPILOGO};
+use crate::analisi::{A, L, R, RIEPILOGO};
 
 /// (riga iniziale, intestazioni in minuscolo, corpo) di una richiesta ricevuta dal finto portale.
 pub type Vista = (String, String, String);
@@ -142,6 +142,53 @@ pub fn appuntamenti(azione: &str, proposta: &str) -> String {
         r#"<div>'{A}:x:0:app_selector'</div>{proposta}<div class="btn btn-default" id="{A}:altre">Altre disponibilità</div>"#
     );
     format!("<h1>Appuntamenti Proposti</h1>{}", modulo(A, azione, &corpo))
+}
+
+/// Il passo "Ricerca" di una prenotazione nuova: codice fiscale, numero ricetta, "Prosegui" e il comando nascosto.
+pub fn ricerca(azione: &str) -> String {
+    let corpo = format!(
+        r#"<input type="text" name="{R}:CFInput" value="" /><input type="text" name="{R}:nreInput0" value="" /><div id="{R}:nreButton">Prosegui</div><input id="{R}:epPrestazioniForwardNavigate" type="submit" style="display:none;" />"#
+    );
+    format!("<h1>Ricerca Prestazioni Appuntamenti Riepilogo e conferma</h1>{}", modulo(R, azione, &corpo))
+}
+
+/// Il carrello "Prestazioni Selezionate" con queste prestazioni.
+pub fn carrello(azione: &str, nomi: &[&str]) -> String {
+    let voci: String = nomi
+        .iter()
+        .enumerate()
+        .map(|(i, n)| {
+            format!(
+                r#"<span class="media-title" style="display:block;"><span id="x{i}">{n}</span> </span><span class="media-title"> (<span>PRENOTABILE</span>)</span>"#
+            )
+        })
+        .collect();
+    let corpo = format!(r#"<div id="prestazioni_selezionate">Prestazioni Selezionate: {}</div>{voci}"#, nomi.len());
+    modulo(&format!("{P}cartForm"), azione, &corpo)
+}
+
+/// Il prefisso degli id della pagina della ricetta.
+pub const P: &str = "_ricettaelettronica_WAR_cupprenotazione_:";
+
+/// Il passo "Prestazioni": il carrello e il modulo con la casella spuntata e "Avanti".
+pub fn passo_prestazioni(azione: &str, nomi: &[&str]) -> String {
+    let f = format!("{P}prestazioni-form-main");
+    let corpo = format!(
+        r#"<input type="checkbox" name="{f}:scelta0" checked="checked" value="true" /><div id="{f}:prestazioni-nextButton-main">Avanti</div>"#
+    );
+    format!(
+        "<h1>Ricerca Prestazioni Appuntamenti Riepilogo e conferma</h1>{}{}",
+        carrello(azione, nomi),
+        modulo(&f, azione, &corpo)
+    )
+}
+
+/// Una risposta parziale, con un messaggio d'errore del portale se dato.
+pub fn risposta(errore: Option<&str>) -> String {
+    let m = errore.map_or(String::new(), |e| {
+        format!(r#"<div class="messagifyMsg alert-danger"><span>***nre***: {e}</span><br /></div>"#)
+    });
+    format!(r#"<partial-response><changes><update id="m"><![CDATA[{m}]]></update></changes></partial-response>"#)
 }
 
 /// Il pannello "Appuntamenti Disponibili" con queste date e, se `area`, il pulsante "Estendi area di ricerca".

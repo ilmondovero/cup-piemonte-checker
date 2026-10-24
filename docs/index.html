@@ -101,7 +101,8 @@ footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--bordo)
     <div>
       <h1>Una data prima per la tua visita, senza ricontrollare il CUP ogni ora</h1>
       <p class="sotto">L'app controlla il portale CUP Piemonte ogni 20 minuti e ti avvisa con una notifica appena si
-        libera una data prima della tua prenotazione. Sposta la prenotazione solo quando lo chiedi tu.</p>
+        libera una data prima della tua prenotazione. Sposta la prenotazione solo quando lo chiedi tu. Ricetta non
+        ancora prenotata? Dalla versione 0.2.0 cerca anche il primo posto libero.</p>
       <a class="scarica" id="principale" href="#scarica">
         <span id="principale-testo">Scarica l'app</span><small id="principale-info">Windows, macOS e Linux</small>
       </a>
@@ -162,14 +163,15 @@ footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--bordo)
     <h2>Come funziona</h2>
     <ol class="passi">
       <li>Aggiungi la ricetta: un nome a piacere, codice fiscale e numero della ricetta elettronica (NRE) di una visita
-        <b>già prenotata</b> sul CUP Piemonte.</li>
+        <b>già prenotata</b> sul CUP Piemonte o, dalla versione 0.2.0, di una ricetta <b>non ancora prenotata</b>.</li>
       <li>Scegli dove cercare (la stessa sede, il tuo comune o un altro, Torino e prima cintura, la provincia o dove
         propone il CUP) e i giorni da evitare.</li>
       <li>L'app controlla ogni 20 minuti, anche con la finestra chiusa: resta nella barra di sistema (su macOS nella
         barra dei menu). Il computer deve essere acceso e non in sospensione. Quando esce una data prima arriva una
         notifica con data, ora e luogo.</li>
       <li>Se ti va bene premi <i>Sposta qui</i>: l'app mostra la data attuale e quella nuova e sposta solo dopo il tuo
-        <i>Sì</i>, poi controlla sul portale che lo spostamento sia andato.</li>
+        <i>Sì</i>, poi controlla sul portale che lo spostamento sia andato. Per una ricetta non ancora prenotata il
+        pulsante è <i>Prenota qui</i>, e da lì l'app cerca date prima.</li>
     </ol>
     <div class="punti">
       <div class="carta"><h3>I dati restano sul tuo computer</h3>
@@ -177,10 +179,11 @@ footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--bordo)
           cifrati, con la chiave di solito nel portachiavi del sistema. Nessun server, nessun account: l'app non manda
           niente a nessuno.</p></div>
       <div class="carta"><h3>Non sposta mai niente da sola</h3>
-        <p>Ogni spostamento o disdetta parte solo da un tuo clic e chiede conferma mostrando data, ora e luogo.
+        <p>Ogni spostamento, prenotazione o disdetta parte solo da un tuo clic e chiede conferma mostrando data, ora e
+          luogo.
           Se l'esito non è certo, l'app lo dice e ti chiede di controllare sul sito del CUP.</p></div>
       <div class="carta"><h3>Un controllo ogni 20 minuti, non di più</h3>
-        <p>Ogni controllo apre "Sposta appuntamento" come faresti tu, e il portale tiene riservata per circa 40 minuti
+        <p>Ogni controllo apre gli appuntamenti sul portale come faresti tu, e il portale tiene riservata per circa 40 minuti
           la prima data che propone. Per questo l'app non controlla più spesso: metti in pausa le ricette che non ti
           servono più.</p></div>
       <div class="carta"><h3>Leggera</h3>
@@ -202,8 +205,10 @@ footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--bordo)
     </details>
     <details>
       <summary>Funziona con una ricetta non ancora prenotata?</summary>
-      <p>No: l'app cerca date prima di una prenotazione che esiste già. Prenota prima la visita sul CUP, anche lontana,
-        poi aggiungi la ricetta all'app.</p>
+      <p>Sì, dalla versione 0.2.0: l'app cerca il primo posto libero nella zona che scegli e ti avvisa. Prenota solo se
+        premi <i>Prenota qui</i> e confermi, poi continua a cercare date prima. È una funzione nuova: se il portale
+        mostra qualcosa di inatteso l'app si ferma senza prenotare e lo scrive. Con la versione 0.1.0 prenota prima la
+        visita sul CUP, anche lontana, poi aggiungi la ricetta all'app.</p>
     </details>
     <details>
       <summary>Posso seguire più ricette?</summary>

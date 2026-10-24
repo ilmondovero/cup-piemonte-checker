@@ -1,5 +1,6 @@
-//! I controlli automatici: ogni ricetta attiva al massimo una volta ogni 20 minuti (ogni controllo apre "Sposta"
-//! e blocca una data per ~40 minuti), una ricetta alla volta, in un thread a parte.
+//! I controlli automatici: ogni ricetta attiva al massimo una volta ogni 20 minuti (ogni controllo apre "Sposta",
+//! o gli appuntamenti di una ricetta mai prenotata, e blocca una data per ~40 minuti), una ricetta alla volta, in un
+//! thread a parte.
 
 use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -31,7 +32,15 @@ pub const TENUTA: i64 = 35 * 60;
 pub enum Attivita {
     Controllo,
     Spostamento,
+    Prenotazione,
     Disdetta,
+}
+
+impl Attivita {
+    /// Uno spostamento, una prenotazione o una disdetta: a meta' l'esito resterebbe da verificare a mano.
+    pub fn operazione(self) -> bool {
+        self != Attivita::Controllo
+    }
 }
 
 /// La sessione del controllo che ha trovato date buone: "Sposta" e' aperto e la proposta e' tenuta per noi.
@@ -114,22 +123,46 @@ pub fn prossimo(r: &Ricetta, adesso: i64) -> Option<i64> {
     r.attiva.then(|| r.ultimo_tentativo.map_or(adesso, |t| (t.min(adesso) + INTERVALLO).max(adesso)))
 }
 
+/// Una zona "della prenotazione" (sede, comune o provincia senza un nome).
+pub fn della_prenotazione(dove: &str, valore: &str) -> bool {
+    matches!(dove, "sede" | "comune" | "provincia") && valore.trim().is_empty()
+}
+
 /// La zona e i giorni da evitare di una ricetta.
 pub fn zona_di(r: &Ricetta) -> Result<(Zona, Calendario), Errore> {
-    let zona = Zona::new(Dove::da_scelta(&r.dove, &r.valore)?);
+    // senza prenotazione una zona "della prenotazione" non vuol dire nulla: finche' non e' prenotata si cerca dove
+    // propone il CUP, poi torna a valere la scelta dell'utente
+    let dove = if r.nuova && della_prenotazione(&r.dove, &r.valore) {
+        Dove::Tutte
+    } else {
+        Dove::da_scelta(&r.dove, &r.valore)?
+    };
+    let zona = Zona::new(dove);
     Ok((zona, Calendario { no_settimana: r.evita.iter().copied().filter(|g| *g < 7).collect(), ..Default::default() }))
+}
+
+/// Un messaggio "Il portale ha risposto: <testo del portale>" senza il testo del portale, che puo' nominare la
+/// ricetta o la prestazione. Resta intera solo la descrizione di una pagina sconosciuta (`analisi::struttura`), che
+/// ha solo nomi di sezioni e pulsanti.
+fn senza_testo_del_portale(m: &str) -> &str {
+    match m.split_once(": ") {
+        Some((_, dopo)) if dopo.starts_with(cup_core::analisi::STRUTTURA) => m,
+        Some((prima, _)) => prima,
+        None => m,
+    }
 }
 
 /// L'errore come va nel registro: il tipo, senza testi che possono contenere la prestazione o le date.
 pub fn tipo(e: &Errore) -> String {
     match e {
-        Errore::NonTrovata(_) => "il portale non trova la prenotazione".into(),
+        Errore::NonTrovata(_) => "il portale non trova la ricetta o la prenotazione".into(),
+        Errore::GiaPrenotata(_) => "la ricetta risulta già prenotata".into(),
         Errore::NonAttiva { stati } => format!("prenotazione non attiva ({})", stati.join(", ")),
         Errore::Doppione(_) => "due prenotazioni della stessa prestazione".into(),
         Errore::DatiNonValidi(_) => "dati della ricetta non validi".into(),
         Errore::Timeout => "timeout".into(),
         Errore::Sovraccarico(m) => format!("portale sovraccarico ({m})"),
-        Errore::Inattesa(m) => format!("risposta inattesa ({m})"),
+        Errore::Inattesa(m) => format!("risposta inattesa ({})", senza_testo_del_portale(m)),
         Errore::Incerto(_) => "esito incerto".into(),
     }
 }
@@ -153,6 +186,7 @@ pub fn applica(r: &mut Ricetta, esito: Result<Controllo, Errore>, zona: &Zona, t
     let prima = r.esito.take().unwrap_or_default();
     match esito {
         Ok(c) => {
+            let a = c.elenco.as_ref().map(|e| &e.attuale);
             let buone: Vec<Data> = c.migliori.iter().map(data).collect();
             let mut nuove: Vec<&Data> = vec![];
             for d in &buone {
@@ -169,7 +203,13 @@ pub fn applica(r: &mut Ricetta, esito: Result<Controllo, Errore>, zona: &Zona, t
                     1 => righe.push("e un'altra data: la vedi nell'app".into()),
                     n => righe.push(format!("e altre {n} date: le vedi nell'app")),
                 }
-                let titolo = if nuove.len() == 1 { "Data prima" } else { "Date prima" };
+                // senza prenotazione ogni data nella zona va bene: e' un posto libero, non una data "prima"
+                let titolo = match (a.is_some(), nuove.len()) {
+                    (true, 1) => "Data prima",
+                    (true, _) => "Date prima",
+                    (false, 1) => "Posto libero",
+                    (false, _) => "Posti liberi",
+                };
                 notifiche.push(Notifica {
                     ricetta: r.id,
                     tipo: "date nuove",
@@ -181,30 +221,67 @@ pub fn applica(r: &mut Ricetta, esito: Result<Controllo, Errore>, zona: &Zona, t
             let troppe = r.notificate.len().saturating_sub(NOTIFICATE_MAX);
             r.notificate.drain(..troppe);
             r.assenze = 0;
-            let a = &c.elenco.attuale;
+            let cosa = match (a, c.prestazioni.is_empty()) {
+                (None, false) => c.prestazioni.join(" + "),
+                (None, true) => prima.cosa,
+                (Some(_), _) => String::new(),
+            };
             r.esito = Some(Esito {
                 ts,
                 controllo: true,
-                attuale: Some(Visita::da(a)),
-                zona: zona.dove.descrizione(Some(a)),
+                attuale: a.map(Visita::da),
+                zona: zona.dove.descrizione(a),
                 date: c.slots.len(),
                 buone,
                 area_incompleta: c.area_incompleta,
                 errore: None,
                 nota: None,
                 note_visita: prima.note_visita,
+                cosa,
+                solo_proposta: c.solo_proposta,
             });
             notifiche
+        }
+        // la ricetta seguita come mai prenotata e' stata prenotata (dal sito del CUP, al telefono...): da ora si
+        // cercano date prima della prenotazione
+        Err(Errore::GiaPrenotata(m)) => {
+            r.nuova = false;
+            r.assenze = 0;
+            r.esito = Some(Esito {
+                ts,
+                controllo: false,
+                errore: None,
+                buone: vec![],
+                date: 0,
+                nota: Some(format!("{m}: al prossimo controllo l'app legge la prenotazione e cerca date prima.")),
+                ..prima
+            });
+            vec![Notifica {
+                ricetta: r.id,
+                tipo: "già prenotata",
+                titolo: format!("{}: la ricetta risulta prenotata", r.nome),
+                testo: format!("{m}. Da ora l'app cerca date prima della prenotazione."),
+            }]
         }
         Err(e) => {
             let pausa = match &e {
                 Errore::NonTrovata(_) => {
                     r.assenze += 1;
-                    (r.assenze >= ASSENZE_PAUSA).then(|| format!("Il portale non trova più la prenotazione ({e})"))
+                    (r.assenze >= ASSENZE_PAUSA).then(|| {
+                        if r.nuova {
+                            format!("Il portale non accetta la ricetta ({e})")
+                        } else {
+                            format!("Il portale non trova più la prenotazione ({e})")
+                        }
+                    })
                 }
                 Errore::NonAttiva { .. } | Errore::Doppione(_) | Errore::DatiNonValidi(_) => Some(e.to_string()),
                 // portale lento, sovraccarico o cambiato: si riprova al prossimo giro
-                Errore::Timeout | Errore::Sovraccarico(_) | Errore::Inattesa(_) | Errore::Incerto(_) => None,
+                Errore::Timeout
+                | Errore::Sovraccarico(_)
+                | Errore::Inattesa(_)
+                | Errore::Incerto(_)
+                | Errore::GiaPrenotata(_) => None,
             };
             r.esito = Some(Esito {
                 ts,
@@ -241,11 +318,24 @@ pub fn impostazioni(r: &Ricetta) -> Impostazioni {
 /// L'esito di un controllo e la sua sessione (con "Sposta" aperto), se c'e'.
 pub type Risultato = Result<(Controllo, Option<Sessione>), Errore>;
 
-/// Un controllo vero sul portale.
+/// Un controllo vero sul portale: "Sposta" per una ricetta prenotata, Ricerca e Prestazioni per una mai prenotata.
 pub fn sul_portale(r: &Ricetta, zona: &Zona, cal: &Calendario) -> Risultato {
     let mut s = Sessione::nuova(&r.cf, &r.nre)?;
-    let c = s.controlla(zona, cal)?;
-    Ok((c, Some(s)))
+    if !r.nuova {
+        let c = s.controlla(zona, cal)?;
+        return Ok((c, Some(s)));
+    }
+    match s.controlla_nuova(zona, cal) {
+        Ok(c) => Ok((c, Some(s))),
+        // la Ricerca dice solo "gia' presente": data, ora e luogo si leggono dall'elenco (solo lettura)
+        Err(Errore::GiaPrenotata(m)) => {
+            Err(Errore::GiaPrenotata(match Sessione::nuova(&r.cf, &r.nre).and_then(|mut x| x.elenco()) {
+                Ok(e) => format!("La ricetta risulta prenotata al {} · {}", breve(&e.attuale.quando), e.attuale.luogo),
+                Err(_) => format!("Il portale dice che la ricetta è già prenotata ({m})"),
+            }))
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// Un giro: se c'e' una ricetta da controllare la controlla con `controlla` e ne salva l'esito. `inizio` si chiama
@@ -382,6 +472,7 @@ mod test {
             assenze: 0,
             operazione: None,
             incerta: None,
+            nuova: false,
         }
     }
 
@@ -405,16 +496,18 @@ mod test {
             cosa: "VISITA".into(),
         };
         Controllo {
-            elenco: Elenco {
+            elenco: Some(Elenco {
                 attuale: attuale.clone(),
                 prenotate: vec![attuale],
                 righe: vec![0],
                 n_prenotate: 1,
                 riga: 0,
-            },
+            }),
+            prestazioni: vec![],
             slots: migliori.clone(),
             migliori,
             area_incompleta: false,
+            solo_proposta: false,
         }
     }
 
@@ -425,6 +518,19 @@ mod test {
         let archivio = Archivio::con_chiave(c.join("ricette.cifrate"), XChaCha20Poly1305::generate_key(&mut OsRng));
         let dati = Dati { prossimo_id: 9, ricette, eliminate: vec![] };
         (Stato::new(archivio, Registro::new(&c), dati), c)
+    }
+
+    #[test]
+    fn zona_della_prenotazione_senza_prenotazione() {
+        let mut r = ricetta();
+        (r.dove, r.valore, r.nuova) = ("comune".into(), String::new(), true);
+        assert_eq!(zona_di(&r).unwrap().0.dove, Dove::Tutte);
+        // prenotata: torna a valere la scelta dell'utente
+        r.nuova = false;
+        assert_eq!(zona_di(&r).unwrap().0.dove, Dove::Comune(String::new()));
+        // un comune scritto vale sempre
+        (r.valore, r.nuova) = ("Alba".into(), true);
+        assert_eq!(zona_di(&r).unwrap().0.dove, Dove::Comune("ALBA".into()));
     }
 
     #[test]
@@ -502,6 +608,62 @@ mod test {
         r.attiva = true;
         applica(&mut r, Err(Errore::Doppione("due prenotazioni".into())), &zona, 70);
         assert!(!r.attiva);
+    }
+
+    #[test]
+    fn nel_registro_mai_il_testo_del_portale() {
+        let e = |m: &str| tipo(&Errore::Inattesa(m.into()));
+        assert_eq!(
+            e("Il portale ha risposto: La ricetta 010A00000000001 non è disponibile"),
+            "risposta inattesa (Il portale ha risposto)"
+        );
+        assert_eq!(
+            e("Il portale non va avanti: Prestazione ECOGRAFIA non prenotabile"),
+            "risposta inattesa (Il portale non va avanti)"
+        );
+        // la descrizione di una pagina sconosciuta resta: serve a capire il passo, e non ha dati
+        let s = "Passo del portale non riconosciuto: sezioni [Prestazioni], moduli [quesitoForm], pulsanti []";
+        assert_eq!(e(s), format!("risposta inattesa ({s})"));
+        assert_eq!(e("timeout dell'area"), "risposta inattesa (timeout dell'area)");
+        assert_eq!(cup_core::analisi::id_breve("x:riga_RSSMRA80A01L219X"), "?");
+        assert_eq!(cup_core::analisi::id_breve("x:riga_010A00000000001_b"), "?");
+        assert_eq!(cup_core::analisi::id_breve("x:prestazioni-nextButton-main"), "prestazioni-nextButton-main");
+    }
+
+    #[test]
+    fn ricetta_mai_prenotata_posti_liberi_e_poi_prenotata_altrove() {
+        let mut r = ricetta();
+        r.nuova = true;
+        (r.dove, r.valore) = ("comune".into(), "Torino".into());
+        let zona = zona_di(&r).unwrap().0;
+        let mut c = controllo(vec![slot(1, "MAURIZIANO")]);
+        c.elenco = None;
+        c.prestazioni = vec!["ECOGRAFIA".into(), "VISITA".into()];
+        c.solo_proposta = true;
+        let n = applica(&mut r, Ok(c), &zona, 10);
+        assert_eq!(n[0].titolo, "Posto libero per Genetica");
+        assert_eq!(n[0].testo, "mar 01/12/2026 ore 09:00 · MAURIZIANO, AMB, TORINO (TO)");
+        let e = r.esito.clone().unwrap();
+        assert!(e.attuale.is_none() && e.solo_proposta && e.buone.len() == 1);
+        assert_eq!((e.cosa.as_str(), e.zona.as_str()), ("ECOGRAFIA + VISITA", "solo nel comune di Torino"));
+        // il portale la dice gia' prenotata (dal sito del CUP, al telefono): da ora si cercano date prima, senza pausa
+        let m = "La ricetta risulta prenotata al gio 07/01/2027 ore 09:00 · MOLINETTE, AMB, TORINO (TO)";
+        let n = applica(&mut r, Err(Errore::GiaPrenotata(m.into())), &zona, 20);
+        assert!(!r.nuova && r.attiva && n[0].titolo == "Genetica: la ricetta risulta prenotata");
+        assert_eq!(n[0].testo, format!("{m}. Da ora l'app cerca date prima della prenotazione."));
+        let e = r.esito.clone().unwrap();
+        assert!(e.buone.is_empty() && e.errore.is_none());
+        assert_eq!(
+            e.nota.unwrap(),
+            format!("{m}: al prossimo controllo l'app legge la prenotazione e cerca date prima.")
+        );
+        // una ricetta che il portale rifiuta va in pausa alla terza volta, con il motivo giusto
+        r.nuova = true;
+        for _ in 0..ASSENZE_PAUSA {
+            applica(&mut r, Err(Errore::NonTrovata("Ricetta scaduta".into())), &zona, 30);
+        }
+        assert!(!r.attiva);
+        assert!(r.esito.unwrap().errore.unwrap().contains("scaduta"));
     }
 
     #[test]

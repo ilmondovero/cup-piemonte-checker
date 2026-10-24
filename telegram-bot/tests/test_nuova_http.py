@@ -215,11 +215,12 @@ FATTA = c.Prenotazione(SLOT.quando, SLOT.luogo, "ECOGRAFIA ADDOME COMPLETO")
 PROPOSTA = c.Slot(SLOT.quando, SLOT.luogo, None, proposta=True)  # con piu' prestazioni si prenota solo la proposta
 
 
-def sessioni_finte(monkeypatch, attuali, riep=RIEP, n=1, cosa="ECOGRAFIA ADDOME COMPLETO", nomi=None):
+def sessioni_finte(monkeypatch, attuali, riep=RIEP, n=1, cosa="ECOGRAFIA ADDOME COMPLETO", nomi=None,
+                   ripeti_nessuna=True):
     """CupSession con i passi del portale sostituiti: registra Ricerca e Conferma."""
     log = {"ricetta": 0, "conferma": 0}
     coda = list(attuali)
-    if coda and isinstance(coda[0], c.NonTrovata):  # prima di prenotare, "nessun record" si legge due volte
+    if ripeti_nessuna and coda and isinstance(coda[0], c.NonTrovata):  # prima di prenotare, "nessun record" si legge due volte
         coda.insert(1, coda[0])
 
     def attuale(self):
@@ -276,6 +277,15 @@ def test_prenotazione_erogata_non_si_aggiunge_un_appuntamento(monkeypatch):
     with pytest.raises(c.CupError, match="non prenoto"):
         prenota_nuova()
     assert log["conferma"] == 0
+
+
+def test_seconda_lettura_erogata_non_si_prenota(monkeypatch):
+    log = sessioni_finte(monkeypatch, [c.NonTrovata("Nessun record"),
+                                       c.NonAttiva("La prenotazione risulta in stato EROGATO", ["EROGATO"])],
+                        ripeti_nessuna=False)
+    with pytest.raises(c.CupError, match="non prenoto"):
+        prenota_nuova()
+    assert log["conferma"] == 0 and log["ricetta"] == 0
 
 
 def test_disdetta_si_puo_prenotare_di_nuovo(monkeypatch):

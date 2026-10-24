@@ -5,6 +5,9 @@
 //!   2. "Sposta appuntamento" -> pagina Appuntamenti Proposti
 //!   3. "Altre disponibilita'" -> Appuntamenti Disponibili, ed eventualmente "Estendi area di ricerca"
 //!
+//! Per una ricetta mai prenotata i passi 1 e 2 sono "Ricerca" (codice fiscale + NRE) e "Prestazioni" (il
+//! carrello, com'e' proposto), poi la stessa pagina degli appuntamenti.
+//!
 //! Aprire "Sposta" fa tenere lo slot proposto a quella sessione per ~40 minuti, e non c'e' modo di
 //! rilasciarlo: i controlli non vanno fatti troppo spesso (il bot ne fa uno ogni 20 minuti al massimo).
 
@@ -15,7 +18,7 @@ use reqwest::header::CONTENT_TYPE;
 
 use chrono::NaiveDateTime;
 
-use crate::analisi::{self, Elenco, Riepilogo, Slot, A, AVANTI, L, RIEPILOGO};
+use crate::analisi::{self, Elenco, Riepilogo, Slot, A, AVANTI, L, R, RIEPILOGO};
 use crate::errore::Errore;
 use crate::zona::{candidata, Calendario, Zona};
 
@@ -157,11 +160,27 @@ pub struct Alternative {
 /// Un controllo completo: la prenotazione, tutte le date offerte e quelle che vanno bene.
 #[derive(Debug, Clone)]
 pub struct Controllo {
-    pub elenco: Elenco,
+    /// La prenotazione; None per una ricetta mai prenotata.
+    pub elenco: Option<Elenco>,
+    /// Le prestazioni del carrello di una ricetta mai prenotata.
+    pub prestazioni: Vec<String>,
     pub slots: Vec<Slot>,
     /// Le date da proporre: nella zona, in un giorno si', prima della prenotazione (vedi zona::candidata).
     pub migliori: Vec<Slot>,
     pub area_incompleta: bool,
+    /// Ricetta mai prenotata con piu' prestazioni: va bene solo la data proposta dal portale, per tutte insieme.
+    pub solo_proposta: bool,
+}
+
+/// Il flusso che una sessione ha aperto: una sessione vale solo per quello (prenotare con la sessione di una
+/// ricetta mai prenotata una ricetta gia' prenotata potrebbe creare un secondo appuntamento, e viceversa).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Modo {
+    Nessuno,
+    /// "Sposta appuntamento" su una prenotazione.
+    Sposta,
+    /// Prima prenotazione di una ricetta mai prenotata.
+    Nuova,
 }
 
 /// Recupera Prenotazioni gia' fatto: il modulo e la risposta servono per "Sposta" sulla stessa riga.
@@ -182,6 +201,10 @@ pub struct Sessione {
     /// La pagina degli appuntamenti aperta da "Sposta" e le date lette: servono per sceglierne una.
     app: Option<Modulo>,
     slots: Vec<Slot>,
+    modo: Modo,
+    /// Le prestazioni dell'ultimo carrello letto e il numero massimo visto in un passo qualsiasi.
+    nomi: Vec<String>,
+    n_prestazioni: usize,
 }
 
 impl Sessione {
@@ -210,11 +233,56 @@ impl Sessione {
             .timeout(risposta)
             .build()
             .map_err(|_| Errore::Inattesa("client HTTP non disponibile".into()))?;
-        Ok(Sessione { client, base: base.into(), cf, nre, lista: None, app: None, slots: vec![] })
+        Ok(Sessione {
+            client,
+            base: base.into(),
+            cf,
+            nre,
+            lista: None,
+            app: None,
+            slots: vec![],
+            modo: Modo::Nessuno,
+            nomi: vec![],
+            n_prestazioni: 0,
+        })
     }
 
     fn pagina(&self, percorso: &str) -> Result<String, Errore> {
         Ok(self.client.get(format!("{}{percorso}", self.base)).send()?.error_for_status()?.text()?)
+    }
+
+    /// Dopo un "avanti" del portale: la pagina del passo dopo (il redirect, o di nuovo la pagina della ricetta).
+    fn segui(&self, xml: &str) -> Result<String, Errore> {
+        match analisi::redirect(xml) {
+            Some(url) if !url.starts_with(&format!("{}/", self.base)) => {
+                Err(Errore::Inattesa("Il portale ha indicato un indirizzo esterno: non proseguo".into()))
+            }
+            Some(url) => Ok(self.client.get(url).send()?.error_for_status()?.text()?),
+            None => self.pagina(RICETTA),
+        }
+    }
+
+    /// Il flusso aperto da questa sessione.
+    pub fn modo(&self) -> Modo {
+        self.modo
+    }
+
+    /// Le prestazioni dell'ultimo carrello letto (ricetta mai prenotata).
+    pub fn prestazioni(&self) -> &[String] {
+        &self.nomi
+    }
+
+    /// Il numero massimo di prestazioni visto nel carrello, in qualsiasi passo.
+    pub fn n_prestazioni(&self) -> usize {
+        self.n_prestazioni
+    }
+
+    fn carrello(&mut self, pagina: &str) {
+        let nomi = analisi::prestazioni(pagina);
+        self.n_prestazioni = self.n_prestazioni.max(nomi.len());
+        if !nomi.is_empty() {
+            self.nomi = nomi;
+        }
     }
 
     /// Il numero della ricetta di questa sessione (maiuscolo, senza spazi).
@@ -252,7 +320,105 @@ impl Sessione {
         self.lista = Some(Lista { modulo, xml, elenco: elenco.clone() });
         self.app = None;
         self.slots.clear();
+        self.modo = Modo::Nessuno;
         Ok(elenco)
+    }
+
+    /// Passo "Ricerca" di una prenotazione nuova: codice fiscale + NRE e "Prosegui", come il browser (il pulsante
+    /// visibile fa partire il comando nascosto epPrestazioniForwardNavigate). Non apre gli appuntamenti: non blocca
+    /// date. Ritorna la pagina del passo dopo e legge il carrello. `GiaPrenotata` se la ricetta ha gia' un
+    /// appuntamento, `NonTrovata` se il portale la rifiuta.
+    pub fn ricetta(&mut self) -> Result<String, Errore> {
+        self.lista = None;
+        self.app = None;
+        self.slots.clear();
+        self.nomi.clear();
+        self.n_prestazioni = 0;
+        self.modo = Modo::Nessuno;
+        let modulo = Modulo::da_pagina(&self.pagina(RICETTA)?, R)?;
+        let sorgente = format!("{R}:epPrestazioniForwardNavigate");
+        let campi = Campi::default()
+            .metti(format!("{R}:CFInput"), &self.cf)
+            .metti(format!("{R}:nreInput0"), &self.nre)
+            .metti("g-recaptcha-token", "")
+            .metti("javax.faces.source", &sorgente)
+            .metti("javax.faces.partial.event", "click")
+            .metti("javax.faces.partial.execute", format!("{sorgente} {R}"))
+            .metti("javax.faces.partial.render", "@all")
+            .metti("javax.faces.behavior.event", "action")
+            .metti("javax.faces.partial.ajax", "true");
+        let xml = modulo.invia(&self.client, &self.base, campi)?;
+        analisi::esito_ricerca(&xml)?;
+        let pagina = self.segui(&xml)?;
+        // i passi sono pagine distinte: se c'e' ancora la ricerca, il portale non e' andato avanti
+        if pagina.contains(&format!("{R}:CFInput")) {
+            return Err(Errore::Inattesa(format!(
+                "Il portale è rimasto alla ricerca della ricetta: {}",
+                analisi::struttura(&pagina)
+            )));
+        }
+        self.modo = Modo::Nuova;
+        self.carrello(&pagina);
+        Ok(pagina)
+    }
+
+    /// Dal passo "Prestazioni" agli appuntamenti: "Avanti" con il modulo com'e', come fa una persona (le prestazioni
+    /// restano quelle proposte dal portale). Il passo non e' ancora stato visto dal vivo: se non si riconosce un
+    /// pulsante per andare avanti ci si ferma, e l'errore descrive la pagina (senza dati personali). Mai "Avanti" su
+    /// un Riepilogo: li' "Avanti" e' la Conferma.
+    pub fn fino_agli_appuntamenti(&mut self, mut pagina: String) -> Result<String, Errore> {
+        let non_riconosciuto =
+            |p: &str| Errore::Inattesa(format!("Passo del portale non riconosciuto: {}", analisi::struttura(p)));
+        for _ in 0..3 {
+            if pagina.contains("Appuntamenti Proposti") || pagina.contains("Appuntamenti Disponibili") {
+                return Ok(pagina);
+            }
+            if pagina.contains(RIEPILOGO) {
+                return Err(Errore::Inattesa(
+                    "Il portale è passato al Riepilogo prima degli appuntamenti: non proseguo".into(),
+                ));
+            }
+            let moduli = analisi::moduli(&pagina);
+            let mut avanti: Vec<String> = analisi::pulsanti_avanti(&pagina)
+                .into_iter()
+                .filter(|b| {
+                    let b = b.to_lowercase();
+                    !b.contains("appuntamenti") && !b.contains("riepilogo")
+                })
+                .filter(|b| b.rsplit_once(':').is_some_and(|(m, _)| moduli.iter().any(|x| x == m)))
+                .collect();
+            // solo nel passo Prestazioni: il pulsante e' suo, o la pagina mostra il carrello
+            if avanti.is_empty()
+                || (!avanti.iter().any(|b| b.to_lowercase().contains("prestazion"))
+                    && !pagina.contains(r#"id="prestazioni_selezionate""#))
+            {
+                return Err(non_riconosciuto(&pagina));
+            }
+            // a parita', il pulsante "principale" in fondo alla pagina, come negli altri passi
+            avanti.sort_by_key(|b| (!b.contains("main"), b.clone()));
+            let b = &avanti[0];
+            let id = b.rsplit_once(':').map(|(m, _)| m).unwrap_or_default();
+            let via = [id, "javax.faces.encodedURL", "ice.window", "ice.view", "javax.faces.ViewState"];
+            let campi = Campi(
+                analisi::campi_modulo(&pagina, id).into_iter().filter(|(k, _)| !via.contains(&k.as_str())).collect(),
+            );
+            let xml =
+                Modulo::da_pagina(&pagina, id)?.invia(&self.client, &self.base, campi.con(evento(b, None, true)))?;
+            if let Some(e) = analisi::errori(&xml).first() {
+                return Err(Errore::Inattesa(format!("Il portale non va avanti: {e}")));
+            }
+            pagina = self.segui(&xml)?;
+            self.carrello(&pagina);
+        }
+        Err(Errore::Inattesa(format!("Troppi passi prima degli appuntamenti: {}", analisi::struttura(&pagina))))
+    }
+
+    /// Le date di una ricetta mai prenotata: Ricerca, Prestazioni e la pagina degli appuntamenti (vedi
+    /// `alternative`). Blocca la data proposta per ~40 minuti, come "Sposta".
+    pub fn cerca_nuova(&mut self, estendi: usize) -> Result<Alternative, Errore> {
+        let pagina = self.ricetta()?;
+        let pagina = self.fino_agli_appuntamenti(pagina)?;
+        self.appuntamenti(&pagina, estendi)
     }
 
     /// Le date offerte da "Sposta appuntamento" per la prenotazione letta con `elenco`: la proposta e gli
@@ -267,10 +433,18 @@ impl Sessione {
         if !pagina.contains("Appuntamenti Proposti") {
             return Err(Errore::Inattesa("Il portale non ha aperto la pagina degli appuntamenti dopo 'Sposta'".into()));
         }
-        let app = Modulo::da_pagina(&pagina, A)?;
-        let proposta = analisi::proposta(&pagina);
+        self.modo = Modo::Sposta;
+        self.appuntamenti(&pagina, estendi)
+    }
+
+    /// La pagina degli appuntamenti (la stessa per "Sposta" e per una prenotazione nuova): la proposta e gli
+    /// "Appuntamenti Disponibili", estendendo l'area al piu' `estendi` volte.
+    fn appuntamenti(&mut self, pagina: &str, estendi: usize) -> Result<Alternative, Errore> {
+        self.carrello(pagina);
+        let app = Modulo::da_pagina(pagina, A)?;
+        let proposta = analisi::proposta(pagina);
         let mut disp = String::new();
-        if let Some((altre, selettore)) = analisi::altre_disponibilita(&pagina) {
+        if let Some((altre, selettore)) = analisi::altre_disponibilita(pagina) {
             // il browser manda entrambi i click; il pannello sta nella prima risposta che lo contiene
             let primo = app.invia(&self.client, &self.base, serializza(&selettore))?;
             let secondo = app.invia(&self.client, &self.base, evento(&altre, None, true))?;
@@ -429,7 +603,35 @@ impl Sessione {
         }
         let alt = self.alternative(zona.estensioni())?;
         let migliori = alt.slots.iter().filter(|s| candidata(s, Some(&elenco.attuale), zona, cal)).cloned().collect();
-        Ok(Controllo { elenco, slots: alt.slots, migliori, area_incompleta: alt.area_incompleta })
+        Ok(Controllo {
+            elenco: Some(elenco),
+            prestazioni: vec![],
+            slots: alt.slots,
+            migliori,
+            area_incompleta: alt.area_incompleta,
+            solo_proposta: false,
+        })
+    }
+
+    /// Un controllo per una ricetta mai prenotata: ogni data nella zona e in un giorno si' va bene. Con piu'
+    /// prestazioni solo la proposta del portale, che le mette tutte nello stesso appuntamento.
+    pub fn controlla_nuova(&mut self, zona: &Zona, cal: &Calendario) -> Result<Controllo, Errore> {
+        let alt = self.cerca_nuova(zona.estensioni())?;
+        let solo_proposta = self.n_prestazioni > 1;
+        let migliori = alt
+            .slots
+            .iter()
+            .filter(|s| candidata(s, None, zona, cal) && (s.proposta || !solo_proposta))
+            .cloned()
+            .collect();
+        Ok(Controllo {
+            elenco: None,
+            prestazioni: self.nomi.clone(),
+            slots: alt.slots,
+            migliori,
+            area_incompleta: alt.area_incompleta,
+            solo_proposta,
+        })
     }
 }
 
@@ -740,6 +942,137 @@ mod test {
         assert_eq!(h.join().unwrap().len(), 2); // nessun "Sposta" premuto
         assert!(matches!(sessione("http://127.0.0.1:9").alternative(0), Err(Errore::Inattesa(_))));
         // elenco non letto
+    }
+
+    use crate::prova::{carrello, passo_prestazioni, ricerca, riepilogo, risposta, P};
+
+    const ECO: &str = "ECOGRAFIA ADDOME COMPLETO";
+
+    /// Ricerca, Prestazioni e la pagina degli appuntamenti con questo carrello, fino agli "Appuntamenti Disponibili".
+    fn fino_alle_date_nuove(b: &str, nomi: &[&str]) -> Vec<(u16, String)> {
+        let az = format!("{b}/ricetta?azione");
+        let proposta = appuntamento("Martedì 14 Settembre 2027", "POLIAMBULATORIO NORD", "ECO 1", "TORINO (TO)", None);
+        vec![
+            (200, ricerca(&az)),
+            (200, risposta(None)),
+            (200, passo_prestazioni(&az, nomi)),
+            (200, risposta(None)),
+            (200, format!("{}{}", carrello(&az, nomi), appuntamenti(&az, &proposta))),
+            (200, "<partial-response>selettore</partial-response>".into()),
+            (
+                200,
+                disponibili(
+                    &[
+                        proposta.clone(),
+                        appuntamento(
+                            "Lunedì 6 Settembre 2027",
+                            "OSPEDALE",
+                            "ECO 2",
+                            "ASTI (AT)",
+                            Some(&format!("{A}:s1")),
+                        ),
+                    ],
+                    false,
+                    false,
+                ),
+            ),
+        ]
+    }
+
+    #[test]
+    fn ricetta_mai_prenotata_ricerca_prestazioni_e_date() {
+        let (base, h) = portale(|b| fino_alle_date_nuove(b, &[ECO]));
+        let mut s = sessione(&base);
+        let c = s.controlla_nuova(&Zona::new(Dove::Comune("Torino".into())), &Calendario::default()).unwrap();
+        let viste = h.join().unwrap();
+        assert!(c.elenco.is_none() && !c.solo_proposta && s.modo() == Modo::Nuova);
+        assert_eq!(c.prestazioni, [ECO]);
+        assert_eq!(c.slots.len(), 2);
+        // senza prenotazione ogni data nella zona va bene: a Torino solo la proposta
+        assert_eq!(c.migliori.iter().map(|x| x.luogo.sede.as_str()).collect::<Vec<_>>(), ["POLIAMBULATORIO NORD"]);
+        let righe: Vec<&str> = viste.iter().map(|v| v.0.as_str()).collect();
+        assert_eq!(
+            righe,
+            [
+                "GET /ricetta-dematerializzata HTTP/1.1",
+                "POST /ricetta?azione HTTP/1.1",
+                "GET /ricetta-dematerializzata HTTP/1.1",
+                "POST /ricetta?azione HTTP/1.1",
+                "GET /ricetta-dematerializzata HTTP/1.1",
+                "POST /ricetta?azione HTTP/1.1",
+                "POST /ricetta?azione HTTP/1.1",
+            ]
+        );
+        // "Prosegui" della Ricerca come il browser: il comando nascosto, con codice fiscale e ricetta puliti
+        let v = |i: usize, k: &str| campi(&viste[i].2).into_iter().find(|(n, _)| n == k).map(|(_, v)| v);
+        assert_eq!(campi(&viste[1].2)[0].0, R);
+        assert_eq!(v(1, &format!("{R}:CFInput")).as_deref(), Some("RSSMRA80A01L219X"));
+        assert_eq!(v(1, &format!("{R}:nreInput0")).as_deref(), Some("010A00000000001"));
+        assert_eq!(v(1, "javax.faces.source"), Some(format!("{R}:epPrestazioniForwardNavigate")));
+        assert_eq!(v(1, "javax.faces.behavior.event").as_deref(), Some("action"));
+        assert_eq!(v(1, "g-recaptcha-token").as_deref(), Some(""));
+        // "Avanti" del passo Prestazioni a nome del suo modulo, con le prestazioni come le propone il portale
+        let f = format!("{P}prestazioni-form-main");
+        assert_eq!(campi(&viste[3].2)[0].0, f);
+        assert_eq!(v(3, "javax.faces.source"), Some(format!("{f}:prestazioni-nextButton-main")));
+        assert_eq!(v(3, &format!("{f}:scelta0")).as_deref(), Some("true"));
+        assert_eq!(campi(&viste[3].2).last().unwrap().0, "javax.faces.ViewState");
+    }
+
+    #[test]
+    fn ricerca_rifiutata_gia_prenotata_o_disservizio() {
+        for (errore, atteso) in [
+            ("Numero ricetta elettronica già presente", "gia"),
+            ("Numero ricetta elettronica non valido", "rifiutata"),
+            ("Ricetta non presente in archivio", "rifiutata"),
+            ("Servizio ricetta elettronica non disponibile", "riprova"),
+            ("Token non valido, riprovare", "riprova"),
+        ] {
+            let (base, h) = portale(|b| vec![(200, ricerca(&format!("{b}/r"))), (200, risposta(Some(errore)))]);
+            let e = sessione(&base).controlla_nuova(&Zona::new(Dove::Tutte), &Calendario::default()).unwrap_err();
+            match atteso {
+                "gia" => assert!(matches!(&e, Errore::GiaPrenotata(m) if m == errore), "{e:?}"),
+                "rifiutata" => assert!(matches!(&e, Errore::NonTrovata(m) if m == errore), "{e:?}"),
+                _ => assert!(matches!(&e, Errore::Inattesa(_)), "{errore}: {e:?}"),
+            }
+            assert_eq!(h.join().unwrap().len(), 2); // niente oltre la Ricerca
+        }
+    }
+
+    #[test]
+    fn passo_sconosciuto_o_riepilogo_si_ferma_senza_dati_personali() {
+        let strana = |b: &str| {
+            modulo(
+                &format!("{P}quesitoForm"),
+                &format!("{b}/r"),
+                &format!(r#"<p>RSSMRA80A01L219X</p><div id="{P}boh">Ok</div>"#),
+            )
+        };
+        let (base, h) = portale(|b| vec![(200, ricerca(&format!("{b}/r"))), (200, risposta(None)), (200, strana(b))]);
+        let e = sessione(&base).controlla_nuova(&Zona::new(Dove::Tutte), &Calendario::default()).unwrap_err();
+        let m = e.to_string();
+        assert!(m.contains("non riconosciuto") && m.contains("quesitoForm") && !m.contains("RSSMRA"), "{m}");
+        assert_eq!(h.join().unwrap().len(), 3);
+        // mai "Avanti" su un Riepilogo: li' e' la Conferma
+        let (base, h) = portale(|b| {
+            let r = riepilogo(&format!("{b}/r"), "Martedì 14 Settembre 2027", "SEDE", "AMB", &[ECO], false);
+            vec![(200, ricerca(&format!("{b}/r"))), (200, risposta(None)), (200, r)]
+        });
+        let e = sessione(&base).controlla_nuova(&Zona::new(Dove::Tutte), &Calendario::default()).unwrap_err();
+        assert!(e.to_string().contains("Riepilogo"), "{e}");
+        assert_eq!(h.join().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn piu_prestazioni_va_bene_solo_la_proposta() {
+        let (base, h) = portale(|b| fino_alle_date_nuove(b, &[ECO, "VISITA CARDIOLOGICA"]));
+        let mut s = sessione(&base);
+        let c = s.controlla_nuova(&Zona::new(Dove::Tutte), &Calendario::default()).unwrap();
+        h.join().unwrap();
+        assert!(c.solo_proposta && s.n_prestazioni() == 2);
+        assert_eq!(c.prestazioni, [ECO, "VISITA CARDIOLOGICA"]);
+        assert_eq!(c.slots.len(), 2);
+        assert!(c.migliori.len() == 1 && c.migliori[0].proposta);
     }
 
     #[test]

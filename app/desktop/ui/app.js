@@ -6,7 +6,7 @@ const messaggio = $("messaggio");
 let modifica = null; // id della ricetta in modifica, null per una nuova
 // "Elimina" chiede conferma per qualche secondo; resta valida anche se nel frattempo le schede si ridisegnano
 let daEliminare = { id: null, fino: 0 };
-// lo spostamento o la disdetta da confermare: { id, tipo: "sposta" | "disdici", data } (data: per "sposta")
+// l'operazione da confermare: { id, tipo: "sposta" | "prenota" | "disdici", data } (data: per "sposta" e "prenota")
 let daConfermare = null;
 // le operazioni partite da questa finestra, finche' il portale non risponde (contro il doppio click)
 const inViaggio = new Set();
@@ -14,9 +14,15 @@ const IN_CORSO = {
   controllo: "🔄 Controllo in corso… può volerci qualche minuto.",
   spostamento: "🔄 Spostamento in corso: dopo la conferma l'app controlla sul portale che sia andato. Può volerci " +
     "qualche minuto, non spegnere il computer.",
+  prenotazione: "🔄 Prenotazione in corso: dopo la conferma l'app controlla sul portale che risulti. Può volerci " +
+    "qualche minuto, non spegnere il computer.",
   disdetta: "🔄 Disdetta in corso: dopo la conferma l'app controlla sul portale. Non spegnere il computer.",
 };
-const PILLOLA = { controllo: "in controllo", spostamento: "spostamento", disdetta: "disdetta" };
+const PILLOLA = { controllo: "in controllo", spostamento: "spostamento", prenotazione: "prenotazione",
+                  disdetta: "disdetta" };
+const IN_ATTESA = { sposta: "Sposto la prenotazione… può volerci qualche minuto.",
+                    prenota: "Prenoto… può volerci qualche minuto.",
+                    disdici: "Disdico la prenotazione… può volerci qualche minuto." };
 
 // mai innerHTML: i testi arrivano dal portale
 function el(tag, classe, testo) {
@@ -41,8 +47,8 @@ function avvisa(testo, errore = true) {
 
 async function esegui(comando, argomenti, ok) {
   try {
-    await invoke(comando, argomenti);
-    avvisa(ok || "", false);
+    const r = await invoke(comando, argomenti);
+    avvisa(typeof r === "string" ? r : ok || "", false);
     return true;
   } catch (e) {
     avvisa(String(e));
@@ -58,17 +64,16 @@ function riepilogo(r) {
   if (e.errore) return el("p", "stato errore", `⚠️ Controllo delle ${e.ora}: ${e.errore}`);
   const buone = e.buone.length;
   const offerte = e.date === 1 ? "1 data offerta" : `${e.date} date offerte`;
+  const nessuna = r.nuova ? "nessuna nella zona e nei giorni scelti." : "nessuna prima della prenotazione.";
   return el("p", buone ? "stato buone" : "stato",
-    `Controllo delle ${e.ora}: ${offerte}, ` +
-    (buone ? (buone === 1 ? "1 va bene." : `${buone} vanno bene.`) : "nessuna prima della prenotazione."));
+    `Controllo delle ${e.ora}: ${offerte}, ` + (buone ? (buone === 1 ? "1 va bene." : `${buone} vanno bene.`) : nessuna));
 }
 
 async function operazione(comando, argomenti, id) {
   if (inViaggio.has(id)) return; // doppio clic: l'operazione e' gia' partita
   daConfermare = null;
   inViaggio.add(id);
-  avvisa(comando === "sposta" ? "Sposto la prenotazione… può volerci qualche minuto." :
-    "Disdico la prenotazione… può volerci qualche minuto.", false);
+  avvisa(IN_ATTESA[comando], false);
   carica();
   try {
     avvisa(await invoke(comando, argomenti), false);
@@ -90,6 +95,12 @@ function riquadroConferma(r, a) {
       el("p", "quando", `A: ${c.data.quando} · ${c.data.luogo}`),
       el("p", "nota", "L'app conferma sul portale e poi controlla che lo spostamento sia andato. La data attuale " +
         "viene liberata."));
+  } else if (c.tipo === "prenota") {
+    box.append(el("p", "titolo", "Prenotare questa data?"),
+      el("p", "quando", `${c.data.quando} · ${c.data.luogo}`));
+    if (r.esito && r.esito.cosa) box.append(el("p", "", "Per: " + r.esito.cosa));
+    box.append(el("p", "nota", "L'app conferma sul portale e poi controlla che la prenotazione risulti. Dopo cerca " +
+      "date prima, e se non ti va più bene puoi disdirla con \"Disdici\"."));
   } else {
     box.append(el("p", "titolo", "Disdire la prenotazione?"),
       el("p", "quando", `${a.quando} · ${a.luogo}`),
@@ -97,9 +108,10 @@ function riquadroConferma(r, a) {
   }
   const bottoni = el("div", "pulsanti");
   bottoni.append(pulsante("Annulla", "secondario", () => { daConfermare = null; carica(); }),
-    c.tipo === "sposta"
-      ? pulsante("Sì, sposta", "", () => operazione("sposta", { id: r.id, chiave: c.data.chiave }, r.id))
-      : pulsante("Sì, disdici", "pericolo-pieno", () => operazione("disdici", { id: r.id }, r.id)));
+    c.tipo === "disdici"
+      ? pulsante("Sì, disdici", "pericolo-pieno", () => operazione("disdici", { id: r.id }, r.id))
+      : pulsante(c.tipo === "sposta" ? "Sì, sposta" : "Sì, prenota", "",
+        () => operazione(c.tipo, { id: r.id, chiave: c.data.chiave }, r.id)));
   box.append(bottoni);
   return box;
 }
@@ -119,6 +131,10 @@ function scheda(r) {
   }
   const a = r.esito && r.esito.attuale;
   if (a) s.append(el("p", "quando", "📅 " + a.quando), el("p", "dove", "📍 " + a.luogo), el("p", "cosa", "🩺 " + a.cosa));
+  else if (r.nuova) {
+    s.append(el("p", "quando", "📅 Non ancora prenotata: cerco il primo posto libero"));
+    if (r.esito && r.esito.cosa) s.append(el("p", "cosa", "🩺 " + r.esito.cosa));
+  }
   s.append(el("p", "nota", `🔎 Cerco ${r.zona} · ${r.giorni}`), riepilogo(r));
   const libera = !r.in_corso && !r.incerta && !inViaggio.has(r.id);
   if (r.esito && r.esito.note_visita.length) {
@@ -133,20 +149,28 @@ function scheda(r) {
       const li = el("li", "buona");
       li.append(el("span", "quando", d.quando + (d.proposta ? " · proposta" : "")), el("span", "dove", d.luogo));
       if (libera) {
-        li.append(pulsante("Sposta qui", "secondario", () => {
-          daConfermare = { id: r.id, tipo: "sposta", data: d };
+        li.append(pulsante(r.nuova ? "Prenota qui" : "Sposta qui", "secondario", () => {
+          daConfermare = { id: r.id, tipo: r.nuova ? "prenota" : "sposta", data: d };
           carica();
         }));
       }
       lista.append(li);
     }
-    s.append(lista, el("p", "nota", "Puoi spostarla qui con \"Sposta qui\", o dal sito del CUP Piemonte o al call " +
-      "center 800 000 500. L'app non sposta mai nulla da sola."));
+    s.append(lista, el("p", "nota", r.nuova
+      ? "Puoi prenotare qui con \"Prenota qui\", o dal sito del CUP Piemonte o al call center 800 000 500. L'app " +
+        "non prenota mai nulla da sola."
+      : "Puoi spostarla qui con \"Sposta qui\", o dal sito del CUP Piemonte o al call center 800 000 500. L'app " +
+        "non sposta mai nulla da sola."));
+    if (r.esito.solo_proposta) {
+      s.append(el("p", "nota", "La ricetta ha più prestazioni: l'app prenota solo la data che il portale propone " +
+        "per tutte insieme."));
+    }
   }
   // il riquadro solo finche' la data e' ancora tra quelle trovate (un controllo puo' averle cambiate)
   const c = daConfermare;
   const valida = c && c.id === r.id && (c.tipo === "disdici"
-    ? a && a.iso : r.esito && r.esito.buone.some((d) => d.chiave === c.data.chiave));
+    ? a && a.iso
+    : (c.tipo === "prenota") === r.nuova && r.esito && r.esito.buone.some((d) => d.chiave === c.data.chiave));
   if (valida && libera) s.append(riquadroConferma(r, a));
   if (r.esito && r.esito.area_incompleta) {
     s.append(el("p", "nota", "\"Estendi area\" non ha risposto in tempo: le date più lontane potrebbero mancare."));
@@ -177,8 +201,8 @@ function scheda(r) {
       setTimeout(carica, 5100);
     }
   });
-  // durante uno spostamento o una disdetta la ricetta non si elimina (l'app lo rifiuterebbe)
-  if (r.in_corso !== "spostamento" && r.in_corso !== "disdetta") azioni.append(elimina);
+  // durante uno spostamento, una prenotazione o una disdetta la ricetta non si elimina (l'app lo rifiuterebbe)
+  if (!r.in_corso || r.in_corso === "controllo") azioni.append(elimina);
   s.append(azioni);
   return s;
 }
@@ -274,7 +298,7 @@ modulo.addEventListener("submit", async (ev) => {
   if (modifica === null) avvisa("Leggo la prenotazione dal portale… può volerci un minuto.", false);
   const ok = modifica === null
     ? await esegui("aggiungi", { nome: modulo.nome.value, cf: modulo.cf.value, nre: modulo.nre.value, ...comune, evita,
-                                 attiva: modulo.attiva.checked }, "Ricetta aggiunta.")
+                                 attiva: modulo.attiva.checked })
     : await esegui("modifica", { id: modifica, nome: modulo.nome.value, ...comune, evita }, "Modifiche salvate.");
   salva.disabled = false;
   if (ok) chiudi();

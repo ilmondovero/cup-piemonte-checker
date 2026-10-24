@@ -30,7 +30,8 @@
 
     <section id="ricette" aria-live="polite"></section>
     <p id="vuoto" class="nota" hidden>Nessuna ricetta. Aggiungine una: l'app controlla le date ogni 20 minuti e ti avvisa
-      con una notifica quando ne esce una prima della tua prenotazione.</p>
+      con una notifica quando ne esce una prima della tua prenotazione o, se la ricetta non è ancora prenotata, quando
+      c'è un posto libero.</p>
 
     <button type="button" id="nuova">+ Aggiungi una ricetta</button>
 
@@ -73,10 +74,13 @@
         </div>
       </fieldset>
       <label class="riga" id="riga-attiva"><input type="checkbox" name="attiva" checked> Inizia subito a cercare</label>
-      <p class="nota">Ogni controllo apre "Sposta appuntamento" sul portale: la data che il portale propone resta
-        bloccata per circa 40 minuti, anche per te dal sito del CUP. Per questo l'app controlla ogni ricetta al
-        massimo ogni 20 minuti, e non sposta mai nulla da sola: sposti tu, con "Sposta qui" su una data trovata. Se
-        segui la stessa ricetta anche con il bot Telegram, usa uno solo dei due.</p>
+      <p class="nota">Ricetta non ancora prenotata? L'app cerca il primo posto libero e lo prenota solo quando tocchi
+        "Prenota qui". Finché non è prenotata, "nel comune", "nella provincia" o "nella sede della prenotazione"
+        valgono come "Dove propone il CUP": per un comune preciso scegli "In un altro comune…".</p>
+      <p class="nota">Ogni controllo apre gli appuntamenti sul portale: la data che il portale propone resta bloccata
+        per circa 40 minuti, anche per te dal sito del CUP. Per questo l'app controlla ogni ricetta al massimo ogni
+        20 minuti, e non sposta né prenota mai nulla da sola: lo fai tu, con "Sposta qui" o "Prenota qui" su una data
+        trovata. Se segui la stessa ricetta anche con il bot Telegram, usa uno solo dei due.</p>
       <div class="pulsanti">
         <button type="button" id="annulla" class="secondario">Annulla</button>
         <button type="submit" id="salva">Salva</button>

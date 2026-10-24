@@ -78,6 +78,8 @@ pub struct Elenco {
 pub const L: &str = "_listaprenotazioni_WAR_cupprenotazione_:prescrizioniForm";
 /// Il modulo della pagina degli appuntamenti (la stessa per "Sposta" e per una prenotazione nuova).
 pub const A: &str = "_ricettaelettronica_WAR_cupprenotazione_:appuntamentiForm";
+/// Il modulo del passo "Ricerca" di una prenotazione nuova: codice fiscale e numero ricetta.
+pub const R: &str = "_ricettaelettronica_WAR_cupprenotazione_:ePrescriptionSearchForm";
 
 const MESI: [&str; 12] = [
     "gennaio",
@@ -360,6 +362,19 @@ re!(
 re!(VALORE_ATTRIBUTO, r#"\svalue="([^"]*)""#);
 re!(DENTRO_BUTTON, r"(?s)<button\b[^>]*>(.*?)</button>");
 re!(DISDETTA_OK, r"(?i)disdett\w* con successo");
+re!(PRESTAZIONE, r#"<span class="media-title"[^>]*>\s*<span[^>]*>([^<]+)</span>"#);
+re!(CASELLA, r#"<input[^>]*type="checkbox"[^>]*>"#);
+re!(SPUNTATA, r#"\schecked(?:[^\w-]|$)"#);
+re!(ID_FORM, r#"<form[^>]*id="([^"]+)""#);
+re!(ID_PULSANTE, r#"id="([^"]*(?:Button|Navigate)[^"]*)""#);
+re!(NOME_COMPONENTE, r"^[A-Za-z_][\w-]{0,60}$");
+re!(AVANTI_PASSO, r#"id="(_ricettaelettronica_WAR_cupprenotazione_:[^"]*nextButton[^"]*)""#);
+re!(GIA_PRESENTE, r"(?i)\bgi(?:à|a'?)\s+presente");
+re!(RICETTA_RIFIUTATA, r"(?i)ricett|\bnre\b|codice fiscale|scadut|inesistent");
+re!(DISSERVIZIO, r"(?i)disponibil|temporane|riprov|servizio|token|captcha");
+re!(QUATTRO_LETTERE, r"[A-Za-z]{4}");
+re!(CF_DENTRO, r"[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]");
+re!(LUNGO_ALFANUMERICO, r"[0-9A-Z]{15,}");
 
 /// L'indice di byte valido piu' vicino a `i`, andando indietro (mai a meta' di un carattere).
 fn confine(s: &str, i: usize) -> usize {
@@ -620,7 +635,7 @@ pub fn verifica_riepilogo(r: &Riepilogo, slot: &Slot, cosa: &str) -> Result<(), 
         return no("Il Riepilogo riporta una data diversa da quella scelta: non confermo");
     }
     if !norm(&r.testo).contains(&norm(cosa)) {
-        return no("Il Riepilogo non riporta la stessa prestazione della prenotazione attuale: non confermo");
+        return no("Il Riepilogo non riporta la prestazione della ricetta: non confermo");
     }
     if !norm(&r.dopo_data).starts_with(&slot.luogo.chiave()) {
         return no("Il Riepilogo riporta un luogo diverso da quello scelto: non confermo");
@@ -646,6 +661,89 @@ pub fn credenziali(cf: &str, nre: &str) -> Result<(String, String), Errore> {
 /// "gio 07/01/2027 ore 11:45"
 pub fn breve(quando: &NaiveDateTime) -> String {
     format!("{} {}", GIORNI[quando.weekday().num_days_from_monday() as usize], quando.format("%d/%m/%Y ore %H:%M"))
+}
+
+/// I nomi delle prestazioni nel carrello del portale ("Prestazioni Selezionate"), nelle pagine di una prenotazione
+/// nuova.
+pub fn prestazioni(pagina: &str) -> Vec<String> {
+    let Some(i) = pagina.find(r#"id="prestazioni_selezionate""#) else { return vec![] };
+    let fine = pagina[i..].find("</form>").map_or(pagina.len(), |j| i + j);
+    PRESTAZIONE.captures_iter(&pagina[i..fine]).map(|c| testo(&c[1])).filter(|n| !n.is_empty()).collect()
+}
+
+/// Le caselle di spunta di un pezzo di pagina: (spuntate, totali). Nel passo Prestazioni sono le prestazioni scelte.
+pub fn caselle(frammento: &str) -> (usize, usize) {
+    let tutte: Vec<&str> = CASELLA.find_iter(frammento).map(|m| m.as_str()).collect();
+    (tutte.iter().filter(|x| SPUNTATA.is_match(x)).count(), tutte.len())
+}
+
+/// Gli id dei moduli di una pagina.
+pub fn moduli(pagina: &str) -> Vec<String> {
+    ID_FORM.captures_iter(pagina).map(|c| c[1].to_string()).collect()
+}
+
+/// L'ultimo pezzo di un id del portale, solo se ha l'aspetto del nome di un componente: mai un codice fiscale o una
+/// ricetta, se un giorno finissero in un id.
+pub fn id_breve(id: &str) -> String {
+    let s = id.rsplit(':').next().unwrap_or("");
+    let u = s.to_uppercase();
+    // anche dentro un id piu' lungo ("riga_RSSMRA80A01L219X"): 15 lettere e cifre di fila con una cifra possono essere
+    // una ricetta
+    let ricetta = LUNGO_ALFANUMERICO.find_iter(&u).any(|m| m.as_str().chars().any(|c| c.is_ascii_digit()));
+    if !NOME_COMPONENTE.is_match(s) || CF_DENTRO.is_match(&u) || ricetta {
+        return "?".into();
+    }
+    s.into()
+}
+
+/// Il prefisso con cui ogni messaggio di `struttura` segue i due punti: quel testo non ha dati personali.
+pub const STRUTTURA: &str = "sezioni [";
+
+/// Com'e' fatta una pagina che non si riconosce, senza dati personali: sezioni, moduli e pulsanti (solo id).
+pub fn struttura(pagina: &str) -> String {
+    let sezioni: Vec<&str> =
+        ["Ricerca ricetta", "Prestazioni", "Appuntamenti Proposti", "Appuntamenti Disponibili", "Riepilogo"]
+            .into_iter()
+            .filter(|s| pagina.contains(s))
+            .collect();
+    let moduli: Vec<String> = moduli(pagina).iter().map(|f| id_breve(f)).collect();
+    let mut pulsanti: Vec<String> = ID_PULSANTE.captures_iter(pagina).map(|c| id_breve(&c[1])).collect();
+    pulsanti.sort();
+    pulsanti.dedup();
+    pulsanti.truncate(20);
+    format!("{STRUTTURA}{}], moduli [{}], pulsanti [{}]", sezioni.join(", "), moduli.join(", "), pulsanti.join(", "))
+}
+
+/// I pulsanti "Avanti" di un passo (gli id con "nextButton").
+pub fn pulsanti_avanti(pagina: &str) -> Vec<String> {
+    AVANTI_PASSO.captures_iter(pagina).map(|c| c[1].to_string()).collect()
+}
+
+/// Come il portale risponde al passo "Ricerca" di una prenotazione nuova: Ok se va avanti, `GiaPrenotata` se la
+/// ricetta ha gia' un appuntamento, `NonTrovata` se il portale la rifiuta (scaduta, inesistente...). Un disservizio
+/// che nomina la ricetta ("Servizio ricetta elettronica non disponibile") si riprova: e' `Inattesa`.
+pub fn esito_ricerca(xml: &str) -> Result<(), Errore> {
+    let errori = errori(xml);
+    if let Some(e) = errori.iter().find(|e| GIA_PRESENTE.is_match(e)) {
+        return Err(Errore::GiaPrenotata(e.clone()));
+    }
+    if let Some(e) = errori.iter().find(|e| RICETTA_RIFIUTATA.is_match(e) && !DISSERVIZIO.is_match(e)) {
+        return Err(Errore::NonTrovata(e.clone()));
+    }
+    match errori.first() {
+        Some(e) => Err(Errore::Inattesa(format!("Il portale ha risposto: {e}"))),
+        None => Ok(()),
+    }
+}
+
+/// Il nome di una prestazione ha almeno una parola vera (quattro lettere di fila).
+pub fn nome_leggibile(nome: &str) -> bool {
+    QUATTRO_LETTERE.is_match(nome)
+}
+
+/// Tutte le date riconosciute in un testo ("... alle ore ...").
+pub fn tutte_le_date(testo: &str) -> Vec<NaiveDateTime> {
+    DATA.find_iter(testo).filter_map(|m| data(m.as_str())).collect()
 }
 
 #[cfg(test)]

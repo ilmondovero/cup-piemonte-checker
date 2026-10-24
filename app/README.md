@@ -19,14 +19,16 @@ comportamento del portale, che lì sono già state verificate.
 | 3 | Ricette salvate e cifrate, controlli ogni 20 minuti, notifiche, icona nella barra di sistema | ✅ fatto |
 | 4 | Spostamento e disdetta, solo quando lo chiedi tu | ✅ fatto |
 | 5 | Installer per i tre sistemi (GitHub Actions) | ✅ fatto |
+| 6 | Ricette mai prenotate: cerca il primo posto libero e prenota, solo quando lo chiedi tu | ✅ fatto (0.2.0, sperimentale) |
 
 **Come si usa.** Si aggiunge una ricetta con nome, codice fiscale e numero ricetta, la zona e i giorni da
-evitare. L'app legge la prenotazione (solo lettura) e poi, se la ricetta è attiva, la controlla da sola ogni
+evitare. L'app legge la prenotazione (solo lettura; se non c'è, la ricetta da prenotare) e poi, se la ricetta è attiva, la controlla da sola ogni
 20 minuti. Quando esce una data che va bene arriva una notifica del sistema con data, ora e luogo, una
 volta sola per data. Chiudendo la finestra l'app resta nella barra di sistema e continua; si esce dal menu
 dell'icona. Nelle impostazioni si può farla partire con il computer.
 
-**Controlli.** Ogni controllo apre "Sposta appuntamento" per vedere le date, come il bot: la data proposta
+**Controlli.** Ogni controllo apre "Sposta appuntamento" per vedere le date (per una ricetta mai prenotata, la
+pagina degli appuntamenti di una prenotazione nuova), come il bot: la data proposta
 dal portale resta bloccata a quella sessione per circa 40 minuti, e non c'è modo di rilasciarla. Per questo
 ogni ricetta si controlla al massimo una volta ogni 20 minuti, anche dopo un riavvio o se la si elimina e la
 si aggiunge di nuovo, e l'app non si apre due volte. Se la stessa visita risulta prenotata due volte, l'app
@@ -54,6 +56,27 @@ Se dopo la Conferma non riesce a verificare l'esito, o se si chiude a metà, lo 
 caso mette la ricetta in pausa e non fa altre operazioni finché non tocchi "Ho controllato" dopo aver
 guardato sul sito del CUP. Su una ricetta si fa una cosa alla volta: mai uno spostamento durante un
 controllo.
+
+**Ricette mai prenotate** (dalla versione 0.2.0, sperimentale). Se il portale non trova prenotazioni per la
+ricetta, o le ha tutte disdette, l'app la segue come "mai prenotata":
+- per aggiungerla fa solo il passo "Ricerca" del portale (codice fiscale e ricetta), che non blocca date, e
+  ne legge le prestazioni;
+- ogni controllo fa "Ricerca", poi "Avanti" sul passo "Prestazioni" lasciando le prestazioni come le propone
+  il portale, poi legge le date come per uno spostamento. Va bene ogni data nella zona e in un giorno sì;
+- senza una prenotazione non c'è un comune, una provincia o una sede "della prenotazione": finché la ricetta
+  non è prenotata queste zone valgono come "dove propone il CUP", poi torna a valere la scelta. Per un comune
+  preciso fin da subito si sceglie "In un altro comune…";
+- con più prestazioni nella stessa ricetta si prenota solo la data che il portale propone per tutte insieme;
+- "Prenota qui" chiede conferma con data, ora e luogo. Prima di confermare l'app rilegge l'elenco (due volte,
+  perché il portale a volte non trova prenotazioni che ci sono): se nel frattempo la ricetta risulta
+  prenotata, non prenota e da lì cerca date prima di quella prenotazione (lo stesso se un controllo la trova
+  prenotata, per esempio dal sito del CUP: lo dice con data, ora e luogo). Il Riepilogo deve riportare la
+  data, il luogo e tutte le prestazioni del carrello in un solo appuntamento;
+- dopo la Conferma verifica come per uno spostamento; da lì la ricetta è prenotata e l'app cerca date prima.
+
+Il passo "Prestazioni" non è ancora stato visto con una ricetta vera (come per il bot). Se l'app non lo
+riconosce si ferma, non prenota, e nel registro scrive com'è fatta la pagina: solo nomi di sezioni e
+pulsanti, mai dati personali. Un passo che il portale salta, invece, non dà problemi.
 
 **Zone e giorni.** Le stesse del bot: solo la sede, il comune della prenotazione o un altro, più comuni,
 Torino e prima cintura, la provincia o dove propone il CUP. Per comune, comuni e provincia l'app preme

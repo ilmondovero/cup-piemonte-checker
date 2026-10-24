@@ -12,7 +12,7 @@ use std::sync::Arc;
 use chrono::{Local, TimeZone};
 use cup_core::analisi::credenziali;
 use cup_core::operazioni::Attese;
-use cup_core::{Dove, Errore, Sessione};
+use cup_core::{Dove, Errore, Prenotazione, Sessione};
 use serde::Serialize;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -60,6 +60,8 @@ struct EsitoUi {
     errore: Option<String>,
     nota: Option<String>,
     note_visita: Vec<String>,
+    cosa: String,
+    solo_proposta: bool,
 }
 
 #[derive(Serialize)]
@@ -74,7 +76,9 @@ struct Scheda {
     zona: String,
     giorni: String,
     attiva: bool,
-    /// "controllo", "spostamento" o "disdetta", se c'e' qualcosa in corso.
+    /// Mai prenotata: l'app cerca il primo posto libero e lo prenota con "Prenota qui".
+    nuova: bool,
+    /// "controllo", "spostamento", "prenotazione" o "disdetta", se c'e' qualcosa in corso.
     in_corso: Option<Attivita>,
     /// Un'operazione dall'esito incerto, da controllare sul portale.
     incerta: Option<String>,
@@ -84,6 +88,9 @@ struct Scheda {
 
 fn scheda(r: &Ricetta, in_corso: Option<Attivita>) -> Scheda {
     let zona = match &r.esito {
+        _ if r.nuova && controlli::della_prenotazione(&r.dove, &r.valore) => {
+            "dove propone il CUP, finché non è prenotata".into()
+        }
         Some(e) if !e.zona.is_empty() => e.zona.clone(),
         _ => Dove::da_scelta(&r.dove, &r.valore).map(|d| d.descrizione(None)).unwrap_or_default(),
     };
@@ -108,6 +115,7 @@ fn scheda(r: &Ricetta, in_corso: Option<Attivita>) -> Scheda {
         zona,
         giorni,
         attiva: r.attiva,
+        nuova: r.nuova,
         in_corso,
         incerta: r.incerta.clone(),
         prossimo: controlli::prossimo(r, adesso()).map(ora),
@@ -121,6 +129,8 @@ fn scheda(r: &Ricetta, in_corso: Option<Attivita>) -> Scheda {
             errore: e.errore.clone(),
             nota: e.nota.clone(),
             note_visita: e.note_visita.clone(),
+            cosa: e.cosa.clone(),
+            solo_proposta: e.solo_proposta,
         }),
     }
 }
@@ -154,7 +164,41 @@ fn nome_pulito(nome: &str) -> Result<String, String> {
     Ok(n.chars().take(30).collect())
 }
 
-/// Una ricetta nuova: prima legge la prenotazione dal portale (solo lettura, non apre "Sposta"), poi la salva.
+/// Cosa legge il portale quando si aggiunge una ricetta, senza aprire gli appuntamenti (non blocca date).
+enum Letta {
+    /// La prenotazione attuale.
+    Prenotata(Box<Prenotazione>),
+    /// Mai prenotata (o tutte le prenotazioni disdette): le prestazioni del carrello.
+    Nuova(Vec<String>),
+}
+
+/// Recupera Prenotazioni; se il portale non trova prenotazioni, il passo "Ricerca" di una prenotazione nuova.
+fn leggi_ricetta(cf: &str, nre: &str) -> Result<Letta, String> {
+    let testo = |e: Errore| e.to_string();
+    match Sessione::nuova(cf, nre).map_err(testo)?.elenco() {
+        Ok(e) => Ok(Letta::Prenotata(Box::new(e.attuale))),
+        Err(e) if matches!(e, Errore::NonTrovata(_)) || e.solo_disdette() => {
+            let mut s = Sessione::nuova(cf, nre).map_err(testo)?;
+            match s.ricetta() {
+                Ok(_) => Ok(Letta::Nuova(s.prestazioni().to_vec())),
+                Err(Errore::NonTrovata(m)) => Err(format!(
+                    "Il portale non trova prenotazioni per questa ricetta e non la accetta per prenotarla ({m}). \
+                     Controlla codice fiscale e numero della ricetta."
+                )),
+                // l'elenco non la trova, ma la Ricerca la dice prenotata: il portale si contraddice, meglio riprovare
+                Err(Errore::GiaPrenotata(m)) => Err(format!(
+                    "Il portale non mostra la prenotazione ma dice che la ricetta è già prenotata ({m}). Riprova tra \
+                     qualche minuto."
+                )),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Una ricetta nuova: prima legge dal portale la prenotazione o, se non c'e', la ricetta da prenotare (solo lettura,
+/// non apre gli appuntamenti), poi la salva. Ritorna il messaggio per l'utente.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 async fn aggiungi(
@@ -167,25 +211,27 @@ async fn aggiungi(
     valore: String,
     evita: Vec<u32>,
     attiva: bool,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let nome = nome_pulito(&nome)?;
-    let zona = Dove::da_scelta(&dove, &valore).map_err(|e| e.to_string())?;
+    Dove::da_scelta(&dove, &valore).map_err(|e| e.to_string())?;
     let (cf, nre) = credenziali(&cf, &nre).map_err(|e| e.to_string())?;
     if stato.dati().ricette.iter().any(|r| r.nre == nre) {
         return Err("Questa ricetta c'è già.".into());
     }
     let (c, n) = (cf.clone(), nre.clone());
-    let elenco = tauri::async_runtime::spawn_blocking(move || Sessione::nuova(&c, &n)?.elenco())
+    let letta = tauri::async_runtime::spawn_blocking(move || leggi_ricetta(&c, &n))
         .await
-        .map_err(|_| "errore interno".to_string())?
-        .map_err(|e| match e {
-            Errore::NonTrovata(m) => format!(
-                "Il portale non trova prenotazioni per questa ricetta ({m}). Per ora l'app segue solo ricette già \
-                 prenotate."
-            ),
-            e => e.to_string(),
-        })?;
-    let a = &elenco.attuale;
+        .map_err(|_| "errore interno".to_string())??;
+    let (nuova, attuale, cosa) = match letta {
+        Letta::Prenotata(a) => (false, Some(*a), String::new()),
+        Letta::Nuova(nomi) => (true, None, nomi.join(" + ")),
+    };
+    // mai prenotata: una zona "della prenotazione" vale come "dove propone il CUP" finche' non e' prenotata
+    let zona = if nuova && controlli::della_prenotazione(&dove, &valore) {
+        Dove::Tutte
+    } else {
+        Dove::da_scelta(&dove, &valore).map_err(|e| e.to_string())?
+    };
     let mut d = stato.dati();
     if d.ricette.iter().any(|r| r.nre == nre) {
         return Err("Questa ricetta c'è già.".into());
@@ -206,17 +252,34 @@ async fn aggiungi(
         ultimo_tentativo,
         esito: Some(Esito {
             ts: adesso(),
-            attuale: Some(Visita::da(a)),
-            zona: zona.descrizione(Some(a)),
+            attuale: attuale.as_ref().map(Visita::da),
+            zona: zona.descrizione(attuale.as_ref()),
+            cosa,
             ..Default::default()
         }),
         notificate: vec![],
         assenze: 0,
         operazione: None,
         incerta: None,
+        nuova,
     });
-    stato.registro.scrivi(&format!("ricetta {id}: aggiunta{}", if attiva { "" } else { " (in pausa)" }));
-    salva(&app, &stato, &d)
+    stato.registro.scrivi(&format!(
+        "ricetta {id}: aggiunta{}{}",
+        if nuova { " (mai prenotata)" } else { "" },
+        if attiva { "" } else { " (in pausa)" }
+    ));
+    salva(&app, &stato, &d)?;
+    Ok(if !nuova {
+        "Ricetta aggiunta.".into()
+    } else if attiva {
+        "Ricetta aggiunta. Non è ancora prenotata: l'app cerca il primo posto libero e te lo propone, e prenota solo \
+         se tocchi «Prenota qui»."
+            .into()
+    } else {
+        "Ricetta aggiunta, in pausa. Non è ancora prenotata: quando riprendi i controlli l'app cerca il primo posto \
+         libero."
+            .into()
+    })
 }
 
 #[tauri::command]
@@ -249,7 +312,7 @@ fn modifica(
 #[tauri::command]
 fn elimina(app: AppHandle, stato: Condiviso, id: u64) -> Result<(), String> {
     let in_corso = controlli::blocca(&stato.in_corso);
-    if matches!(in_corso.get(&id), Some(Attivita::Spostamento | Attivita::Disdetta)) {
+    if in_corso.get(&id).is_some_and(|a| a.operazione()) {
         return Err("Aspetta la fine dell'operazione in corso su questa ricetta.".into());
     }
     let mut d = stato.dati();
@@ -304,6 +367,35 @@ async fn sposta(app: AppHandle, stato: Condiviso<'_>, id: u64, chiave: String) -
             )
         };
         operazioni::sposta(&st, id, &chiave, &motore, &|| {
+            let _ = h.emit("ricette", ());
+        })
+    })
+    .await
+    .map_err(|_| "errore interno".to_string())?;
+    finita(&app, fine)
+}
+
+/// Prenota una ricetta mai prenotata su una delle date buone trovate (l'utente l'ha confermato nell'interfaccia).
+#[tauri::command]
+async fn prenota(app: AppHandle, stato: Condiviso<'_>, id: u64, chiave: String) -> Result<String, String> {
+    let st = stato.inner().clone();
+    let h = app.clone();
+    let fine = tauri::async_runtime::spawn_blocking(move || {
+        let motore = |r: &Ricetta, tenuta: Option<Sessione>, fasi: operazioni::Fasi| {
+            let (zona, cal) = zona_di(r)?;
+            let (cf, nre) = (r.cf.clone(), r.nre.clone());
+            cup_core::operazioni::prenota(
+                &|attesa| Sessione::con_limite(&cf, &nre, attesa),
+                tenuta,
+                &chiave,
+                &zona,
+                &cal,
+                false,
+                &Attese::default(),
+                fasi,
+            )
+        };
+        operazioni::prenota(&st, id, &chiave, &motore, &|| {
             let _ = h.emit("ricette", ());
         })
     })
@@ -381,18 +473,17 @@ fn imposta_avvio(app: AppHandle, stato: Condiviso, si: bool) -> Result<(), Strin
     Ok(())
 }
 
-/// Esce, ma non durante uno spostamento o una disdetta: a meta' l'esito resterebbe da verificare a mano.
+/// Esce, ma non durante uno spostamento, una prenotazione o una disdetta: a meta' l'esito resterebbe da verificare a
+/// mano.
 fn esci_se_libera(app: &AppHandle) {
-    let occupata = app
-        .try_state::<Arc<Stato>>()
-        .is_some_and(|s| s.in_corso().values().any(|a| matches!(a, Attivita::Spostamento | Attivita::Disdetta)));
+    let occupata = app.try_state::<Arc<Stato>>().is_some_and(|s| s.in_corso().values().any(|a| a.operazione()));
     if occupata {
         mostra(app);
         avvisa(
             app,
             "CUP Piemonte: aspetta un momento",
-            "C'è uno spostamento o una disdetta in corso: l'app esce quando ha verificato l'esito sul portale. \
-             Riprova tra qualche minuto.",
+            "C'è uno spostamento, una prenotazione o una disdetta in corso: l'app esce quando ha verificato l'esito \
+             sul portale. Riprova tra qualche minuto.",
             "uscita rimandata: operazione in corso",
         );
         return;
@@ -558,6 +649,7 @@ fn main() {
             imposta_avvio,
             registro,
             sposta,
+            prenota,
             disdici,
             chiudi_incerta
         ])
