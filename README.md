@@ -19,11 +19,11 @@ ogni 20 minuti. Gratuita, senza account e senza server.
 
 | Sistema | Download | |
 |---|---|---|
-| **Windows** 10 e 11 | [**Installer (.exe)**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte_0.1.0_x64-setup.exe) | consigliato · oppure [.msi](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte_0.1.0_x64.msi) per tutti gli utenti |
-| **macOS** (Intel e Apple Silicon) | [**Immagine disco (.dmg)**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte_0.1.0_universal.dmg) | trascina l'app in Applicazioni |
-| **Linux** 64 bit (x86_64) | [**.deb**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte_0.1.0_amd64.deb) · [**.rpm**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte-0.1.0-1.x86_64.rpm) · [**.AppImage**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte_0.1.0_amd64.AppImage) | Ubuntu 22.04+, Debian 12+, Mint 21+ · Fedora e openSUSE · le altre |
+| **Windows** 10 e 11 | [**Installer (.exe)**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.2.0/CUP-Piemonte_0.2.0_x64-setup.exe) | consigliato · oppure [.msi](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.2.0/CUP-Piemonte_0.2.0_x64.msi) per tutti gli utenti |
+| **macOS** (Intel e Apple Silicon) | [**Immagine disco (.dmg)**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.2.0/CUP-Piemonte_0.2.0_universal.dmg) | trascina l'app in Applicazioni |
+| **Linux** 64 bit (x86_64) | [**.deb**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.2.0/CUP-Piemonte_0.2.0_amd64.deb) · [**.rpm**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.2.0/CUP-Piemonte-0.2.0-1.x86_64.rpm) · [**.AppImage**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.2.0/CUP-Piemonte_0.2.0_amd64.AppImage) | Ubuntu 22.04+, Debian 12+, Mint 21+ · Fedora e openSUSE · le altre |
 
-Versione 0.1.0 (versione di prova). La [**pagina di download**](https://ilmondovero.github.io/cup-piemonte-checker/)
+Versione 0.2.0 (versione di prova). La [**pagina di download**](https://ilmondovero.github.io/cup-piemonte-checker/)
 propone l'ultima versione per il tuo sistema; tutte le versioni e le somme SHA-256 sono nella
 pagina [Releases](https://github.com/ilmondovero/cup-piemonte-checker/releases).
 

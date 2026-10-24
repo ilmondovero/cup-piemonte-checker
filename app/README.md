@@ -1,7 +1,7 @@
 # App desktop CUP Piemonte
 
 **[Scarica l'app](https://ilmondovero.github.io/cup-piemonte-checker/)** per Windows, macOS e Linux
-(versione 0.1.0, di prova). Link diretti e avvisi del primo avvio: [Installarla](#installarla).
+(versione 0.2.0, di prova). Link diretti e avvisi del primo avvio: [Installarla](#installarla).
 
 <img src="../docs/img/app.png" width="300" align="right" alt="L'app con una prenotazione e due date prima trovate dal controllo">
 
@@ -88,16 +88,16 @@ da evitare ed è prima della prenotazione.
 
 La [pagina di download](https://ilmondovero.github.io/cup-piemonte-checker/) propone il file giusto per
 il tuo sistema. Tutte le versioni sono nella pagina [Releases](https://github.com/ilmondovero/cup-piemonte-checker/releases)
-("App desktop X.Y.Z"). I file della versione 0.1.0:
+("App desktop X.Y.Z"). I file della versione 0.2.0:
 
-- **Windows**: [`CUP-Piemonte_0.1.0_x64-setup.exe`](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte_0.1.0_x64-setup.exe), che installa per il solo utente e non chiede i permessi di
-  amministratore; il [`.msi`](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte_0.1.0_x64.msi) installa per tutti gli utenti. Se manca WebView2 lo scarica l'installer.
-- **macOS** (Intel e Apple Silicon): [`CUP-Piemonte_0.1.0_universal.dmg`](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte_0.1.0_universal.dmg); si trascina l'app in Applicazioni.
-- **Linux**: [`.deb`](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte_0.1.0_amd64.deb) (Ubuntu 22.04+, Debian 12+, Mint 21+), [`.rpm`](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte-0.1.0-1.x86_64.rpm)
-  (Fedora, openSUSE) oppure [`.AppImage`](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/CUP-Piemonte_0.1.0_amd64.AppImage) (le altre; va resa
+- **Windows**: [`CUP-Piemonte_0.2.0_x64-setup.exe`](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.2.0/CUP-Piemonte_0.2.0_x64-setup.exe), che installa per il solo utente e non chiede i permessi di
+  amministratore; il [`.msi`](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.2.0/CUP-Piemonte_0.2.0_x64.msi) installa per tutti gli utenti. Se manca WebView2 lo scarica l'installer.
+- **macOS** (Intel e Apple Silicon): [`CUP-Piemonte_0.2.0_universal.dmg`](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.2.0/CUP-Piemonte_0.2.0_universal.dmg); si trascina l'app in Applicazioni.
+- **Linux**: [`.deb`](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.2.0/CUP-Piemonte_0.2.0_amd64.deb) (Ubuntu 22.04+, Debian 12+, Mint 21+), [`.rpm`](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.2.0/CUP-Piemonte-0.2.0-1.x86_64.rpm)
+  (Fedora, openSUSE) oppure [`.AppImage`](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.2.0/CUP-Piemonte_0.2.0_amd64.AppImage) (le altre; va resa
   eseguibile con `chmod +x`).
 
-[`SHA256SUMS.txt`](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.1.0/SHA256SUMS.txt) contiene le somme SHA-256 dei file, per controllare che il download sia integro
+[`SHA256SUMS.txt`](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.2.0/SHA256SUMS.txt) contiene le somme SHA-256 dei file, per controllare che il download sia integro
 (`sha256sum -c SHA256SUMS.txt --ignore-missing` su Linux, `shasum -a 256 -c SHA256SUMS.txt --ignore-missing`
 su macOS, `Get-FileHash .\nome-del-file -Algorithm SHA256` in PowerShell su Windows).
 
