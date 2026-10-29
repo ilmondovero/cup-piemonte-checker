@@ -1241,6 +1241,29 @@ def test_prenotata_fuori_dal_bot(b):
     assert any("risulta prenotata" in x and "Da ora cerco date prima" in x for x in inviati(b))
 
 
+def test_ricetta_mai_prenotata_rifiutata_una_volta_non_va_in_pausa(b, monkeypatch):
+    """2026-10-29: durante un aggiornamento del portale una ricetta valida e' stata rifiutata una notte sola."""
+    registra_nuova(b)
+    vera = c.check_nuova
+
+    def rifiutata(*a):
+        raise c.NonTrovata("Non esistono richieste per il paziente")
+    monkeypatch.setattr(c, "check_nuova", rifiutata)
+    b.controlla(pratica(b))
+    b.controlla(pratica(b))
+    assert pratica(b)["stato"] == "attivo" and pratica(b)["assenze"] == 2
+    assert not any("non accetta piu'" in x for x in inviati(b))  # nessun avviso: riprova in silenzio
+    monkeypatch.setattr(c, "check_nuova", vera)
+    b.controlla(pratica(b))
+    assert pratica(b)["stato"] == "attivo" and "assenze" not in pratica(b)
+    # rifiutata di fila ASSENZE_PAUSA volte: in pausa, con il messaggio delle ricette mai prenotate
+    monkeypatch.setattr(c, "check_nuova", rifiutata)
+    for _ in range(botmod.ASSENZE_PAUSA):
+        b.controlla(pratica(b))
+    assert pratica(b)["stato"] == "pausa" and "assenze" not in pratica(b) and botmod.da_prenotare(pratica(b))
+    assert "non accetta piu' questa ricetta" in inviati(b)[-1]
+
+
 def test_pannello_ricetta_da_prenotare(b):
     registra_nuova(b)
     testo, _ = b.testo_pannello(1)

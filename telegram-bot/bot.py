@@ -1097,9 +1097,11 @@ class Bot:
             else:
                 res = self.portale(cup_http.check, p["cf"], p["nre"], zona_di(p), pid=p["id"])
         except (cup_http.NonTrovata, cup_http.NonAttiva) as e:
-            if nuova:
+            forse_sbaglia = isinstance(e, cup_http.NonTrovata) and p.get("assenze", 0) + 1 < ASSENZE_PAUSA
+            if nuova and not forse_sbaglia:
+                p.pop("assenze", None)
                 p.update(stato="pausa", pausa_da=time.time(), libera=True)
-                self.salva(p, "stato", "pausa_da", "libera")
+                self.salva(p, "stato", "pausa_da", "libera", "assenze")
                 self.aggiorna_pannello(chat)
                 motivo = f"Il portale non accetta piu' questa ricetta ({e}): forse e' scaduta o e' gia' stata usata."
                 self.dire(p, f"{motivo} Ho sospeso i controlli.\n/modifica per un'altra ricetta, /riprendi per "
@@ -1114,9 +1116,10 @@ class Bot:
                              "sono in pausa. Per prenotare di nuovo: ▶️ Riprendi." + togli)
                 self.aggiorna_pannello(chat)
                 return None
-            if isinstance(e, cup_http.NonTrovata) and p.get("assenze", 0) + 1 < ASSENZE_PAUSA:
-                # il portale ha risposto "nessun record" per prenotazioni che esistevano: si riprova a
-                # controlli radi e si sospende solo se lo ripete ASSENZE_PAUSA volte di fila
+            if forse_sbaglia:
+                # il portale ha risposto "nessun record" per prenotazioni che esistevano, e ha rifiutato per una
+                # notte una ricetta mai prenotata che era valida: si riprova a controlli radi e si sospende solo
+                # se lo ripete ASSENZE_PAUSA volte di fila
                 p["assenze"] = p.get("assenze", 0) + 1
                 dubbia = cup_http.CupError(f"il portale dice «{e}» per questa ricetta, ma a volte sbaglia: "
                                            f"non sospendo, riprovo piu' tardi ({p['assenze']}/{ASSENZE_PAUSA - 1})")
