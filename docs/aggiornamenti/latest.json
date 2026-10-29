@@ -1,0 +1,44 @@
+{
+  "version": "0.3.0",
+  "notes": "Novità della versione 0.3.0: https://github.com/ilmondovero/cup-piemonte-checker/releases/tag/app-v0.3.0",
+  "pub_date": "2026-10-29T07:13:42Z",
+  "urgente": false,
+  "platforms": {
+    "windows-x86_64-nsis": {
+      "url": "https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.3.0/CUP-Piemonte_0.3.0_x64-setup.exe",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRcnd5aWdIL05MMzhUbllwRXRUZjFGRWNuZW8xc2J2L3NyUTFvTHFXSEVxVGpObmZkalBmWUl2cTd3cW5uc0RLK1NkQURhdzQvZFBFYVFKVmZmd25uZGliY1drU2VFUHcwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMjU3NzIwCWZpbGU6Q1VQIFBpZW1vbnRlXzAuMy4wX3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjMuMApGeEJUN21jMjU5bHc4bUl0Yi9oVDluWHI4VzdqdUc0Mk5Tb3VJOURGbjFYTzRrMUN0bmQyQ3llWFk5TmJqcFhGcmhoM1UxTDlKS0sxT1FPSVBQNktEZz09Cg=="
+    },
+    "windows-x86_64": {
+      "url": "https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.3.0/CUP-Piemonte_0.3.0_x64-setup.exe",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRcnd5aWdIL05MMzhUbllwRXRUZjFGRWNuZW8xc2J2L3NyUTFvTHFXSEVxVGpObmZkalBmWUl2cTd3cW5uc0RLK1NkQURhdzQvZFBFYVFKVmZmd25uZGliY1drU2VFUHcwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMjU3NzIwCWZpbGU6Q1VQIFBpZW1vbnRlXzAuMy4wX3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjMuMApGeEJUN21jMjU5bHc4bUl0Yi9oVDluWHI4VzdqdUc0Mk5Tb3VJOURGbjFYTzRrMUN0bmQyQ3llWFk5TmJqcFhGcmhoM1UxTDlKS0sxT1FPSVBQNktEZz09Cg=="
+    },
+    "windows-x86_64-msi": {
+      "url": "https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.3.0/CUP-Piemonte_0.3.0_x64.msi",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRcnd5aWdIL05MMzhwajZTRGVibmNoYTFBd3orM2pDaGtyRWtMTmpiTlUvMHJEZ2pwdm5vaU80NWpiOWFFMTdSSkRReGE5MnRQWE55RlEweUZGQ3QzeGxJc3l1U1RaWHdRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMjU3NzIwCWZpbGU6Q1VQIFBpZW1vbnRlXzAuMy4wX3g2NF9pdC1JVC5tc2kJdmVyc2lvbjowLjMuMApkYktuaWIxWHJXd045QnI2MzdpdFZFTUIzSU1GNWhsSDRJQlNMRVA5ckNMMHluQ2hZK1JHb3FKM0pQYVFwa2l2SExJWGlpczJVWW1oRkkralRWMG5CUT09Cg=="
+    },
+    "darwin-aarch64": {
+      "url": "https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.3.0/CUP-Piemonte_0.3.0_universal.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRcnd5aWdIL05MMzgzU1VhR29DVDR4TDhCNVM1MTdXa1Fwa0JscnF5UFJGOEFETzEyblVVOFVxekF5Sjh3UzdJR2pMdTVWMElrWU9HZUxHWEphLzhFeUJ3S1F3YXhpaWc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMjU3Nzk1CWZpbGU6Q1VQIFBpZW1vbnRlLmFwcC50YXIuZ3oJdmVyc2lvbjowLjMuMAplT2t4VDJrRzNRZ01uUEJDbGtVMTIzc1hUdEYxRXp0L1VFZmhMV1ZwNnRDTThVM2p2SzB0LzNUc0x0Zm9uanJTUGZWM1NTWFFOL3ZWbklOQ2swcmREZz09Cg=="
+    },
+    "darwin-x86_64": {
+      "url": "https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.3.0/CUP-Piemonte_0.3.0_universal.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRcnd5aWdIL05MMzgzU1VhR29DVDR4TDhCNVM1MTdXa1Fwa0JscnF5UFJGOEFETzEyblVVOFVxekF5Sjh3UzdJR2pMdTVWMElrWU9HZUxHWEphLzhFeUJ3S1F3YXhpaWc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMjU3Nzk1CWZpbGU6Q1VQIFBpZW1vbnRlLmFwcC50YXIuZ3oJdmVyc2lvbjowLjMuMAplT2t4VDJrRzNRZ01uUEJDbGtVMTIzc1hUdEYxRXp0L1VFZmhMV1ZwNnRDTThVM2p2SzB0LzNUc0x0Zm9uanJTUGZWM1NTWFFOL3ZWbklOQ2swcmREZz09Cg=="
+    },
+    "linux-x86_64-appimage": {
+      "url": "https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.3.0/CUP-Piemonte_0.3.0_amd64.AppImage",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRcnd5aWdIL05MMzNhRlFuTVFCZUVQbDU4ZFNYcUxnNTREVVlpMGhnYVI4Q3V3Z0ZHeENjRWRXaXBUUEgxZ3p3d1RSN091SFZuMG5EdkNQOS80dmEyNy9nazIvenJLRUFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMjU3Njc0CWZpbGU6Q1VQIFBpZW1vbnRlXzAuMy4wX2FtZDY0LkFwcEltYWdlCXZlcnNpb246MC4zLjAKM3FGWlR1Ums4b0hwMHorUlNrak5sczZIS0E5dGN2RFJldmVEZTMrMlJhK2NHMFNDWVJHSCtVUk5nTUJ5b3huejQ1UWYwZVRxZ2J6OXZqc3VTSGpsQmc9PQo="
+    },
+    "linux-x86_64": {
+      "url": "https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.3.0/CUP-Piemonte_0.3.0_amd64.AppImage",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRcnd5aWdIL05MMzNhRlFuTVFCZUVQbDU4ZFNYcUxnNTREVVlpMGhnYVI4Q3V3Z0ZHeENjRWRXaXBUUEgxZ3p3d1RSN091SFZuMG5EdkNQOS80dmEyNy9nazIvenJLRUFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMjU3Njc0CWZpbGU6Q1VQIFBpZW1vbnRlXzAuMy4wX2FtZDY0LkFwcEltYWdlCXZlcnNpb246MC4zLjAKM3FGWlR1Ums4b0hwMHorUlNrak5sczZIS0E5dGN2RFJldmVEZTMrMlJhK2NHMFNDWVJHSCtVUk5nTUJ5b3huejQ1UWYwZVRxZ2J6OXZqc3VTSGpsQmc9PQo="
+    },
+    "linux-x86_64-deb": {
+      "url": "https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.3.0/CUP-Piemonte_0.3.0_amd64.deb",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRcnd5aWdIL05MMzVya2xOU2VPVVczWmRoNEEyWTNxUFp6anJXZlpTaGVtK0pmY1I3ajJDMU5IMnFrY2xnRUZSRnNMbzhFeThGVkJ0RWdqd1dWb3FRUEpxRDU1VWhJTEFZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMjU3Njc0CWZpbGU6Q1VQIFBpZW1vbnRlXzAuMy4wX2FtZDY0LmRlYgl2ZXJzaW9uOjAuMy4wClBhNkdyNHRFMXNRVmFseGFyOEZYTFZGV1ZhQTlGMUFiVGxWNzZOUTloYVVNOTIxNy9TUjNrQ09VdklkMCtqTDA3aEVsdnhKNHBMVHdYeGl4QzNCREF3PT0K"
+    },
+    "linux-x86_64-rpm": {
+      "url": "https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.3.0/CUP-Piemonte-0.3.0-1.x86_64.rpm",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRcnd5aWdIL05MMzFEcTlXZFozSU5hWEJJTWxGcVJzdVdJY2VnMEgva1lnRFQvTTdXZzhBSUZsSm4xVXg3YlUrWlJKY2k5UWV1NG4zenJiWXdrbSs0ZWtSNkFhSnAwNXcwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMjU3Njc0CWZpbGU6Q1VQIFBpZW1vbnRlLTAuMy4wLTEueDg2XzY0LnJwbQl2ZXJzaW9uOjAuMy4wCm85c2wvbmNlOFEzRW5EVm9TVVJqQVJ5Rm5Ielg3YjJsWmc2MTVQdFZoWEJMQnNQZkRMWE44b1p6NXAzL0tKa0tGVkkvVktDeWx0TGdQanlIcUowMkFRPT0K"
+    }
+  }
+}
