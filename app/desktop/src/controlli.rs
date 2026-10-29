@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -61,6 +62,8 @@ pub struct Stato {
     pub tenute: Mutex<HashMap<u64, Tenuta>>,
     /// L'ultimo salvataggio fallito, da mostrare nell'interfaccia (None se l'ultimo e' riuscito).
     pub avviso: Mutex<Option<String>>,
+    /// L'app si sta chiudendo per installare un aggiornamento: non parte piu' nessun controllo e nessuna operazione.
+    chiusura: AtomicBool,
 }
 
 pub fn blocca<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -77,7 +80,28 @@ impl Stato {
             in_corso: Mutex::new(HashMap::new()),
             tenute: Mutex::new(HashMap::new()),
             avviso: Mutex::new(None),
+            chiusura: AtomicBool::new(false),
         }
+    }
+
+    /// Per installare un aggiornamento: se non c'e' niente in corso, da qui in poi non parte piu' nulla (true).
+    /// Si decide con `in_corso` bloccato, lo stesso lock con cui partono controlli e operazioni.
+    pub fn chiudi_per_aggiornare(&self) -> bool {
+        let in_corso = blocca(&self.in_corso);
+        if !in_corso.is_empty() {
+            return false;
+        }
+        self.chiusura.store(true, Ordering::SeqCst);
+        true
+    }
+
+    /// L'aggiornamento non si e' installato: controlli e operazioni ripartono.
+    pub fn riapri(&self) {
+        self.chiusura.store(false, Ordering::SeqCst);
+    }
+
+    pub fn in_chiusura(&self) -> bool {
+        self.chiusura.load(Ordering::SeqCst)
     }
 
     pub fn dati(&self) -> MutexGuard<'_, Dati> {
@@ -347,6 +371,9 @@ pub fn giro(
 ) -> Option<Vec<Notifica>> {
     let r = {
         let mut in_corso = blocca(&stato.in_corso);
+        if stato.in_chiusura() {
+            return None; // si sta installando un aggiornamento
+        }
         let mut d = stato.dati();
         let ora = adesso();
         // una ricetta che si sta spostando o disdicendo aspetta il giro dopo
@@ -686,6 +713,14 @@ mod test {
         assert!(d.ricette[1].ultimo_tentativo.is_some() && d.ricette[1].esito.as_ref().unwrap().buone.len() == 1);
         // subito dopo non c'e' niente da fare: i 20 minuti valgono anche per il thread
         assert!(giro(&s, &controlla, &|| {}).is_none());
+        // con un controllo in corso l'app non si chiude per aggiornarsi; senza, si chiude e non parte piu' nulla
+        blocca(&s.in_corso).insert(1, Attivita::Controllo);
+        assert!(!s.chiudi_per_aggiornare() && !s.in_chiusura());
+        s.libera(1);
+        assert!(s.chiudi_per_aggiornare());
+        s.dati().ricette[1].ultimo_tentativo = None; // di nuovo dovuta
+        assert!(giro(&s, &controlla, &|| {}).is_none());
+        s.riapri();
         assert_eq!(chiamate.get(), 1);
         assert!(s.registro.ultime(5).iter().any(|r| r.ends_with("ricetta 1: 1 date offerte, 1 buone, 0 s")));
         std::fs::remove_dir_all(&c).unwrap();

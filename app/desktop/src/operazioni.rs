@@ -32,6 +32,9 @@ fn prendi(
     ammessa: impl FnOnce(&Ricetta) -> Result<(), String>,
 ) -> Result<Ricetta, String> {
     let mut in_corso = blocca(&stato.in_corso);
+    if stato.in_chiusura() {
+        return Err("L'app si sta aggiornando e tra poco si riapre: riprova tra un minuto.".into());
+    }
     if let Some(a) = in_corso.get(&id) {
         return Err(match a {
             Attivita::Controllo => "C'è un controllo in corso su questa ricetta: riprova tra qualche minuto.",
@@ -560,6 +563,11 @@ mod test {
         assert!(sposta(&s, 1, CHIAVE, &mai, &|| {}).unwrap_err().contains("controllo in corso"));
         // il controllo non viene liberato da un rifiuto
         assert_eq!(s.in_corso().get(&1), Some(&Attivita::Controllo));
+        // mentre l'app si chiude per un aggiornamento non parte nessuna operazione
+        s.libera(1);
+        assert!(s.chiudi_per_aggiornare());
+        assert!(sposta(&s, 1, CHIAVE, &mai, &|| {}).unwrap_err().contains("si sta aggiornando"));
+        s.riapri();
         std::fs::remove_dir_all(&c).unwrap();
     }
 

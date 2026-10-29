@@ -4,9 +4,13 @@
 #   averla provata. Rifacendo il tag si ricomincia da una bozza nuova; una release pubblicata non si tocca.
 #   Se un sistema fallisce la bozza resta senza installer: "Re-run failed jobs" riprova senza ricrearla.
 # - avvio a mano (workflow_dispatch, anche su un tag): solo gli installer come artifact, nessuna release.
-# Ogni installer si installa e si avvia sulla macchina di GitHub prima di essere caricato (prova-avvio.sh).
+# Ogni installer si installa e si avvia sulla macchina di GitHub prima di essere caricato (prova-avvio.sh); con
+# l'installer .exe e su macOS si prova anche l'aggiornamento automatico (prova-aggiornamento.sh).
 # I job che costruiscono hanno solo permessi di lettura: carica nella release un job a parte.
-# Gli installer non sono firmati: vedi app/README.md per gli avvisi di Windows e macOS.
+# Gli installer non hanno un certificato: vedi app/README.md per gli avvisi di Windows e macOS. Sono pero' firmati
+# per gli aggiornamenti (TAURI_SIGNING_PRIVATE_KEY, nei segreti del repository) e le firme si verificano con la
+# chiave pubblica scritta nell'app prima della bozza (verifica-firme.sh). Il canale degli aggiornamenti lo prepara
+# app-aggiornamenti.yml quando la release viene pubblicata.
 name: App desktop - installer
 
 on:
@@ -60,13 +64,13 @@ jobs:
         include:
           - os: windows-latest
             args: ""
-            attesi: 2 # setup.exe, msi
+            attesi: 4 # setup.exe, msi, con le firme
           - os: macos-latest # un solo pacchetto per Mac Intel e Apple Silicon
             args: "--target universal-apple-darwin"
-            attesi: 1 # dmg
+            attesi: 3 # dmg, app.tar.gz (per gli aggiornamenti) e la sua firma
           - os: ubuntu-22.04 # la glibc piu' vecchia: il pacchetto gira anche sulle distribuzioni meno recenti
             args: ""
-            attesi: 3 # deb, rpm, AppImage
+            attesi: 6 # deb, rpm, AppImage, con le firme
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -104,19 +108,25 @@ jobs:
         run: rm -rf app/target/release/bundle app/target/*/release/bundle
 
       - uses: tauri-apps/tauri-action@v1
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         with:
           projectPath: app/desktop
           tauriScript: tauri
           args: ${{ matrix.args }}
 
-      # gli installer con nomi senza spazi, in una cartella sola
+      # gli installer e le firme con nomi senza spazi, in una cartella sola; il pacchetto di aggiornamento per
+      # macOS nasce senza versione nel nome: la si aggiunge
       - name: Raccogli gli installer
         run: |
           mkdir -p pacchetti
-          find app/target -path '*/release/bundle/*' -type f -name "*${V}*" \
-            \( -name '*-setup.exe' -o -name '*.msi' -o -name '*.dmg' -o -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \) |
+          find app/target -path '*/release/bundle/*' -type f \( -name "*${V}*" -o -name '*.app.tar.gz*' \) \
+            \( -name '*-setup.exe' -o -name '*.msi' -o -name '*.dmg' -o -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \
+               -o -name '*.app.tar.gz' -o -name '*.sig' \) |
             while read -r f; do
-              nome=$(basename "$f" | sed -e 's/CUP Piemonte/CUP-Piemonte/' -e 's/_it-IT\.msi$/.msi/')
+              nome=$(basename "$f" | sed -e 's/CUP Piemonte/CUP-Piemonte/' -e 's/_it-IT\.msi/.msi/' \
+                -e "s/^CUP-Piemonte\.app\.tar\.gz/CUP-Piemonte_${V}_universal.app.tar.gz/")
               cp "$f" "pacchetti/$nome"
             done
           ls -l pacchetti
@@ -141,6 +151,8 @@ jobs:
 
       - name: Avvia l'app installata con MSI (Windows)
         if: runner.os == 'Windows'
+        env:
+          INSTALLAZIONE: msi
         run: bash .github/scripts/prova-avvio.sh "$V" "$PROGRAMFILES/CUP Piemonte/cup-piemonte.exe"
 
       - name: Disinstalla l'MSI e installa con NSIS (Windows)
@@ -157,7 +169,16 @@ jobs:
 
       - name: Avvia l'app installata con NSIS (Windows)
         if: runner.os == 'Windows'
+        env:
+          INSTALLAZIONE: nsis
         run: bash .github/scripts/prova-avvio.sh "$V" "$LOCALAPPDATA/CUP Piemonte/cup-piemonte.exe"
+
+      # l'aggiornamento vero: l'app installa il setup.exe sopra se stessa e si riavvia
+      - name: Prova l'aggiornamento (Windows, NSIS)
+        if: runner.os == 'Windows'
+        run: |
+          setup=$(cygpath -w "$(ls "$PWD"/pacchetti/*-setup.exe)")
+          bash .github/scripts/prova-aggiornamento.sh "$V" "$LOCALAPPDATA/CUP Piemonte/cup-piemonte.exe" "$setup"
 
       - name: Disinstalla con NSIS (Windows)
         if: runner.os == 'Windows'
@@ -179,7 +200,10 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$app"
           lipo -archs "$app/Contents/MacOS/cup-piemonte" | grep -q arm64
           lipo -archs "$app/Contents/MacOS/cup-piemonte" | grep -q x86_64
-          bash .github/scripts/prova-avvio.sh "$V" "$app/Contents/MacOS/cup-piemonte"
+          INSTALLAZIONE=app bash .github/scripts/prova-avvio.sh "$V" "$app/Contents/MacOS/cup-piemonte"
+          bash .github/scripts/prova-aggiornamento.sh "$V" "$app/Contents/MacOS/cup-piemonte" \
+            "$(ls "$PWD"/pacchetti/*.app.tar.gz)"
+          codesign --verify --deep --strict --verbose=2 "$app" # anche dopo l'aggiornamento
 
       # con un bus di sessione, come su un desktop vero (icona, notifiche, una sola copia)
       - name: Prova deb e AppImage (Ubuntu)
@@ -188,16 +212,30 @@ jobs:
           deb=$(ls pacchetti/*.deb)
           dpkg-deb -f "$deb" Package Version Depends
           sudo apt-get install -y "./$deb"
-          bash .github/scripts/prova-avvio.sh "$V" /usr/bin/cup-piemonte dbus-run-session -- xvfb-run -a
+          INSTALLAZIONE=deb bash .github/scripts/prova-avvio.sh "$V" /usr/bin/cup-piemonte dbus-run-session -- xvfb-run -a
           sudo apt-get remove -y "$(dpkg-deb -f "$deb" Package)"
           chmod +x pacchetti/*.AppImage
-          APPIMAGE_EXTRACT_AND_RUN=1 bash .github/scripts/prova-avvio.sh "$V" "$(ls "$PWD"/pacchetti/*.AppImage)" \
+          INSTALLAZIONE=appimage APPIMAGE_EXTRACT_AND_RUN=1 bash .github/scripts/prova-avvio.sh "$V" "$(ls "$PWD"/pacchetti/*.AppImage)" \
             dbus-run-session -- xvfb-run -a
+
+      # l'aggiornamento dell'AppImage: una copia in una cartella dell'utente, avviata con FUSE come su un computer vero
+      - name: Prova l'aggiornamento dell'AppImage (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y -q libfuse2 dbus-x11
+          cp pacchetti/*.AppImage "$HOME/CUP-Piemonte.AppImage"
+          chmod +x "$HOME/CUP-Piemonte.AppImage"
+          # schermo e bus fuori dall'app: devono restare quando l'app si riavvia (xvfb-run li chiuderebbe con lei)
+          Xvfb :99 -screen 0 1280x1024x24 &
+          export DISPLAY=:99
+          eval "$(dbus-launch --sh-syntax)"
+          bash .github/scripts/prova-aggiornamento.sh "$V" "$HOME/CUP-Piemonte.AppImage" \
+            "$(ls "$PWD"/pacchetti/*.AppImage)"
 
       - name: Prova rpm (Fedora)
         if: runner.os == 'Linux'
         run: |
-          docker run --rm -e CI=true -v "$PWD:/w" -w /w fedora:latest bash -c '
+          docker run --rm -e CI=true -e INSTALLAZIONE=rpm -v "$PWD:/w" -w /w fedora:latest bash -c '
             set -e
             dnf install -y -q ./pacchetti/*.rpm xorg-x11-server-Xvfb xorg-x11-xauth dbus-daemon procps-ng
             rpm -qR "$(rpm -qp --qf "%{NAME}" pacchetti/*.rpm)" | sort -u
@@ -229,6 +267,13 @@ jobs:
           pattern: installer-*
           path: pacchetti
           merge-multiple: true
+
+      # con una chiave nei segreti diversa da quella dentro l'app nessun aggiornamento si potrebbe installare
+      - name: Verifica le firme degli aggiornamenti
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q minisign
+          bash .github/scripts/verifica-firme.sh "${GITHUB_REF_NAME#app-v}" pacchetti
 
       - name: Somme SHA-256
         working-directory: pacchetti

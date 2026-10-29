@@ -1,6 +1,7 @@
 // in release niente finestra del terminale su Windows
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod aggiornamenti;
 mod archivio;
 mod controlli;
 mod operazioni;
@@ -21,12 +22,14 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_notification::NotificationExt;
 
+use aggiornamenti::{Aggiornamenti, Avvio};
 use archivio::{Archivio, Data, Esito, Protezione, Ricetta, Visita};
 use controlli::{adesso, zona_di, Attivita, Notifica, Stato, INTERVALLO};
 use operazioni::Fine;
 use registro::Registro;
 
 type Condiviso<'a> = State<'a, Arc<Stato>>;
+type Canale<'a> = State<'a, Arc<Aggiornamenti>>;
 
 /// "14:05" oggi, "21/10 14:05" un altro giorno.
 fn ora(ts: i64) -> String {
@@ -473,9 +476,58 @@ fn imposta_avvio(app: AppHandle, stato: Condiviso, si: bool) -> Result<(), Strin
     Ok(())
 }
 
+#[tauri::command]
+fn aggiornamenti(agg: Canale) -> aggiornamenti::Info {
+    agg.info()
+}
+
+#[tauri::command]
+fn imposta_aggiornamenti(stato: Condiviso, agg: Canale, si: bool) -> Result<(), String> {
+    agg.imposta(si).map_err(|e| format!("Non riesco a salvare la scelta: {e}"))?;
+    stato.registro.scrivi(if si { "aggiornamenti automatici accesi" } else { "aggiornamenti automatici spenti" });
+    Ok(())
+}
+
+/// Controlla subito se c'e' una versione nuova. Ritorna il messaggio per l'utente.
+#[tauri::command]
+async fn controlla_aggiornamenti(app: AppHandle, stato: Condiviso<'_>, agg: Canale<'_>) -> Result<String, String> {
+    let (st, ag) = (stato.inner().clone(), agg.inner().clone());
+    let v = tauri::async_runtime::spawn_blocking(move || ag.controlla(&app, &*st))
+        .await
+        .map_err(|_| "errore interno".to_string())??;
+    Ok(match v {
+        Some(v) => format!("C'è la versione {v}."),
+        None => "È l'ultima versione.".into(),
+    })
+}
+
+/// "Aggiorna": installa subito la versione nuova, senza aspettare il rodaggio (mai durante un'operazione). Se va,
+/// l'app si riavvia e non torna qui.
+#[tauri::command]
+async fn aggiorna_ora(app: AppHandle, stato: Condiviso<'_>, agg: Canale<'_>) -> Result<(), String> {
+    let (st, ag) = (stato.inner().clone(), agg.inner().clone());
+    tauri::async_runtime::spawn_blocking(move || {
+        if ag.controlla(&app, &*st)?.is_none() {
+            return Err("È già l'ultima versione.".to_string());
+        }
+        ag.installa(&app, &*st, false)
+    })
+    .await
+    .map_err(|_| "errore interno".to_string())?
+}
+
 /// Esce, ma non durante uno spostamento, una prenotazione o una disdetta: a meta' l'esito resterebbe da verificare a
 /// mano.
 fn esci_se_libera(app: &AppHandle) {
+    if app.try_state::<Arc<Stato>>().is_some_and(|s| s.in_chiusura()) {
+        avvisa(
+            app,
+            "CUP Piemonte si sta aggiornando",
+            "L'app si chiude e si riapre da sola tra poco: lasciala finire.",
+            "uscita rimandata: aggiornamento in corso",
+        );
+        return;
+    }
     let occupata = app.try_state::<Arc<Stato>>().is_some_and(|s| s.in_corso().values().any(|a| a.operazione()));
     if occupata {
         mostra(app);
@@ -559,6 +611,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--nascosta"])))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let registro = Registro::new(&app.path().app_log_dir()?);
             registro.scrivi(&format!("avvio, versione {}", app.package_info().version));
@@ -567,16 +620,75 @@ fn main() {
                 Err((registro, e)) => {
                     // senza console (in release non c'e') l'utente deve vederlo: una finestra, poi si esce
                     registro.scrivi(&format!("avvio non riuscito: {e}"));
+                    // una versione difettosa (per esempio che non apre le ricette) si corregge da sola: se c'e' una
+                    // versione nuova si installa subito
+                    let installando = app.path().app_data_dir().ok().map(|cartella| {
+                        let v = app.package_info().version.to_string();
+                        let bt = tauri::utils::platform::bundle_type();
+                        aggiornamenti::soccorso(app.handle().clone(), registro, &cartella, v, bt)
+                    });
                     let h = app.handle().clone();
                     app.dialog()
                         .message(e)
                         .title("CUP Piemonte non riesce a partire")
                         .kind(MessageDialogKind::Error)
-                        .show(move |_| h.exit(1));
+                        .show(move |_| {
+                            // a meta' di un aggiornamento non si esce: l'app si riavvia da sola
+                            if !installando.is_some_and(|i| i.load(std::sync::atomic::Ordering::SeqCst)) {
+                                h.exit(1)
+                            }
+                        });
                     return Ok(());
                 }
             };
             app.manage(stato.clone());
+
+            // aggiornamenti: com'e' andata l'installazione di prima del riavvio, se ce n'era una
+            let installata_con = tauri::utils::platform::bundle_type();
+            let versione = app.package_info().version.to_string();
+            let agg = Arc::new(Aggiornamenti::new(&app.path().app_data_dir()?, versione, installata_con));
+            stato.registro.scrivi(&format!(
+                "aggiornamenti: installazione {}, {}",
+                agg.installata_con,
+                match (agg.modo, agg.canale().spenti) {
+                    (aggiornamenti::Modo::NonDisponibile, _) => "non si aggiorna",
+                    (aggiornamenti::Modo::ARichiesta, _) => "si aggiorna con Aggiorna",
+                    (_, true) => "automatici spenti",
+                    _ => "si aggiorna da sola",
+                }
+            ));
+            let mut nascosta = std::env::args().any(|a| a == "--nascosta");
+            match agg.dopo_avvio() {
+                Ok(Some(Avvio::Riuscito { da, a, automatica })) => {
+                    stato.registro.scrivi(&format!("aggiornamenti: aggiornata dalla versione {da} alla {a}"));
+                    avvisa(
+                        app.handle(),
+                        &format!("CUP Piemonte aggiornata alla versione {a}"),
+                        "I controlli continuano come prima. Le novità sono nella pagina dell'app.",
+                        &format!("aggiornata alla versione {a}"),
+                    );
+                    // installata da sola, magari di notte: come all'avvio con il computer; chiesta con "Aggiorna",
+                    // la finestra torna (anche se l'app era partita con il computer)
+                    nascosta = automatica;
+                }
+                Ok(Some(Avvio::NonRiuscito { a, volte })) => {
+                    stato.registro.scrivi(&format!("aggiornamenti: installazione della versione {a} non riuscita ({volte})"));
+                    if volte >= aggiornamenti::TENTATIVI {
+                        avvisa(
+                            app.handle(),
+                            "CUP Piemonte non si è aggiornata",
+                            &format!(
+                                "L'installazione della versione {a} non è riuscita: l'app continua con questa versione. \
+                                 Puoi riprovare da ⚙ o scaricarla dalla pagina dell'app."
+                            ),
+                            &format!("aggiornamento alla versione {a} non riuscito"),
+                        );
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => stato.registro.scrivi(&format!("aggiornamenti: stato non salvato: {e}")),
+            }
+            app.manage(agg.clone());
 
             let apri = MenuItem::with_id(app, "apri", "Apri", true, None::<&str>)?;
             let esci = MenuItem::with_id(app, "esci", "Esci (ferma i controlli)", true, None::<&str>)?;
@@ -602,7 +714,7 @@ fn main() {
 
             // la finestra nasce nascosta: si mostra, tranne quando l'app parte con il computer (o quando c'e' da
             // dire che un'operazione e' rimasta a meta')
-            if !interrotte.is_empty() || !std::env::args().any(|a| a == "--nascosta") {
+            if !interrotte.is_empty() || !nascosta {
                 mostra(app.handle());
             }
             for n in &interrotte {
@@ -611,6 +723,17 @@ fn main() {
             // archivio, icona e finestra pronti (la prova degli installer su GitHub aspetta questa riga)
             stato.registro.scrivi("avvio completato");
             let (h1, h2) = (app.handle().clone(), app.handle().clone());
+            let (h3, h4) = (app.handle().clone(), app.handle().clone());
+            let amb: Arc<dyn aggiornamenti::Ambiente> = stato.clone();
+            aggiornamenti::avvia(app.handle().clone(), amb, agg.clone(), move |titolo, testo, registro| {
+                avvisa(&h3, titolo, testo, registro)
+            });
+            // solo sulle macchine di GitHub (CI=true e CUP_PROVA_AGGIORNAMENTO): la prova dell'aggiornamento
+            let (st, ag) = (stato.clone(), agg);
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(5));
+                ag.prova_ci(&h4, &*st);
+            });
             controlli::avvia(
                 stato,
                 move |notifiche| {
@@ -651,7 +774,11 @@ fn main() {
             sposta,
             prenota,
             disdici,
-            chiudi_incerta
+            chiudi_incerta,
+            aggiornamenti,
+            imposta_aggiornamenti,
+            controlla_aggiornamenti,
+            aggiorna_ora
         ])
         .run(tauri::generate_context!())
         .expect("avvio dell'app non riuscito");

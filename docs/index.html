@@ -177,7 +177,7 @@ footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--bordo)
       <div class="carta"><h3>I dati restano sul tuo computer</h3>
         <p>Codice fiscale e ricetta vanno solo al portale CUP, come quando lo usi dal browser. Sul computer sono
           cifrati, con la chiave di solito nel portachiavi del sistema. Nessun server, nessun account: l'app non manda
-          niente a nessuno.</p></div>
+          niente a nessuno, legge solo da GitHub se c'è una versione nuova.</p></div>
       <div class="carta"><h3>Non sposta mai niente da sola</h3>
         <p>Ogni spostamento, prenotazione o disdetta parte solo da un tuo clic e chiede conferma mostrando data, ora e
           luogo.
@@ -221,7 +221,11 @@ footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--bordo)
     </details>
     <details>
       <summary>Come l'aggiorno?</summary>
-      <p>Scarichi la versione nuova da questa pagina e la installi sopra la vecchia: le ricette restano.</p>
+      <p>Dalla versione 0.3.0 si aggiorna da sola: le versioni nuove sono firmate, si installano 48 ore dopo la
+        pubblicazione e mai durante uno spostamento o una prenotazione; prima l'app copia le ricette. Per averla
+        subito: ⚙ nell'app, poi "Aggiorna". Con il .msi, il .deb e il .rpm il sistema chiede la password, quindi
+        l'app avvisa e aspetta che tocchi "Aggiorna". Chi ha una versione più vecchia installa una volta la nuova
+        da questa pagina, sopra la vecchia: le ricette restano.</p>
     </details>
     <details>
       <summary>Windows dice che manca WebView2, o il PC non è collegato a internet durante l'installazione</summary>

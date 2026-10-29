@@ -19,6 +19,9 @@ const FILE_CHIAVE: &str = "chiave.segreta";
 const INTESTAZIONE: &[u8] = b"CUP1";
 const SERVIZIO: &str = "cup-piemonte";
 const UTENTE: &str = "chiave-archivio";
+/// Le copie dell'archivio fatte prima degli aggiornamenti: si tengono le ultime.
+const CARTELLA_COPIE: &str = "copie";
+const COPIE: usize = 5;
 /// Date gia' notificate ricordate per ricetta: le piu' vecchie si dimenticano.
 pub const NOTIFICATE_MAX: usize = 300;
 
@@ -234,7 +237,7 @@ fn da_esadecimale(s: &str) -> Option<Key> {
 
 /// Scrive un file solo per l'utente: prima uno temporaneo, scritto davvero sul disco, poi lo sostituisce (mai un
 /// file a meta', nemmeno se il computer si spegne di colpo).
-fn scrivi_privato(percorso: &Path, contenuto: &[u8]) -> Result<(), String> {
+pub(crate) fn scrivi_privato(percorso: &Path, contenuto: &[u8]) -> Result<(), String> {
     let errore = |e: std::io::Error| format!("Non riesco a salvare: {e}");
     let tmp = percorso.with_extension("tmp");
     let _ = fs::remove_file(&tmp); // i permessi valgono solo per un file nuovo
@@ -335,6 +338,41 @@ impl Archivio {
             .map_err(|_| "Non riesco a cifrare le ricette".to_string())?;
         scrivi_privato(&self.file, &[INTESTAZIONE, nonce.as_slice(), &cifrato].concat())
     }
+
+    /// Prima di un aggiornamento dell'app: una copia dell'archivio, cifrata come l'originale (stessa chiave), nella
+    /// cartella "copie". Se la versione nuova non riuscisse a leggerlo, basta rimettere al suo posto la copia. Tiene
+    /// le ultime COPIE. None se non c'e' ancora un archivio.
+    pub fn copia(&self, da_versione: &str) -> Result<Option<PathBuf>, String> {
+        let b = match fs::read(&self.file) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(format!("Non riesco a copiare le ricette: {e}")),
+        };
+        let cartella = self.file.with_file_name(CARTELLA_COPIE);
+        fs::create_dir_all(&cartella).map_err(|e| format!("Non riesco a creare la cartella delle copie: {e}"))?;
+        let nome = format!("ricette-{}-versione-{da_versione}.cifrate", chrono::Local::now().format("%Y%m%d-%H%M%S"));
+        let copia = cartella.join(nome);
+        scrivi_privato(&copia, &b)?;
+        // si rilegge: una copia che non torna non vale come copia
+        if fs::read(&copia).ok().as_deref() != Some(b.as_slice()) {
+            return Err("La copia delle ricette non corrisponde all'originale".into());
+        }
+        let mut copie: Vec<PathBuf> = fs::read_dir(&cartella)
+            .map_err(|e| format!("Non riesco a leggere la cartella delle copie: {e}"))?
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("ricette-") && n.ends_with(".cifrate"))
+            })
+            .collect();
+        copie.sort(); // il nome comincia con data e ora
+        for vecchia in copie.iter().take(copie.len().saturating_sub(COPIE)) {
+            let _ = fs::remove_file(vecchia);
+        }
+        Ok(Some(copia))
+    }
 }
 
 fn chiave_dal_portachiavi() -> Result<Key, String> {
@@ -404,6 +442,24 @@ mod test {
 
     fn nuova_chiave() -> Key {
         XChaCha20Poly1305::generate_key(&mut OsRng)
+    }
+
+    #[test]
+    fn copie_prima_degli_aggiornamenti() {
+        let c = cartella("copie");
+        let chiave = nuova_chiave();
+        let a = Archivio::con_chiave(c.join(FILE), chiave);
+        assert_eq!(a.copia("0.3.0").unwrap(), None); // niente archivio, niente copia
+        a.scrivi(&dati()).unwrap();
+        let prima = a.copia("0.3.0").unwrap().unwrap();
+        // la copia si apre con la stessa chiave e ha le stesse ricette
+        assert_eq!(Archivio::con_chiave(prima.clone(), chiave).leggi().unwrap(), dati());
+        for i in 1..=COPIE + 2 {
+            a.copia(&format!("0.3.{i}")).unwrap();
+        }
+        let rimaste = fs::read_dir(c.join(CARTELLA_COPIE)).unwrap().count();
+        assert_eq!(rimaste, COPIE);
+        assert!(!prima.exists()); // la piu' vecchia se ne va per prima
     }
 
     #[test]

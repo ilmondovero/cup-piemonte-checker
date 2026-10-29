@@ -16,6 +16,15 @@
     <section id="impostazioni" class="avviso" hidden>
       <label class="riga"><input type="checkbox" id="avvio"> Avvia con il computer (nella barra di sistema)</label>
       <p id="protezione" class="nota"></p>
+      <div id="aggiornamenti">
+        <label class="riga" id="riga-agg-auto"><input type="checkbox" id="agg-auto"> Installa da sola le versioni
+          nuove (consigliato)</label>
+        <p class="nota"><b id="agg-versione"></b> · <span id="agg-testo"></span></p>
+        <div class="pulsanti">
+          <button type="button" id="agg-controlla" class="secondario">Controlla ora</button>
+          <button type="button" id="agg-aggiorna" hidden></button>
+        </div>
+      </div>
       <p id="messo-da-parte" class="errore" hidden></p>
       <details id="dettagli-registro">
         <summary>Registro dell'app</summary>

@@ -228,12 +228,29 @@ async function caricaImpostazioni() {
     : "🔒 Le ricette sono salvate cifrate, ma il portachiavi del sistema non c'è: la chiave è in un file accanto " +
       "ai dati, nella cartella del tuo utente. È meno sicuro: chi può leggere i tuoi file può leggere anche le ricette.";
   $("file-registro").textContent = i.registro;
+  caricaAggiornamenti();
   const parte = $("messo-da-parte");
   parte.hidden = !i.messo_da_parte;
   if (i.messo_da_parte) {
     parte.textContent = "Le ricette salvate prima non si potevano più aprire (chiave cambiata): le ho messe da parte " +
       "in " + i.messo_da_parte + " e ho ricominciato da capo.";
     $("impostazioni").hidden = false;
+  }
+}
+
+// gli aggiornamenti dell'app: versione, stato del canale e, se c'e', il pulsante per la versione nuova
+async function caricaAggiornamenti() {
+  try {
+    const a = await invoke("aggiornamenti");
+    $("agg-versione").textContent = "Versione " + a.versione;
+    $("agg-testo").textContent = a.testo;
+    $("agg-auto").checked = a.automatici;
+    $("riga-agg-auto").hidden = a.modo !== "automatico";
+    $("agg-controlla").hidden = a.modo === "non_disponibile";
+    $("agg-aggiorna").hidden = !a.pulsante;
+    $("agg-aggiorna").textContent = a.pulsante || "";
+  } catch (e) {
+    $("agg-testo").textContent = String(e);
   }
 }
 
@@ -309,9 +326,28 @@ $("nuova").addEventListener("click", () => apri(null));
 $("apri-impostazioni").addEventListener("click", (ev) => {
   const p = $("impostazioni");
   p.hidden = !p.hidden;
+  if (!p.hidden) caricaAggiornamenti();
   ev.currentTarget.setAttribute("aria-expanded", String(!p.hidden));
 });
 $("dettagli-registro").addEventListener("toggle", (ev) => { if (ev.target.open) caricaRegistro(); });
+$("agg-auto").addEventListener("change", async (ev) => {
+  if (!(await esegui("imposta_aggiornamenti", { si: ev.target.checked }))) ev.target.checked = !ev.target.checked;
+  caricaAggiornamenti();
+});
+$("agg-controlla").addEventListener("click", async (ev) => {
+  ev.currentTarget.disabled = true;
+  avvisa("Controllo se ci sono versioni nuove…", false);
+  await esegui("controlla_aggiornamenti", {});
+  $("agg-controlla").disabled = false;
+  caricaAggiornamenti();
+});
+$("agg-aggiorna").addEventListener("click", async (ev) => {
+  ev.currentTarget.disabled = true;
+  avvisa("Scarico e installo la versione nuova: l'app si chiude e si riapre da sola. Le ricette restano.", false);
+  await esegui("aggiorna_ora", {});
+  $("agg-aggiorna").disabled = false;
+  caricaAggiornamenti();
+});
 $("avvio").addEventListener("change", async (ev) => {
   if (!(await esegui("imposta_avvio", { si: ev.target.checked }))) ev.target.checked = !ev.target.checked;
 });

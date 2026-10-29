@@ -3,6 +3,8 @@
 # "avvio completato" (archivio, icona e finestra pronti), mai "avvio non riuscito". Con un errore l'app
 # resta aperta su una finestra, quindi non basta che il processo sia vivo. Senza ricette l'app non fa
 # richieste al portale.
+# Con INSTALLAZIONE=nsis|msi|app|deb|rpm|appimage controlla anche che l'app riconosca come e' installata (da questo
+# dipende come si aggiorna).
 # Uso: prova-avvio.sh <versione> <eseguibile> [comando che lo lancia, per esempio xvfb-run -a]
 set -euo pipefail
 
@@ -65,6 +67,9 @@ elif grep -q "avvio non riuscito" "$registro"; then
   esito=1
 elif ! grep -q "avvio completato" "$registro"; then
   echo "L'app non ha finito l'avvio in 90 secondi"
+  esito=1
+elif [ -n "${INSTALLAZIONE:-}" ] && ! grep -q "aggiornamenti: installazione $INSTALLAZIONE," "$registro"; then
+  echo "L'app non si riconosce installata con $INSTALLAZIONE"
   esito=1
 elif ! vivo; then
   echo "L'app si e' chiusa da sola"

@@ -52,7 +52,9 @@ pagina [Releases](https://github.com/ilmondovero/cup-piemonte-checker/releases).
   ferma senza prenotare.
 - Più ricette, anche di familiari, ognuna con la sua zona.
 - **I dati restano sul tuo computer**, cifrati: codice fiscale e ricetta vanno solo al portale CUP.
-  L'app non manda niente a nessuno.
+  L'app non manda niente a nessuno: legge solo da GitHub se c'è una versione nuova.
+- **Si aggiorna da sola** (dalla versione 0.3.0): versioni firmate, installate 48 ore dopo la pubblicazione e mai
+  durante un'operazione, con una copia delle ricette prima di ogni aggiornamento.
 
 Come funziona dentro, limiti e privacy: [`app/README.md`](app/README.md). Disinstallazione, dove stanno i
 dati e altre domande: nella [pagina di download](https://ilmondovero.github.io/cup-piemonte-checker/#domande).

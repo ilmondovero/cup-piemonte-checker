@@ -1,0 +1,135 @@
+# Il canale degli aggiornamenti automatici dell'app desktop: latest.json, che l'app legge ogni 6 ore.
+# - quando una release "app-vX.Y.Z" viene pubblicata (anche come pre-release): il manifesto per quella versione.
+# - avvio a mano con un tag: ripunta il canale a quella versione. Serve per RITIRARE una versione difettosa
+#   durante il rodaggio di 48 ore: chi non l'ha ancora installata resta dov'e' (l'app non torna mai indietro, chi
+#   l'ha gia' presa aspetta la correzione).
+# Il manifesto va in due posti indipendenti, gli stessi di plugins > updater > endpoints in tauri.conf.json:
+#   1. la release "aggiornamenti" (pre-release, sempre la stessa), file latest.json;
+#   2. GitHub Pages, docs/aggiornamenti/latest.json (commit su master).
+# Prima di pubblicarlo: ogni pacchetto si scarica dalla release e la sua firma si verifica con la chiave pubblica
+# dell'app. Dopo: si rilegge da entrambi i posti. "<!-- urgente -->" nelle note della release fa saltare il rodaggio.
+name: App desktop - canale aggiornamenti
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag della versione a cui puntare il canale (per esempio app-v0.3.0)"
+        required: true
+
+permissions:
+  contents: read
+
+# mai due manifesti scritti insieme: l'ultimo vince
+concurrency:
+  group: app-aggiornamenti
+  cancel-in-progress: false
+
+jobs:
+  canale:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'app-v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pages: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: La release
+        id: release
+        run: |
+          gh release view "$TAG" --json isDraft,publishedAt,body > release.json
+          if [ "$(jq -r .isDraft release.json)" = "true" ]; then
+            echo "La release $TAG e' ancora una bozza"
+            exit 1
+          fi
+          echo "data=$(jq -r .publishedAt release.json)" >> "$GITHUB_OUTPUT"
+          if jq -r .body release.json | grep -q '<!-- urgente -->'; then
+            echo "urgente=si" >> "$GITHUB_OUTPUT"
+          else
+            echo "urgente=no" >> "$GITHUB_OUTPUT"
+          fi
+          # la chiave pubblica dell'app di quel tag (le firme si verificano con quella)
+          git show "$TAG:app/desktop/tauri.conf.json" > conf-del-tag.json
+
+      - name: Scarica i pacchetti e verifica le firme
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q minisign
+          mkdir pacchetti
+          gh release download "$TAG" -D pacchetti -p '*-setup.exe*' -p '*.msi*' -p '*.app.tar.gz*' \
+            -p '*.AppImage*' -p '*.deb*' -p '*.rpm*'
+          ls -l pacchetti
+          # verifica-firme.sh legge la chiave da app/desktop/tauri.conf.json: quella del tag
+          cp conf-del-tag.json app/desktop/tauri.conf.json
+          bash .github/scripts/verifica-firme.sh "${TAG#app-v}" pacchetti
+          git checkout app/desktop/tauri.conf.json
+
+      - name: Il manifesto
+        run: |
+          python3 .github/scripts/canale-aggiornamenti.py "$TAG" pacchetti "${{ steps.release.outputs.data }}" \
+            "${{ steps.release.outputs.urgente }}" > latest.json
+          cat latest.json
+
+      - name: Nella release "aggiornamenti"
+        run: |
+          if ! gh release view aggiornamenti >/dev/null 2>&1; then
+            gh release create aggiornamenti --prerelease --target master \
+              --title "Canale degli aggiornamenti dell'app (non scaricare)" \
+              --notes "Il file latest.json che l'app desktop legge per sapere se c'è una versione nuova. Per scaricare l'app: https://ilmondovero.github.io/cup-piemonte-checker/"
+          fi
+          gh release upload aggiornamenti latest.json --clobber
+
+      - name: Su GitHub Pages
+        run: |
+          mkdir -p docs/aggiornamenti
+          cp latest.json docs/aggiornamenti/latest.json
+          git add docs/aggiornamenti/latest.json
+          if git diff --cached --quiet; then
+            echo "Pages ha gia' questo manifesto"
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -m "Canale aggiornamenti: versione ${TAG#app-v}"
+          for _ in 1 2 3; do
+            if git pull --rebase -q origin master && git push -q origin HEAD:master; then
+              # un push fatto con GITHUB_TOKEN puo' non far ripartire Pages: lo si chiede
+              gh api -X POST "repos/${GH_REPO}/pages/builds" >/dev/null || echo "build di Pages non richiesta"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Commit su master non riuscito"
+          exit 1
+
+      # come l'app: legge il manifesto da tutti e due i posti (Pages si aggiorna in qualche minuto)
+      - name: Rileggi il canale
+        run: |
+          v="${TAG#app-v}"
+          for url in \
+            "https://github.com/${GH_REPO}/releases/download/aggiornamenti/latest.json" \
+            "https://ilmondovero.github.io/cup-piemonte-checker/aggiornamenti/latest.json"; do
+            ok=no
+            for _ in $(seq 1 45); do
+              if [ "$(curl -fsL "$url?t=$(date +%s)" | jq -r .version)" = "$v" ]; then ok=si; break; fi
+              sleep 20
+            done
+            if [ "$ok" != si ]; then
+              echo "$url non annuncia la versione $v"
+              exit 1
+            fi
+            echo "ok: $url"
+          done
+          for u in $(jq -r '.platforms[].url' latest.json | sort -u); do
+            curl -fsIL -o /dev/null "$u" || { echo "Non si scarica: $u"; exit 1; }
+            echo "si scarica: $u"
+          done

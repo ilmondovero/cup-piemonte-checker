@@ -20,6 +20,7 @@ comportamento del portale, che lì sono già state verificate.
 | 4 | Spostamento e disdetta, solo quando lo chiedi tu | ✅ fatto |
 | 5 | Installer per i tre sistemi (GitHub Actions) | ✅ fatto |
 | 6 | Ricette mai prenotate: cerca il primo posto libero e prenota, solo quando lo chiedi tu | ✅ fatto (0.2.0, sperimentale) |
+| 7 | Aggiornamenti automatici, firmati, mai durante un'operazione | ✅ fatto (0.3.0) |
 
 **Come si usa.** Si aggiunge una ricetta con nome, codice fiscale e numero ricetta, la zona e i giorni da
 evitare. L'app legge la prenotazione (solo lettura; se non c'è, la ricetta da prenotare) e poi, se la ricetta è attiva, la controlla da sola ogni
@@ -113,8 +114,43 @@ Gli installer li costruisce GitHub Actions a partire dal codice di questo reposi
 ([`.github/workflows/app-installer.yml`](../.github/workflows/app-installer.yml)): prima girano i test sui
 tre sistemi, poi ogni installer si installa e si avvia su una macchina pulita di GitHub; solo se l'app
 parte senza errori finisce nella release. Un tag `app-vX.Y.Z` crea la release in bozza, che si pubblica a
-mano dopo averla provata. L'app non si aggiorna da sola: per una versione nuova si scarica e si installa
-sopra la vecchia, e le ricette restano.
+mano dopo averla provata.
+
+## Aggiornamenti
+
+Dalla versione 0.3.0 l'app si aggiorna da sola. Chi ha la 0.1.0 o la 0.2.0 installa una volta la 0.3.0 sopra la
+vecchia (le ricette restano); da lì in poi non serve più.
+
+- **Quando.** Qualche minuto dopo l'avvio e poi ogni 6 ore l'app guarda se c'è una versione nuova. Una
+  versione nuova si installa da sola **48 ore dopo la pubblicazione**: se si rivela difettosa la si ritira
+  prima che arrivi a tutti; subito prima di installarla l'app ricontrolla il canale, quindi una versione
+  ritirata non arriva. Per averla subito: ⚙, poi "Aggiorna alla X.Y.Z".
+- **Mai durante un'operazione.** L'installazione aspetta che non ci siano controlli, spostamenti,
+  prenotazioni o disdette in corso, e finché dura non ne parte nessuno. Su Windows l'app si chiude, compare
+  per qualche secondo la barra dell'installazione e l'app si riapre da sola; su macOS e Linux si riavvia.
+  Dopo un aggiornamento arriva una notifica con la versione.
+- **Firmati.** Ogni pacchetto è firmato, e la firma comprende la versione: l'app installa solo pacchetti
+  firmati con la chiave che ha dentro, e mai una versione più vecchia di quella che ha.
+- **Le ricette al sicuro.** Prima di installare, l'app copia il file delle ricette, cifrato come
+  l'originale, nella sottocartella `copie` della cartella dei dati (le ultime 5). Se una versione nuova non
+  riuscisse a leggerle: chiudere l'app, rimettere la copia al posto di `ricette.cifrate`, riaprire.
+- **Se non va.** Al riavvio l'app controlla di essere davvero la versione nuova. Un'installazione non
+  riuscita si riprova dopo un'ora; dopo due volte l'app smette di riprovarla da sola, lo dice con una
+  notifica e continua con la versione che ha. Su Windows, se l'installazione si interrompe a metà, l'app
+  resta chiusa: si riapre dal menu Start, o da sola al prossimo accesso se parte con il computer.
+- **Una versione difettosa si corregge da lontano.** Se l'app non riesce più ad aprire le ricette, mentre
+  mostra l'errore cerca una versione nuova e la installa: subito se la versione rotta si è appena installata o se
+  la correzione è segnata urgente, altrimenti con le solite 48 ore.
+- **Da sola solo dove non serve una password**: installer `.exe`, app per macOS, `.AppImage`, quando la
+  cartella dell'app si può scrivere. Con il `.msi`, il `.deb`, il `.rpm` o un'app per macOS installata da un
+  amministratore il sistema chiede la password: l'app avvisa con una notifica e installa solo quando tocchi
+  "Aggiorna" nelle impostazioni.
+- Gli aggiornamenti automatici si spengono nelle impostazioni (⚙): l'app continua ad avvisare.
+
+Le versioni nuove l'app le legge da due posti indipendenti, entrambi su GitHub: il file `latest.json` della
+release [`aggiornamenti`](https://github.com/ilmondovero/cup-piemonte-checker/releases/tag/aggiornamenti) e la
+stessa copia su GitHub Pages. In quelle richieste non c'è nessun dato delle ricette: GitHub vede solo
+l'indirizzo IP e la versione dell'app, come per qualsiasi download.
 
 I controlli girano solo con il computer acceso e non in sospensione. Su Linux con GNOME (Fedora, Debian)
 l'icona nella barra compare solo con l'estensione "AppIndicator and KStatusNotifierItem Support"; senza,
@@ -140,7 +176,8 @@ si possono incollare (non contengono questi dati), dopo averle rilette.
 - `cli/`: il comando `cup` per provare il motore da terminale.
 - `desktop/`: l'app [Tauri 2](https://tauri.app/). Usa il browser del sistema (WebView2, WebKit), non
   porta con sé Chromium. `archivio.rs` salva le ricette, `controlli.rs` fa i controlli in un thread a parte,
-  `operazioni.rs` sposta e disdice (il percorso sul portale è in `core/src/operazioni.rs`).
+  `operazioni.rs` sposta e disdice (il percorso sul portale è in `core/src/operazioni.rs`),
+  `aggiornamenti.rs` controlla e installa le versioni nuove.
 
 ## Provarla
 
@@ -165,7 +202,8 @@ durati, errori del portale, pause, spostamenti e disdette (riusciti, fermati o i
 nel registro non ci sono codice fiscale, numero ricetta, prestazione né date della visita. Si legge dalle
 impostazioni (Registro dell'app), dove c'è anche il percorso del file. Il file ruota oltre i 512 KB.
 
-Non c'è telemetria: l'app non manda nulla a nessuno, tranne le richieste al portale CUP.
+Non c'è telemetria: l'app non manda nulla a nessuno. Fa solo le richieste al portale CUP e, ogni 6 ore, legge
+da GitHub se c'è una versione nuova (vedi [Aggiornamenti](#aggiornamenti)).
 
 ## Privacy
 
@@ -183,11 +221,27 @@ Nell'interfaccia codice fiscale e ricetta compaiono solo in parte (RSS…19X).
 3. Il workflow prova e carica tutto in una release in **bozza**, con le note generate da
    `.github/scripts/note-release.sh`. La si controlla e la si pubblica dalla pagina Releases, come
    versione di prova (pre-release) o stabile.
-4. **Solo dopo la pubblicazione** (prima i file non esistono e i link darebbero 404) aggiornare i link
+   Se è una correzione urgente, scrivere `<!-- urgente -->` nelle note prima di pubblicarla: le app la
+   installano subito, senza il rodaggio di 48 ore.
+4. Alla pubblicazione parte da solo
+   [`app-aggiornamenti.yml`](../.github/workflows/app-aggiornamenti.yml): scarica i pacchetti, ne verifica le
+   firme, scrive `latest.json` nella release `aggiornamenti` e in `docs/aggiornamenti/` (commit su master) e lo
+   rilegge da entrambi. Da quel momento le app installate vedono la versione nuova.
+   **Ritirarla** durante le 48 ore: avviare a mano quel workflow con il tag della versione precedente. Chi non
+   l'ha ancora installata resta dov'è; chi l'ha già presa (con "Aggiorna") aspetta la correzione, perché l'app
+   non torna mai a una versione più vecchia.
+5. **Solo dopo la pubblicazione** (prima i file non esistono e i link darebbero 404) aggiornare i link
    diretti con la versione nuova: `README.md` (in cima), la sezione [Installarla](#installarla) qui sopra,
    la riga in cima a questo file e in `docs/index.html` gli `href` dei file, `RISERVA` e la versione
    mostrata. La pagina di download trova comunque da sola l'ultima versione; i link scritti servono
    senza JavaScript o se GitHub non risponde.
+
+**La chiave che firma gli aggiornamenti.** La chiave privata è nel segreto `TAURI_SIGNING_PRIVATE_KEY` del
+repository (senza password) e, fuori dal repository, sul computer di chi pubblica, con una copia di sicurezza.
+La chiave pubblica è in `desktop/tauri.conf.json` (`plugins > updater > pubkey`) ed è scritta dentro ogni app
+installata. Se la chiave privata si perde, le app installate non accettano più nessun aggiornamento e
+bisogna reinstallarle a mano; per questo il workflow verifica ogni firma con la chiave pubblica prima di creare
+la bozza.
 
 ## Licenza
 

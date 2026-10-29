@@ -46,7 +46,8 @@ Gli installer non sono firmati con un certificato, quindi il sistema avvisa una 
   Sistema* > *Privacy e sicurezza* > *Apri comunque*. Se il pulsante non c'è: \`xattr -dr com.apple.quarantine "/Applications/CUP Piemonte.app"\`
 - **Linux**: l'AppImage va resa eseguibile (\`chmod +x\`).
 
-Per aggiornare si installa la versione nuova sopra la vecchia: le ricette restano. I controlli girano con
+Dalla 0.3.0 l'app si aggiorna da sola (48 ore dopo la pubblicazione, o subito con ⚙ > Aggiorna). Da una versione
+più vecchia si installa questa sopra: le ricette restano. I controlli girano con
 il computer acceso e non in sospensione.
 
 Disinstallazione, dove stanno i dati e altre domande: https://ilmondovero.github.io/cup-piemonte-checker/#domande
