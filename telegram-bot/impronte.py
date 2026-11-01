@@ -74,6 +74,9 @@ EMAIL_RE = re.compile(r"(?<![\w.+-])[\w.+-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63})+"
 VERSIONE_RE = re.compile(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}(?:-[\w.]{1,20})?\b")
 RIGA_MAX = 2000
 TEL_RE = re.compile(r"(?<![\w.])\+?\d[\d \-]{7,}\d\b")
+# un cellulare italiano anche con punti, trattini o parentesi ("333.123.4567", "(+39) 333-123-4567"): prima delle
+# date, che altrimenti ne prenderebbero solo dei pezzi
+CELL_RE = re.compile(r"(?<![\w.+])(?:\(?(?:\+|00)39\)?[\s.-]?)?3\d{2}[\s.-]?\d{3}[\s.-]?\d{3,4}(?![\w.-]?\d)")
 
 
 def pulisci(testo):
@@ -88,6 +91,7 @@ def pulisci(testo):
         riga = CF_RE.sub("[CF]", riga)
         riga = NRE_RE.sub("[NRE]", riga)
         riga = EMAIL_RE.sub("[EMAIL]", riga)
+        riga = CELL_RE.sub("[NUMERO]", riga)
         riga = DATA_RE.sub("[DATA]", riga)
         riga = TEL_RE.sub("[NUMERO]", riga)
         for v in versioni:
@@ -118,6 +122,9 @@ DIARIO_SICURO = [re.compile(x) for x in (
     r"^riepilogo " + _MODO + r": date \d+, date diverse \d+, 'alle ore' \d+, prestazioni dichiarate (?:\d+|\?), "
     r"nomi trovati \d+/\d+$",
     r"^presa visione: (?:nessun pulsante|registrata, ViewState (?:nuovo|invariato))$",
+    # contatti del Riepilogo: solo si/no e il nome del campo, mai i valori
+    r"^contatti: email (?:si|no(?: \(nessun campo\))?), cellulare (?:si \(campo tel[123]\)|no(?: \(nessun campo\))?)$",
+    r"^contatti: rifiutati dal portale, confermo senza$",
     r"^fase [a-z]+: [A-Z]\w*$",
     r"^tempi: [a-z]+ \d+\.\d+s(?:, [a-z]+ \d+\.\d+s)*$",
     r"^note: \d+ righe$",

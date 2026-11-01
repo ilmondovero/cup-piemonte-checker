@@ -55,6 +55,15 @@ PAGINE = collections.deque(maxlen=20)
 ULTIMA = 0.0  # epoch dell'ultima risposta (o errore) del portale: un ciclo lento ma vivo non sembra fermo
 TEMPI = {}  # fasi dell'ultima prenotazione: {"elenco": secondi, ...} (vedi prenota)
 NOTE = []  # righe delle note del Riepilogo dell'ultima prenotazione (vedi note_riepilogo)
+# contatti dell'ultima prenotazione, mai i valori: {"email": True, "cellulare": True} se sono partiti nei campi del
+# Riepilogo, "rifiutati": True se il portale non li ha accettati e si e' confermato senza (vedi CupSession.conferma)
+CONTATTI = {}
+TELEFONI = ("tel1", "tel2", "tel3")  # campi telefono del Riepilogo: il cellulare va nel primo modificabile
+# un errore del portale (riquadro messagify) sui contatti: si riprova senza. Deve nominare il contatto, non
+# solo "formato" o "valido" ("ricetta non valida"), e non essere un invito a chiamare ("contattare il call center
+# telefonando al ...")
+CONTATTI_RE = re.compile(r"\b(?:e-?mail|indirizzo (?:di posta|email)|telefono|cellulare|recapito)\b", re.I)
+NON_CONTATTI_RE = re.compile(r"call center|assistenza|contatt|numero verde", re.I)
 # verifica dopo la Conferma: pause crescenti prima di ogni tentativo, e al massimo tanti secondi in tutto
 VERIFICA_PAUSE = (10, 15, 20, 30, 40)  # la prima lettura dopo la Conferma aspetta 10 s: il portale ci mette tempo
 VERIFICA_MAX = 180
@@ -266,6 +275,19 @@ def _form_html(page, form_id):
     return m.group(0) if m else None
 
 
+def _disabilitato(tag):
+    """Un campo con l'attributo disabled (anche disabled="true", come i telefoni del Riepilogo)."""
+    return bool(re.search(r'\sdisabled(?=[\s=/>])', tag))
+
+
+def _modificabili(page, form_id):
+    """Nomi degli input del form che l'utente puo' scrivere (non disabilitati ne' readonly): solo per scegliere
+    dove vanno i contatti. Gli altri partono comunque, come sempre, con il valore del portale (_form_fields)."""
+    return {html.unescape(n.group(1)) for n, tag in (
+        (re.search(r'name="([^"]+)"', t), t) for t in re.findall(r"<input\b[^>]*>", _form_html(page, form_id) or ""))
+        if n and not _disabilitato(tag) and not re.search(r'\sreadonly(?=[\s=/>])', tag)}
+
+
 def _form_fields(page, form_id):
     """Campi del form come li serializza il browser: input text/hidden, checkbox spuntate, select."""
     f = _form_html(page, form_id) or ""
@@ -412,6 +434,8 @@ class CupSession:
         self.s.hooks["response"].append(_misura)
         self.search = {L + ":CFInput": cf, L + ":IDSearchTypeInput_input": "nre-label", L + ":IDSearchValueInput": nre}
         self.slots = []
+        self.contatti = {}  # {"email", "cellulare"} da scrivere nel Riepilogo (vedi prepara_contatti)
+        self.campi_contatti = {}  # {nome del campo: valore}: i campi del Riepilogo che li ricevono
         self.passo_elenco = "elenco"  # "verifica" per la sessione che controlla l'esito di una Conferma
 
     def attuale(self):
@@ -709,10 +733,64 @@ class CupSession:
             return t, None, "", page
         return t, _date(m.group(0)), t[m.end():m.end() + 250], page
 
-    @staticmethod
-    def _campi_riepilogo(riepilogo_page):
+    def _campi_riepilogo(self, riepilogo_page):
+        """I campi del Riepilogo come li ha compilati il portale e, sopra, i contatti (campi_contatti)."""
         return {k: v for k, v in _form_fields(riepilogo_page, RIEPILOGO).items()
-                if k not in (RIEPILOGO, "javax.faces.encodedURL", "ice.window", "ice.view", "javax.faces.ViewState")}
+                if k not in (RIEPILOGO, "javax.faces.encodedURL", "ice.window", "ice.view", "javax.faces.ViewState")
+                } | self.campi_contatti
+
+    def prepara_contatti(self, riepilogo_page):
+        """Dove vanno i contatti nel Riepilogo: l'email nel campo "email", il cellulare nel primo telefono
+        modificabile (tel1 e tel2 vengono dall'anagrafe sanitaria e sono disabilitati: di solito tel3), al posto
+        del numero che il portale ha messo. Solo campi che ci sono e non sono disabilitati (quelli disabilitati
+        partono con il valore del portale, come sempre). Nel diario solo si/no e il nome del campo, mai i valori."""
+        campi = _modificabili(riepilogo_page, RIEPILOGO)
+        self.campi_contatti = {}
+        CONTATTI.clear()
+        if not self.contatti:
+            return
+        riga = []
+        if self.contatti.get("email"):
+            if RIEPILOGO + ":email" in campi:
+                self.campi_contatti[RIEPILOGO + ":email"] = self.contatti["email"]
+            riga.append("email " + ("si" if self.campi_contatti else "no (nessun campo)"))
+        else:
+            riga.append("email no")
+        tel = next((t for t in TELEFONI if f"{RIEPILOGO}:{t}" in campi), None)
+        if self.contatti.get("cellulare"):
+            if tel:
+                self.campi_contatti[f"{RIEPILOGO}:{tel}"] = self.contatti["cellulare"]
+            riga.append(f"cellulare si (campo {tel})" if tel else "cellulare no (nessun campo)")
+        else:
+            riga.append("cellulare no")
+        CONTATTI.update(email=RIEPILOGO + ":email" in self.campi_contatti,
+                        cellulare=bool(self.contatti.get("cellulare") and tel))
+        DIARIO.append("contatti: " + ", ".join(riga))
+
+    def _senza_contatti(self, xml):
+        """La risposta rifiuta i contatti: nessun "conclusa con successo" e un messaggio d'errore del portale
+        legato a un campo che abbiamo scritto (il prefisso "***email***:" o l'id del campo) o che nomina
+        l'email o il telefono (non un invito a chiamare). Da qui i campi restano come li ha compilati il portale.
+        True se c'erano contatti da togliere. In CONTATTI restano quelli che erano partiti."""
+        xml = str(xml)
+        if not self.campi_contatti or "conclusa con successo" in _text(html.unescape(xml)).lower():
+            return False
+        nomi = {k.rsplit(":", 1)[1].lower() for k in self.campi_contatti}  # "email", "tel3"
+
+        def sul_contatto(grezzo):
+            prefisso = re.match(r"^\*+([^*]*)\*+:", _text(grezzo))
+            if prefisso and prefisso.group(1).strip().lower().rsplit(":", 1)[-1] in nomi:
+                return True
+            if any(re.search(r':%s(?![\w-])' % re.escape(n), grezzo, re.I) for n in nomi):
+                return True  # l'id del campo nel riquadro (for="...:email", id="...:tel3")
+            testo = re.sub(r"^\*+[^*]*\*+:\s*", "", _text(grezzo))
+            return bool(CONTATTI_RE.search(testo)) and not NON_CONTATTI_RE.search(testo)
+        if not any(sul_contatto(m) for m in re.findall(r'class="messagifyMsg alert-danger">(.*?)</div>', xml, re.S)):
+            return False
+        self.campi_contatti = {}
+        CONTATTI["rifiutati"] = True
+        DIARIO.append("contatti: rifiutati dal portale, confermo senza")
+        return True
 
     def presa_visione(self, riepilogo_page):
         """Se l'appuntamento ha delle note il Riepilogo chiede "Conferma presa visione" prima di "Conferma": senza
@@ -728,19 +806,39 @@ class CupSession:
         if not ids:
             raise Cambiato("Pulsante 'Conferma presa visione' non riconosciuto: non confermo")
         _passo("conferma")
-        xml = _Form(self.s, riepilogo_page, RIEPILOGO).post({**self._campi_riepilogo(riepilogo_page), **_event(ids[-1])})
+        form = _Form(self.s, riepilogo_page, RIEPILOGO)
+        xml = form.post({**self._campi_riepilogo(riepilogo_page), **_event(ids[-1])})
+        rifiutata = None  # il ViewState della risposta che ha rifiutato i contatti, se ne aveva uno
+        if self._senza_contatti(xml):  # prima della Conferma: riprovare non prenota niente
+            rifiutata = _viewstate(xml)
+            form.vs = rifiutata or form.vs
+            xml = form.post({**self._campi_riepilogo(riepilogo_page), **_event(ids[-1])})
         if "alert-danger" in xml or not re.search(r'icon-check"[^>]*></i>\s*<span[^>]*>\s*Presa visione delle note', xml):
             raise CupError("Il portale non ha registrato la presa visione delle note: non confermo")
-        vs = re.search(r'<update id="[^"]*javax\.faces\.ViewState[^"]*"[^>]*><!\[CDATA\[(.*?)\]\]>', xml, re.S)
-        self.vs_riepilogo = vs.group(1) if vs else None
+        self.vs_riepilogo = _viewstate(xml) or rifiutata  # il piu' recente
         DIARIO.append(f"presa visione: registrata, ViewState {'nuovo' if self.vs_riepilogo else 'invariato'}")
 
     def conferma(self, riepilogo_page):
+        """La Conferma. Se il portale rifiuta i contatti (e non dice "conclusa con successo") la si manda una
+        seconda volta, nella stessa sessione, con i campi come li aveva compilati il portale: un campo facoltativo
+        non deve far perdere la data. Una sola volta, e mai dopo un successo o senza risposta (un timeout va alla
+        verifica, come sempre)."""
         _passo("conferma")
         form = _Form(self.s, riepilogo_page, RIEPILOGO)
         if getattr(self, "vs_riepilogo", None):  # dopo la presa visione il portale ha dato un ViewState nuovo
             form.vs = self.vs_riepilogo
-        return form.post({**self._campi_riepilogo(riepilogo_page), **_event(RIEPILOGO + ":riepilogo-nextButton-bottom")})
+        evento = _event(RIEPILOGO + ":riepilogo-nextButton-bottom")
+        xml = form.post({**self._campi_riepilogo(riepilogo_page), **evento})
+        if self._senza_contatti(xml):
+            form.vs = _viewstate(xml) or form.vs
+            xml = form.post({**self._campi_riepilogo(riepilogo_page), **evento})
+        return xml
+
+
+def _viewstate(xml):
+    """Il ViewState nuovo di una risposta parziale JSF, se c'e'."""
+    vs = re.search(r'<update id="[^"]*javax\.faces\.ViewState[^"]*"[^>]*><!\[CDATA\[(.*?)\]\]>', str(xml), re.S)
+    return vs.group(1) if vs else None
 
 
 # --- API usata dal bot ------------------------------------------------------------------
@@ -1113,13 +1211,15 @@ def note_riepilogo(page):
 
 
 def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=False, nuova=False, calendario=None,
-            fase=None):
+            fase=None, contatti=None):
     """Come _prenota, e nel diario (e in TEMPI) quanto e' durata ogni fase: per capire dove va il tempo di una
     prenotazione. fase: funzione chiamata con "riepilogo", "conferma" (prima di inviarla: da li' l'esito puo'
-    essere incerto) e "verifica"; un suo errore non ferma la prenotazione."""
+    essere incerto) e "verifica"; un suo errore non ferma la prenotazione. contatti: {"email", "cellulare"}
+    facoltativi, da scrivere nel Riepilogo (CupSession.prepara_contatti); com'e' andata resta in CONTATTI."""
     tempi, inizio = [], [time.time()]
     TEMPI.clear()
     NOTE.clear()
+    CONTATTI.clear()
 
     def tappa(nome):
         ora = time.time()
@@ -1136,13 +1236,14 @@ def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=Fals
             if nome == "conferma":  # la Conferma non e' ancora partita: senza lo stato salvato non si invia
                 raise CupError("Non riesco a salvare lo stato della prenotazione: non confermo") from None
     try:
-        return _prenota(cf, nre, slot, sessione, zona, dry_run, libera, nuova, tappa, calendario, avvisa)
+        return _prenota(cf, nre, slot, sessione, zona, dry_run, libera, nuova, tappa, calendario, avvisa, contatti)
     finally:
         tappa("fine")
         DIARIO.append("tempi: " + ", ".join(tempi))
 
 
-def _prenota(cf, nre, slot, sessione, zona, dry_run, libera, nuova, tappa, calendario=None, fase=lambda nome: None):
+def _prenota(cf, nre, slot, sessione, zona, dry_run, libera, nuova, tappa, calendario=None, fase=lambda nome: None,
+             contatti=None):
     """Sposta la prenotazione sullo slot. sessione: quella del controllo che ha trovato lo slot
     (lo tiene bloccato per noi); se manca o fallisce si riparte da una sessione nuova.
     Con dry_run si ferma al Riepilogo. Ritorna un messaggio; CupError se un controllo fallisce.
@@ -1269,6 +1370,8 @@ def _prenota(cf, nre, slot, sessione, zona, dry_run, libera, nuova, tappa, calen
 
     # da qui la Conferma e' partita: qualunque problema e' "esito incerto", mai "non spostata". La fase si
     # segna PRIMA di inviarla: se il bot si ferma durante l'invio, al riavvio l'esito e' incerto, non "non fatta"
+    cup.contatti = {k: v for k, v in (contatti or {}).items() if k in ("email", "cellulare") and v}
+    cup.prepara_contatti(page)
     cup.presa_visione(page)  # prima di "conferma": se fallisce non e' partito niente
     fase("conferma")
     nuova_att = None

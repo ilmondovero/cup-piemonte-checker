@@ -242,9 +242,12 @@ def b(tmp_path, monkeypatch):
 
     bot.calendari = []
 
+    bot.contatti = []
+
     def prenota(cf, nre, slot, sessione=None, zona="sede", dry_run=True, libera=False, nuova=False, calendario=None,
-                fase=None):
+                fase=None, contatti=None):
         bot.chiamate.append((cf, slot.key(), sessione, dry_run))
+        bot.contatti.append(contatti)
         bot.libere.append(libera)
         bot.calendari.append(calendario)
         assert nuova == (cf == CF3 and cf not in bot.nuove)  # il bot dice sempre al client se e' la prima
@@ -291,12 +294,22 @@ def scegli_sede(b, chat, tipo):
     b.on_callback(cq(chat, cb))
 
 
+def salta_contatti(b, chat=1):
+    """Email e cellulare sono facoltativi: "Salta" finche' il bot li chiede."""
+    for _ in range(2):
+        reg = b.in_registrazione(chat)
+        if not reg or reg["stato"] not in ("email", "cellulare"):
+            return
+        b.on_callback(cq(chat, f"ct:{reg['id']}:{botmod.versione(reg)}:salta:{reg['stato']}"))
+
+
 def registra(b, chat=1, zona="sede", nre=NRE, cf=CF):
     b.ultimo_msg.clear()
     b.on_message(msg(chat, "/start"))
     b.on_callback(cq(chat, "consenso:1"))
     b.on_message(msg(chat, cf.lower(), mid=10))
     b.on_message(msg(chat, nre, mid=11))
+    salta_contatti(b, chat)
     if any(x.startswith("sede:") for x in pulsanti(b)):
         scegli_sede(b, chat, zona)
 
@@ -306,6 +319,7 @@ def aggiungi_familiare(b, chat=1, nome="Familiare", comune="Alba"):
     b.on_message(msg(chat, "/aggiungi"))
     b.on_message(msg(chat, CF2, mid=20))
     b.on_message(msg(chat, NRE2, mid=21))
+    salta_contatti(b, chat)
     b.on_message(msg(chat, nome, mid=22))
     scegli_sede(b, chat, "altro")
     b.on_message(msg(chat, comune, mid=23))
@@ -994,6 +1008,7 @@ def test_nessun_limite_di_ricette_per_chat(b):
         b.on_message(msg(1, "/aggiungi"))
         b.on_message(msg(1, CF2, mid=20))
         b.on_message(msg(1, f"010A0000000010{i}", mid=21))
+        salta_contatti(b)
         b.on_message(msg(1, f"Ricetta {i}", mid=22))
         scegli_sede(b, 1, "tutte")
     assert len(b.store.della_chat(1)) == 6 and not b.piena(100)
@@ -1003,6 +1018,7 @@ def test_nessun_limite_di_ricette_per_chat(b):
         b.on_message(msg(1, "/aggiungi"))
         b.on_message(msg(1, CF2, mid=20))
         b.on_message(msg(1, f"010A00000002{i:03d}", mid=21))
+        salta_contatti(b)
         b.on_message(msg(1, f"Ricetta {i}", mid=22))
         scegli_sede(b, 1, "tutte")
     testo, righe = b.testo_pannello(1)
@@ -1088,6 +1104,7 @@ def test_nome_non_puo_essere_un_codice_fiscale(b):
     b.on_message(msg(1, "/aggiungi"))
     b.on_message(msg(1, CF2, mid=20))
     b.on_message(msg(1, NRE2, mid=21))
+    salta_contatti(b)
     b.on_message(msg(1, CF2, mid=22))
     assert pratica(b, 1, 1)["stato"] == "nome"
 
@@ -1184,6 +1201,7 @@ def registra_nuova(b, chat=1, zona="tutte", comune=None):
     b.on_callback(cq(chat, "consenso:1"))
     b.on_message(msg(chat, CF3, mid=30))
     b.on_message(msg(chat, NRE3, mid=31))
+    salta_contatti(b, chat)
     scegli_sede(b, chat, "altro" if comune else zona)
     if comune:
         b.on_message(msg(chat, comune, mid=32))

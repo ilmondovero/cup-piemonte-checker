@@ -15,7 +15,8 @@ piccolo, senza Chromium.
    a mano oppure letti dal **promemoria PDF** della ricetta mandato in chat (solo PDF con testo, non
    scansioni, al massimo 3 MB: il bot lo legge in memoria, non lo conserva e toglie il messaggio dalla
    chat). Il bot verifica subito la prenotazione sul portale e mostra prestazione, data, ora e luogo. Se la ricetta non
-   è ancora prenotata la segue lo stesso (vedi "Ricetta mai prenotata" qui sotto). Poi chiede
+   è ancora prenotata la segue lo stesso (vedi "Ricetta mai prenotata" qui sotto). Poi chiede, facoltativi
+   e con un pulsante "Salta", un'**email** e un **cellulare** (vedi "Contatti per il CUP" qui sotto). Poi chiede
    **dove cercare** (vedi "Dove cercare" qui sotto): stessa sede, un comune (quello della prenotazione o
    un altro, per esempio Novara), Torino e prima cintura, la provincia, oppure qualsiasi sede proposta
    dal CUP.
@@ -96,8 +97,21 @@ piccolo, senza Chromium.
    App, scegliendo tra le sedi viste nei controlli; si rimettono con "↩️ Rimetti". La sede è la coppia
    nome + comune (ci sono sedi omonime). Le date già trovate in una sede esclusa risultano "fuori zona".
 
-Comandi: `/stato`, `/date`, `/calendario`, `/controlla`, `/aggiungi`, `/dati`, `/modifica`, `/sede`, `/auto`, `/pausa`, `/riprendi`, `/cancella`,
-`/privacy`. Chi gestisce il bot ha anche `/admin` e `/automatico` (vedi "Cambi del portale").
+8. **Contatti per il CUP (`/contatti`, "✏️ Modifica" nella Mini App).** Il Riepilogo del portale ha i campi
+   Telefono 1 e 2 (dall'anagrafe sanitaria, non modificabili), Telefono 3 (spesso già compilato) ed Email
+   (di solito vuota). Se l'utente li ha dati, il bot scrive l'email nel suo campo e il cellulare nel primo
+   telefono modificabile (di solito il 3, al posto del numero proposto), così il CUP gli manda conferma,
+   promemoria e SMS. Sono facoltativi e per ricetta; per una seconda ricetta c'è "Usa gli stessi contatti".
+   Email: al massimo 100 caratteri, in minuscolo, senza spazi. Cellulare: senza spazi, punti, trattini,
+   parentesi e prefisso +39/0039, deve iniziare con 3 e avere 9 o 10 cifre. Si mostrano sempre mascherati
+   (`m***@gmail.com`, `*** *** 4567`). Si chiedono una volta per ricetta (non dopo `/modifica`). Se il
+   portale rifiuta i contatti (nessun "conclusa con successo" e un messaggio d'errore legato al campo
+   compilato, o che nomina email, telefono, cellulare o recapito senza essere un invito a chiamare il call
+   center), il bot rimanda una volta sola lo stesso modulo come l'aveva compilato il portale: un campo
+   facoltativo non fa perdere la data. Senza contatti il modulo parte come prima.
+
+Comandi: `/stato`, `/date`, `/calendario`, `/controlla`, `/aggiungi`, `/dati`, `/contatti`, `/modifica`, `/sede`, `/auto`,
+`/pausa`, `/riprendi`, `/cancella`, `/privacy`. Chi gestisce il bot ha anche `/admin` e `/automatico` (vedi "Cambi del portale").
 
 ## Dove cercare
 
@@ -261,7 +275,9 @@ Come è protetta:
 
 ## Limiti da conoscere
 
-- **Conferma.** Il clic su "Conferma" replica il form del Riepilogo come lo invia il browser. Dopo la
+- **Conferma.** Il clic su "Conferma" replica il form del Riepilogo come lo invia il browser (Telefono 1 e
+  2, disabilitati, partono con il valore del portale, come sempre: email e cellulare vanno solo nei campi
+  modificabili). Dopo la
   conferma il bot ricontrolla sempre con una sessione nuova e, se l'esito non torna, avvisa subito
   l'utente con il numero del call center. Per provare senza rischi c'è `MODALITA_PROVA=1`.
 - **Ricetta mai prenotata: sperimentale.** Il passo "Prestazioni" del portale non è ancora stato visto con
@@ -343,14 +359,17 @@ Come è protetta:
 Il bot tratta **dati sanitari di terzi**: codice fiscale, ricetta, prestazione e luogo della visita.
 Chi lo mette online ne è responsabile. Il codice fa questo:
 
-- **Cifratura.** Codice fiscale, NRE e ogni informazione sulla prenotazione sono cifrati nel database
+- **Cifratura.** Codice fiscale, NRE, email e cellulare (solo se l'utente li dà, usati solo per compilare il
+  modulo di prenotazione del CUP) e ogni informazione sulla prenotazione sono cifrati nel database
   (Fernet, chiave in `CUP_BOT_KEY`). In chiaro restano solo l'id della chat, i campi di pianificazione
   e il registro delle sedi viste (nomi e comuni del portale, senza legame con chat o ricette).
-- **Chat pulita.** Cancella dalla chat i messaggi con codice fiscale e NRE appena letti, anche quelli
-  scritti fuori dalla registrazione.
+- **Chat pulita.** Cancella dalla chat i messaggi con codice fiscale, NRE, email e cellulare appena letti,
+  anche codice fiscale e NRE scritti fuori dalla registrazione. Email e cellulare compaiono solo mascherati,
+  in chat e nella Mini App, e mai nei log, nel diario o negli avvisi all'admin (il diario dice solo se sono
+  partiti e in quale campo).
 - **Consenso prima di tutto.** Finché l'utente non accetta l'informativa, nel database non c'è nulla.
-- **Controllo all'utente.** `/dati` mostra i dati mascherati, `/modifica` li cambia, `/cancella` li
-  elimina (con `VACUUM` del database).
+- **Controllo all'utente.** `/dati` mostra i dati mascherati, `/modifica` li cambia, `/contatti` cambia o
+  toglie email e cellulare, `/cancella` li elimina tutti (con `VACUUM` del database).
 - **Cancellazione automatica** in quattro casi: la data della prenotazione è passata; la
   registrazione è rimasta incompleta per più di 24 ore; il bot è in pausa da più di 30 giorni;
   l'utente ha bloccato il bot.

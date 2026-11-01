@@ -2,8 +2,8 @@
 
 Ogni chat Telegram puo' seguire piu' "pratiche" (una ricetta ciascuna: la propria, un familiare...).
 In chiaro restano solo l'id della chat e i campi che servono a pianificare i controlli.
-Codice fiscale, NRE e tutto cio' che riguarda la prenotazione stanno nel campo `dati`, cifrato
-con la chiave CUP_BOT_KEY (che non va mai messa nel repository).
+Codice fiscale, NRE, i contatti facoltativi (email, cellulare) e tutto cio' che riguarda la prenotazione
+stanno nel campo `dati`, cifrato con la chiave CUP_BOT_KEY (che non va mai messa nel repository).
 
     python store.py genkey     stampa una chiave nuova da mettere in CUP_BOT_KEY
 """
@@ -21,11 +21,11 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS pratiche (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     chat_id   INTEGER NOT NULL,
-    stato     TEXT    NOT NULL,          -- cf | nre | nome | sede | comune (registrazione) | attivo | pausa
+    stato     TEXT    NOT NULL,          -- cf | nre | email | cellulare | nome | sede | comune (registrazione) | attivo | pausa
     prossimo  REAL    NOT NULL DEFAULT 0, -- epoch del prossimo controllo
     errori    INTEGER NOT NULL DEFAULT 0,
     creato    REAL    NOT NULL,          -- inizio dell'ultima (ri)registrazione
-    dati      BLOB,                       -- JSON cifrato: cf, nre, nome, zona, auto, notificati, ultimo, ...
+    dati      BLOB,                       -- JSON cifrato: cf, nre, email, cellulare, nome, zona, auto, notificati, ...
     coppia    TEXT UNIQUE                 -- HMAC di codice fiscale + NRE: una ricetta, una sola pratica
 );
 CREATE INDEX IF NOT EXISTS ix_pratiche_chat ON pratiche(chat_id);
@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS sedi (        -- sedi del CUP viste nei controlli, di
     PRIMARY KEY (chiave_comune, sede)
 );
 """
-REGISTRAZIONE = ("cf", "nre", "nome", "sede", "comune")
+REGISTRAZIONE = ("cf", "nre", "email", "cellulare", "nome", "sede", "comune")
 BASE = ("id", "chat_id", "stato", "prossimo", "errori", "creato")
 
 

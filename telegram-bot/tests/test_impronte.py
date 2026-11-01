@@ -155,3 +155,19 @@ def test_diario_sicuro_righe_vere():
 def test_pulisci_forme_meno_comuni():
     for dato in ("RSSMRA85T1LA562S", "CF_RSSMRA85T10A562S", "nre_010a01234567890", "3/11", "3 nov 2026", "ore 10:30"):
         assert dato.split("_")[-1].split()[-1] not in im.pulisci(dato), dato
+
+
+def test_diario_sicuro_righe_dei_contatti():
+    righe = ["contatti: email si, cellulare si (campo tel3)", "contatti: email no, cellulare no",
+             "contatti: email no (nessun campo), cellulare no (nessun campo)", "contatti: email si, cellulare si (campo tel1)",
+             "contatti: rifiutati dal portale, confermo senza"]
+    assert im.diario_sicuro(righe) == righe
+    # con un valore la riga non passa
+    assert im.diario_sicuro(["contatti: email mario@gmail.com, cellulare no",
+                             "contatti: email si, cellulare si (campo 3331234567)"]) == ["contatti: (riga omessa)"] * 2
+
+
+def test_pulisci_email_e_cellulari():
+    for dato in ("mario.rossi@gmail.com", "3331234567", "333 123 4567", "+39 333.123.4567", "(+39) 333-123-4567"):
+        t = im.pulisci(f"tel. {dato}, fine")
+        assert "1234" not in t and "mario" not in t, (dato, t)

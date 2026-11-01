@@ -130,7 +130,9 @@ PRIVACY = (
     "(/auto). Non e' un servizio della Regione Piemonte o di CSI.\n\n"
     "Per funzionare deve conservare, per ogni ricetta che segui:\n"
     "• codice fiscale e numero della ricetta (NRE);\n"
-    "• data, ora e luogo della prenotazione, e le date che ti ha gia' segnalato.\n"
+    "• data, ora e luogo della prenotazione, e le date che ti ha gia' segnalato;\n"
+    "• solo se me li dai, un'email e un cellulare: li scrivo nel modulo di prenotazione del portale, perche' "
+    "il CUP ti mandi la conferma, il promemoria e gli SMS (/contatti per cambiarli o toglierli).\n"
     "Servono solo a questo. Sono conservati cifrati e inviati solo al portale CUP. Le date e i luoghi "
     "che ti mando viaggiano su Telegram come messaggi normali e restano nella chat finche' non la cancelli.\n\n"
     "Base giuridica: il tuo consenso esplicito (sono dati sanitari). Puoi ritirarlo in ogni momento con "
@@ -140,7 +142,8 @@ PRIVACY = (
     "Il portale chiede solo codice fiscale e NRE: chiunque li abbia puo' gestire la prenotazione, anche "
     "da qui. Usa il bot solo per le tue ricette o per quelle di un familiare che ti ha autorizzato "
     "(/aggiungi).\n\n"
-    "I messaggi in cui mi scrivi codice fiscale e NRE li cancello dalla chat appena letti.")
+    "I messaggi in cui mi scrivi codice fiscale, NRE, email e cellulare li cancello dalla chat appena letti; "
+    "si cancellano insieme a tutti gli altri dati della ricetta.")
 
 AIUTO = (
     "📋 In alto nella chat trovi il pannello fissato con le tue ricette: prenotazione, dove cerco, "
@@ -153,6 +156,7 @@ AIUTO = (
     "/escluse – le sedi che non vuoi, da rimettere (le escludi dai messaggi con le date)\n"
     "/aggiungi – segui un'altra ricetta (per esempio di un familiare)\n"
     "/dati – i dati che conservo\n"
+    "/contatti – email e cellulare a cui il CUP manda conferma, promemoria e SMS\n"
     "/modifica – cambia codice fiscale e ricetta\n"
     "/cancella – elimina una ricetta o tutti i dati\n"
     "/privacy – come tratto i tuoi dati\n\n"
@@ -160,7 +164,7 @@ AIUTO = (
 
 COMANDI = [("stato", "Il pannello delle tue ricette"), ("date", "Le date trovate, da prenotare"),
            ("calendario", "La visita nel calendario del telefono"), ("escluse", "Le sedi che hai escluso"),
-           ("aggiungi", "Segui un'altra ricetta"),
+           ("aggiungi", "Segui un'altra ricetta"), ("contatti", "Email e cellulare per il CUP"),
            ("help", "Come funziona"), ("privacy", "Come tratto i tuoi dati")]
 PICCOLE = {"di", "da", "del", "della", "dei", "degli", "delle", "in", "per"}  # gli articoli no: nei nomi contano
 
@@ -748,6 +752,74 @@ def area_breve(zona, att):
 
 def maschera(s, visibili=4):
     return s[:3] + "•" * max(0, len(s) - 3 - visibili) + s[-visibili:] if s else "-"
+
+
+# parte locale senza punti all'inizio o alla fine; etichette del dominio senza "-" all'inizio o alla fine
+_ETICHETTA = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+EMAIL_RE = re.compile(r"^[a-z0-9_%+-](?:[a-z0-9._%+-]{0,62}[a-z0-9_%+-])?@(?:" + _ETICHETTA + r"\.)+[a-z]{2,24}$")
+CELLULARE_MAX = 30  # caratteri scritti al massimo per un cellulare, spazi e prefisso compresi
+CELLULARE_RE = re.compile(r"^3\d{8,9}$")  # cellulare italiano, senza prefisso
+CONTATTI = ("email", "cellulare")  # facoltativi, per ricetta: il bot li scrive nel Riepilogo del portale
+
+
+def norm_email(testo):
+    """L'email scritta dall'utente, in minuscolo (gli spazi intorno si tolgono, quelli dentro no); None se non
+    sembra un'email (al massimo 100 caratteri)."""
+    email = str(testo).strip().lower()
+    return email if len(email) <= 100 and EMAIL_RE.match(email) and ".." not in email else None
+
+
+def norm_cellulare(testo):
+    """Il cellulare senza spazi, punti, trattini, parentesi e prefisso +39/0039; None se non e' un cellulare
+    italiano (inizia con 3, 9 o 10 cifre) o se il testo e' piu' lungo di CELLULARE_MAX."""
+    testo = str(testo).strip()
+    if len(testo) > CELLULARE_MAX:
+        return None
+    n = re.sub(r"^(?:\+39|0039)", "", re.sub(r"[\s.()-]", "", testo))
+    return n if CELLULARE_RE.match(n) else None
+
+
+def maschera_email(email):
+    """"mario.rossi@gmail.com" -> "m***@gmail.com" ("a@x.it" -> "*@x.it"): mai l'email intera in chat, nella
+    Mini App o nei log."""
+    nome, _, dominio = (email or "").partition("@")
+    if not dominio:
+        return "-"
+    return f"*@{dominio}" if len(nome) == 1 else f"{nome[:1]}***@{dominio}"
+
+
+def maschera_cellulare(n):
+    """"3331234567" -> "*** *** 4567": solo le ultime 4 cifre."""
+    return f"*** *** {n[-4:]}" if n else "-"
+
+
+def contatti_di(p):
+    """{"email", "cellulare"} della ricetta, solo quelli che ci sono."""
+    return {k: p[k] for k in CONTATTI if p.get(k)}
+
+
+def descr_contatti(c):
+    """I contatti mascherati in una riga: "m***@gmail.com · *** *** 4567" ("nessuno" se non ce ne sono)."""
+    pezzi = ([maschera_email(c["email"])] if c.get("email") else []) + \
+        ([maschera_cellulare(c["cellulare"])] if c.get("cellulare") else [])
+    return " · ".join(pezzi) or "nessuno"
+
+
+def contatti_da_altra(pratiche, pid):
+    """I contatti dell'ultima altra ricetta della chat che ne ha (per "Usa gli stessi contatti"), o {}."""
+    return next((contatti_di(x) for x in reversed(pratiche) if x["id"] != pid and contatti_di(x)), {})
+
+
+def riga_contatti_inviati(contatti, inviati):
+    """Dopo una prenotazione: a chi il CUP manda conferma e SMS. inviati: cup_http.CONTATTI (mai i valori)."""
+    if inviati.get("rifiutati"):  # solo quelli che erano partiti
+        quali = [x for x, k in (("l'email", "email"), ("il cellulare", "cellulare")) if inviati.get(k)]
+        return (f"Il portale non ha accettato {' e '.join(quali) or 'i contatti'}: ho confermato senza, con i "
+                "recapiti che aveva gia'. Controllali con /contatti.")
+    pezzi = ([f"la conferma a {maschera_email(contatti['email'])}"] if inviati.get("email") and contatti.get("email")
+             else []) + ([f"gli SMS al {maschera_cellulare(contatti['cellulare'])}"]
+                         if inviati.get("cellulare") and contatti.get("cellulare") else [])
+    return f"Il CUP mandera' {' e '.join(pezzi)}." if pezzi else ""
 
 
 class Bot:
@@ -1779,17 +1851,19 @@ class Bot:
         # puo' metterci fino a 40 s, e prima della Conferma ogni secondo conta)
         self.salva(p, "in_corso")
         ic, note = {}, []
+        contatti = contatti_di(attuale_db)  # riletti come la zona: cambiati dalla Mini App valgono subito
+        cup_http.CONTATTI.clear()
         try:
             try:
                 esito = self.portale(cup_http.prenota, p["cf"], p["nre"], slot, sessione=sessione,
                                      zona=zona_di(p), dry_run=self.prova, libera=libera, nuova=nuova,
                                      calendario=calendario, fase=lambda nome: self.fase(p, nome),
-                                     pid=p["id"], paziente=True)
+                                     contatti=contatti, pid=p["id"], paziente=True)
             except Exception:
                 ic = self.togli_in_corso(p)  # prima di ogni messaggio: scheda e pannello non la mostrano piu'
                 raise
             # (KeyboardInterrupt, SystemExit: in_corso resta, vedi prenota)
-            note = list(cup_http.NOTE)
+            note, inviati = list(cup_http.NOTE), dict(cup_http.CONTATTI)
             ic = self.togli_in_corso(p)
         except cup_http.GiaPrenotata as e:
             self.dire(p, f"❌ Non prenotata: {e}.")
@@ -1885,8 +1959,10 @@ class Bot:
         self.salva(p, "notificati", "ignorati", "tentati_auto", "attuale", "prossimo", "da_prenotare", "incerta", "note")
         self.fissa_prima(p)  # la prima prenotazione fatta dal bot: da qui si contano i giorni guadagnati
         anticipo = "" if nuova else in_tutto(p, attuale_di(p))
+        recapiti = riga_contatti_inviati(contatti, inviati)
         self.dire(p, f"✅ Prenotazione {'fatta' if nuova else 'spostata'}{' (conferma automatica)' if automatica else ''}!\n"
-                     f"📅 {fmt(slot.quando)}\n📍 {slot.luogo}\n🗺 {maps_url(slot.luogo)}\n\n"
+                     f"📅 {fmt(slot.quando)}\n📍 {slot.luogo}\n🗺 {maps_url(slot.luogo)}\n\n" +
+                     (recapiti + "\n" if recapiti else "") +
                      "Arriveranno SMS/email dal CUP con il nuovo promemoria; controlla anche il codice di "
                      "pagamento del ticket. Se non si puo' andare, disdire o spostare almeno 2 giorni lavorativi "
                      "prima. Continuo a cercare date ancora prima.\n\n" + (anticipo + "\n\n" if anticipo else "") +
@@ -2053,8 +2129,12 @@ class Bot:
             return
         altre = [x for x in self.store.della_chat(chat) if x["id"] != p["id"]]
         attuale = pren_to_dict(att) if att else senza_prenotazione(cosa)
+        # i contatti si chiedono una volta per ricetta: dopo /modifica non si richiedono (si cambiano con /contatti)
+        chiedi = not p.get("contatti_chiesti")
         p.update(nre=nre, prima=prima_con(p, attuale), attuale=attuale,
-                 stato="nome" if altre and not p.get("nome") else "sede")
+                 stato="email" if chiedi else "nome" if altre and not p.get("nome") else "sede")
+        if chiedi:
+            p["contatti_chiesti"] = True
         if att:
             p.pop("da_prenotare", None)
         else:
@@ -2071,10 +2151,131 @@ class Bot:
             self.send(chat, f"Ho trovato la ricetta: non e' ancora prenotata.\n🩺 {cosa or 'la prestazione della ricetta'}\n\n"
                             "Cerco il primo appuntamento libero e ti avviso con il pulsante Prenota. Dopo la "
                             "prenotazione continuo a cercare date ancora prima.")
-        if p["stato"] == "nome":
+        if p["stato"] == "email":
+            self.chiedi_email(p)
+        elif p["stato"] == "nome":
             self.send(chat, "Come chiamo questa ricetta nei messaggi? Per esempio: Papà, Mamma, Nonna.")
         else:
             self.chiedi_sede(p, attuale_di(p))
+
+    # --- contatti per il CUP (facoltativi): email e cellulare del modulo di prenotazione --------------
+    def pulsanti_contatto(self, p, stessi=False):
+        """Salta (e "Usa gli stessi contatti"): portano il passo, un pulsante di un passo gia' superato non vale."""
+        pv = f"{p['id']}:{versione(p)}"
+        righe = []
+        altri = contatti_da_altra(self.store.della_chat(p["chat_id"]), p["id"]) if stessi else {}
+        if altri:
+            righe.append([{"text": f"Usa gli stessi contatti ({descr_contatti(altri)})",
+                           "callback_data": f"ct:{pv}:stessi:{p['stato']}"}])
+        righe.append([{"text": "Salta", "callback_data": f"ct:{pv}:salta:{p['stato']}"}])
+        return righe
+
+    def chiedi_email(self, p):
+        self.send(p["chat_id"], "📧 Facoltativo: un indirizzo email a cui il CUP ti manda la conferma e il promemoria "
+                                "della visita. Lo scrivo nel modulo di prenotazione del portale e lo conservo cifrato; "
+                                "il messaggio lo cancello dalla chat. Scrivimelo, oppure tocca Salta.",
+                  self.pulsanti_contatto(p, stessi=True))
+
+    def chiedi_cellulare(self, p):
+        self.send(p["chat_id"], "📱 Facoltativo: un cellulare per gli SMS del CUP (conferma e promemoria). Lo metto "
+                                "nel modulo di prenotazione al posto del numero che propone il portale. Scrivimelo "
+                                "(es. 333 123 4567), oppure tocca Salta.", self.pulsanti_contatto(p))
+
+    def ricevi_email(self, p, testo):
+        email = norm_email(testo)
+        if not email:
+            self.send(p["chat_id"], "Non sembra un indirizzo email valido (es. nome@gmail.com). Riscrivilo, oppure "
+                                    "tocca Salta.", self.pulsanti_contatto(p, stessi=True))
+            return
+        p.update(email=email, stato="cellulare")
+        self.store.save(p)
+        self.send(p["chat_id"], f"Ok, email salvata: {maschera_email(email)} (ho tolto il messaggio dalla chat).")
+        self.chiedi_cellulare(p)
+
+    def ricevi_cellulare(self, p, testo):
+        cellulare = norm_cellulare(testo)
+        if not cellulare:
+            self.send(p["chat_id"], "Non sembra un cellulare italiano (inizia con 3, es. 333 123 4567). Riscrivilo, "
+                                    "oppure tocca Salta.", self.pulsanti_contatto(p))
+            return
+        p["cellulare"] = cellulare
+        self.send(p["chat_id"], f"Ok, cellulare salvato: {maschera_cellulare(cellulare)} (ho tolto il messaggio "
+                                "dalla chat).")
+        self.chiedi_nome_o_sede(p)
+
+    def chiedi_nome_o_sede(self, p):
+        """Dopo i contatti la registrazione continua come prima: il nome (se nella chat ci sono altre ricette)
+        e dove cercare."""
+        altre = [x for x in self.store.della_chat(p["chat_id"]) if x["id"] != p["id"]]
+        p["stato"] = "nome" if altre and not p.get("nome") else "sede"
+        self.store.save(p)
+        if p["stato"] == "nome":
+            self.send(p["chat_id"], "Come chiamo questa ricetta nei messaggi? Per esempio: Papà, Mamma, Nonna.")
+        else:
+            self.chiedi_sede(p, attuale_di(p))
+
+    def mostra_contatti(self, p):
+        pv = f"{p['id']}:{versione(p)}"
+        c = contatti_di(p)
+        righe = [[{"text": "✏️ Email", "callback_data": f"ct:{pv}:email"},
+                  {"text": "✏️ Cellulare", "callback_data": f"ct:{pv}:cell"}]]
+        togli = ([{"text": "🗑 Togli l'email", "callback_data": f"ct:{pv}:viaemail"}] if c.get("email") else []) + \
+            ([{"text": "🗑 Togli il cellulare", "callback_data": f"ct:{pv}:viacell"}] if c.get("cellulare") else [])
+        if togli:
+            righe.append(togli)
+        self.dire(p, "📇 Contatti per il CUP\n"
+                     f"📧 Email: {maschera_email(c['email']) if c.get('email') else 'nessuna'}\n"
+                     f"📱 Cellulare: {maschera_cellulare(c['cellulare']) if c.get('cellulare') else 'nessuno'}\n\n"
+                     "Li scrivo nel modulo di prenotazione del portale: il CUP ci manda la conferma, il promemoria e "
+                     "gli SMS. Senza, il CUP usa i recapiti che ha gia'.", righe)
+
+    def ricevi_contatto(self, p, testo):
+        """Email o cellulare nuovi, scritti dopo "✏️" in /contatti (il messaggio e' gia' cancellato)."""
+        campo = p["attende_contatto"]["campo"]
+        valore = norm_email(testo) if campo == "email" else norm_cellulare(testo)
+        if not valore:
+            self.dire(p, "Non sembra un indirizzo email valido (es. nome@gmail.com): riscrivilo." if campo == "email"
+                      else "Non sembra un cellulare italiano (inizia con 3, es. 333 123 4567): riscrivilo.")
+            return
+        p[campo] = valore
+        p.pop("attende_contatto", None)
+        self.salva(p, campo, "attende_contatto")
+        self.dire(p, "Fatto: " + (f"email {maschera_email(valore)}" if campo == "email" else
+                                  f"cellulare {maschera_cellulare(valore)}") +
+                  ". La uso dalla prossima prenotazione (ho tolto il messaggio dalla chat).")
+
+    def on_contatti(self, p, azione, passo=None):
+        """Pulsanti "ct": Salta e "Usa gli stessi contatti" nella registrazione (solo nel passo in cui sono stati
+        mandati), cambia e togli da /contatti."""
+        if azione in ("email", "cell") and self.in_registrazione(p["chat_id"]):
+            self.dire(p, "Completa prima la registrazione della ricetta (o /cancella per annullarla), poi /contatti.")
+            return
+        if azione in ("salta", "stessi") and p["stato"] in ("email", "cellulare") and passo == p["stato"]:
+            if azione == "stessi" and p["stato"] == "email":
+                altri = contatti_da_altra(self.store.della_chat(p["chat_id"]), p["id"])
+                if altri:
+                    p.update(altri)
+                    self.send(p["chat_id"], f"Ok, uso gli stessi contatti: {descr_contatti(altri)}.")
+                    self.chiedi_nome_o_sede(p)
+                    return
+            if p["stato"] == "email":
+                p["stato"] = "cellulare"
+                self.store.save(p)
+                self.chiedi_cellulare(p)
+            else:
+                self.chiedi_nome_o_sede(p)
+        elif azione in ("email", "cell") and p["stato"] in ("attivo", "pausa"):
+            campo = "email" if azione == "email" else "cellulare"
+            p["attende_contatto"] = {"campo": campo, "ts": time.time()}
+            self.salva(p, "attende_contatto")
+            self.dire(p, "Scrivimi la nuova email (es. nome@gmail.com)." if campo == "email" else
+                      "Scrivimi il nuovo cellulare (es. 333 123 4567).")
+        elif azione in ("viaemail", "viacell") and p["stato"] in ("attivo", "pausa"):
+            campo = "email" if azione == "viaemail" else "cellulare"
+            p.pop(campo, None)
+            self.salva(p, campo)
+            self.dire(p, ("Ho tolto l'email" if campo == "email" else "Ho tolto il cellulare") +
+                      ": nel modulo del portale resta quello che propone il CUP.")
 
     def cerca_ricetta(self, cf, nre):
         """(prenotazione, None) se la ricetta ha un appuntamento attivo; (None, prestazione) se e' da prenotare.
@@ -2167,7 +2368,7 @@ class Bot:
 
     # --- azioni su una pratica (dopo la scelta, se ce n'e' piu' d'una) ------------------
     AZIONI = ("sede", "auto", "pausa", "riprendi", "modifica", "cancella", "controlla", "date", "menu", "calendario",
-              "calpausa", "escluse")
+              "calpausa", "escluse", "contatti")
 
     def esegui(self, azione, p):
         if azione == "sede":
@@ -2189,6 +2390,8 @@ class Bot:
             self.mostra_date(p)
         elif azione == "escluse":
             self.mostra_escluse(p)
+        elif azione == "contatti":
+            self.mostra_contatti(p)
         elif azione == "menu":  # dal pannello compatto: la scheda di una ricetta con i suoi pulsanti
             self.dire(p, self.scheda(p), self.pulsanti_ricetta(p))
         elif azione == "riprendi":
@@ -2664,10 +2867,26 @@ class Bot:
         pratiche = self.store.della_chat(chat)
         reg = next((p for p in pratiche if p["stato"] in REGISTRAZIONE), None)
         compatto = "".join(testo.split()).upper()
-        if not cmd and (cup_http.CF_RE.match(compatto) or cup_http.NRE_RE.match(compatto)) and \
-                not (reg and reg["stato"] in ("cf", "nre")):
-            # un codice fiscale o una ricetta scritti fuori dalla registrazione non restano in chat
+        riservati = ("cf", "nre", "email", "cellulare")  # passi della registrazione con un dato da non lasciare in chat
+        contatto = next((p for p in pratiche if p.get("attende_contatto")), None)
+        # dopo la richiesta di un contatto il messaggio seguente si cancella sempre, anche se la richiesta e'
+        # decaduta: puo' essere proprio il contatto
+        tolto = bool(contatto and not cmd)
+        if contatto and (cmd or reg or time.time() - contatto["attende_contatto"]["ts"] > ATTESA_COMUNE):
+            contatto.pop("attende_contatto")  # un comando o troppo tempo: la richiesta del contatto decade
+            self.salva(contatto, "attende_contatto")
+            contatto = None
+        if tolto or (not cmd and (cup_http.CF_RE.match(compatto) or cup_http.NRE_RE.match(compatto)) and
+                     not (reg and reg["stato"] in riservati)):
+            # un codice fiscale, una ricetta o un contatto scritti fuori dalla registrazione non restano in chat
             self.tg("deleteMessage", chat_id=chat, message_id=msg["message_id"])
+        if not cmd and not contatto and not (reg and reg["stato"] in riservati) and (
+                norm_email(testo) or norm_cellulare(testo)):
+            # un'email o un cellulare scritti fuori da ogni richiesta: via dalla chat, si cambiano con /contatti
+            if not tolto:
+                self.tg("deleteMessage", chat_id=chat, message_id=msg["message_id"])
+            self.send(chat, "Ho cancellato il messaggio: per i contatti usa /contatti.")
+            return
         ora = time.time()
         if ora - self.ultimo_msg.get(chat, 0) < PAUSA_MESSAGGI and not reg:
             return  # raffica: ignorata
@@ -2704,14 +2923,18 @@ class Bot:
             attende.pop("attende_comune")  # un comando o troppo tempo: la richiesta del comune decade
             self.salva(attende, "attende_comune")
             attende = None
+        if contatto:
+            self.ricevi_contatto(contatto, testo)
+            return
         if attende and not reg and not cmd:
             self.ricevi_comune(attende, testo)
             return
         if reg and not cmd:
-            if reg["stato"] in ("cf", "nre"):
+            if reg["stato"] in riservati:
                 # i dati personali non restano nella chat
                 self.tg("deleteMessage", chat_id=chat, message_id=msg["message_id"])
-            {"cf": self.ricevi_cf, "nre": self.ricevi_nre, "nome": self.ricevi_nome,
+            {"cf": self.ricevi_cf, "nre": self.ricevi_nre, "email": self.ricevi_email,
+             "cellulare": self.ricevi_cellulare, "nome": self.ricevi_nome,
              "comune": self.ricevi_comune}.get(reg["stato"], lambda p, t: self.riprendi_registrazione(p))(reg, testo)
             return
         if cmd == "/cancella":
@@ -2741,7 +2964,8 @@ class Bot:
                 self.dire(p, f"Codice fiscale: {maschera(p.get('cf', ''))}\nRicetta (NRE): {maschera(p.get('nre', ''))}\n"
                              f"Dove cerco: {descr_zona(zona_di(p), att)}\n"
                              f"Controlli: {'in pausa' if p['stato'] == 'pausa' else f'ogni {self.intervallo_di(chat)} minuti'}\n"
-                             f"Conferma automatica: {auto_descr(p)}\n\n"
+                             f"Conferma automatica: {auto_descr(p)}\n"
+                             f"Contatti per il CUP: {descr_contatti(contatti_di(p))} (/contatti)\n\n"
                              + (descrivi_prenotazione(att) if att else "Registrazione non completata."))
         elif cmd == "/stato":
             self.aggiorna_pannello(chat, nuovo=True)
@@ -2763,6 +2987,10 @@ class Bot:
             self.send(p["chat_id"], "Mandami il codice fiscale della persona a cui e' intestata la ricetta.")
         elif p["stato"] == "nre":
             self.send(p["chat_id"], "Mandami il numero della ricetta elettronica (NRE), 15 caratteri.")
+        elif p["stato"] == "email":
+            self.chiedi_email(p)
+        elif p["stato"] == "cellulare":
+            self.chiedi_cellulare(p)
         elif p["stato"] == "nome":
             self.send(p["chat_id"], "Come chiamo questa ricetta nei messaggi? Per esempio: Papà.")
         elif p["stato"] == "comune":
@@ -2811,7 +3039,7 @@ class Bot:
         if not p:
             togli_pulsanti()
             return
-        if kind in ("sc", "sede", "auto", "del"):
+        if kind in ("sc", "sede", "auto", "del", "ct"):
             # questi pulsanti portano la versione della ricetta: dopo /modifica i vecchi non valgono
             v = parts[3] if kind == "sc" and len(parts) > 3 else parts[2] if kind != "sc" and len(parts) > 2 else None
             if v != versione(p):
@@ -2870,6 +3098,9 @@ class Bot:
             else:
                 self.dire(p, "Conferma automatica disattivata: ti mando il pulsante e decidi tu.")
             self.aggiorna_pannello(chat)
+        elif kind == "ct" and len(parts) in (3, 4):
+            togli_pulsanti()
+            self.on_contatti(p, parts[2], parts[3] if len(parts) == 4 else None)
         elif kind in ("p", "x"):
             self.on_offerta(p, parts, togli_pulsanti)
         elif kind == "ex" and len(parts) == 3:  # "Non voglio questa sede" su un'offerta
@@ -2923,9 +3154,10 @@ class Bot:
             return
         self.prenota(p, o["slots"][int(indice)], o["sessione"], trovata=o["ts"])
 
-    def cerca_da_app(self, chat, pid, token, cf, nre, nome, modo, chiesta=0.0, consenso=False):
+    def cerca_da_app(self, chat, pid, token, cf, nre, nome, modo, chiesta=0.0, consenso=False, contatti=None):
         """Nuova ricetta (modo "nuova") o cambio di ricetta (modo "modifica") chiesti dalla Mini App.
-        Codice fiscale e NRE arrivano solo in memoria; l'esito per l'app non li contiene."""
+        Codice fiscale e NRE (e i contatti facoltativi di una ricetta nuova) arrivano solo in memoria; l'esito
+        per l'app non li contiene."""
         def esito(**kw):
             self.risultati[token] = {"chat": chat, "ts": time.time(), **kw}
         ora = time.time()
@@ -2967,7 +3199,8 @@ class Bot:
         try:
             if modo == "nuova":
                 p = {"chat_id": chat, "stato": "sede", "prossimo": 0, "nome": nome, **nuovi, "guida": True,
-                     "prima": prima_con({}, nuovi["attuale"])}
+                     "prima": prima_con({}, nuovi["attuale"]), **contatti_di(contatti or {}),
+                     "contatti_chiesti": True}  # nel modulo dell'app c'erano i campi
                 if consenso:
                     p["consenso_ts"] = ora
                 self.store.save(p)  # "sede": l'app chiede subito dove cercare, poi diventa attiva

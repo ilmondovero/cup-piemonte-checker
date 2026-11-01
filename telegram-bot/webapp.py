@@ -77,9 +77,9 @@ CSP = (f"default-src 'self'; script-src 'self' {TELEGRAM_JS}; style-src 'self' '
        "img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'; "
        "frame-ancestors https://web.telegram.org https://*.telegram.org")
 ATTIVE = ("attivo", "pausa")
-AZIONI_POST = ("dove", "auto", "calendario", "pausa", "riprendi", "controlla", "offerta", "vista", "nome", "cancella", "modifica", "disdici", "ics", "escluse")
+AZIONI_POST = ("dove", "auto", "calendario", "pausa", "riprendi", "controlla", "offerta", "vista", "nome", "cancella", "modifica", "disdici", "ics", "escluse", "contatti")
 FOGLI_GET = ("dove", "auto", "calendario", "date", "storico", "altro", "ics", "escluse")  # "ics": il file per il calendario del telefono ("calendario" sono i giorni si'/no)
-AZIONI_SENSIBILI = ("offerta", "vista", "cancella", "modifica", "disdici")  # vogliono una firma recente
+AZIONI_SENSIBILI = ("offerta", "vista", "cancella", "modifica", "disdici", "contatti")  # vogliono una firma recente
 NOTE_BREVI = 280  # caratteri: oltre, le note della scheda si aprono con un tocco
 MAX_NO_CAL = 400  # date segnate no al massimo nel calendario
 GIORNI_CAL = 400  # il calendario arriva fino a tanti giorni da oggi
@@ -134,6 +134,24 @@ def nome_valido(testo):
     if nome.startswith("/") or cup_http.CF_RE.match(compatto) or cup_http.NRE_RE.match(compatto):
         return None
     return nome
+
+
+def contatti_dal_modulo(dati, pratiche=()):
+    """Email e cellulare facoltativi di un modulo: ({"email", "cellulare"} validi, errore o ""). "stessi" (una
+    ricetta nuova): quelli dell'ultima ricetta della chat che ne ha."""
+    if dati.get("stessi") == "1":
+        return botmod.contatti_da_altra(list(pratiche), None), ""
+    contatti = {}
+    if dati.get("email", "").strip():
+        contatti["email"] = botmod.norm_email(dati["email"])
+        if not contatti["email"]:
+            return {}, "L'email non sembra valida (es. nome@gmail.com): correggila o lascia il campo vuoto."
+    if dati.get("cellulare", "").strip():
+        contatti["cellulare"] = botmod.norm_cellulare(dati["cellulare"])
+        if not contatti["cellulare"]:
+            return {}, ("Il cellulare non sembra italiano (inizia con 3, es. 333 123 4567): correggilo o lascia il "
+                        "campo vuoto.")
+    return contatti, ""
 
 
 def data_iso(testo):
@@ -580,6 +598,20 @@ class App:
         self._modifica(chat, p, lambda f: f.update(nome=nome))
         return f"Ora si chiama {nome}."
 
+    def azione_contatti(self, chat, p, dati):
+        """Email e cellulare per il CUP: i campi scritti cambiano (vuoti restano com'erano), "togli" li toglie."""
+        togli = dati.get("togli", "")
+        if togli in ("email", "cellulare"):
+            self._modifica(chat, p, lambda f: f.pop(togli, None))
+            return f"{self.bot.nome(p)}: ho tolto " + ("l'email." if togli == "email" else "il cellulare.")
+        contatti, errore = contatti_dal_modulo(dati)
+        if errore:
+            raise Richiesta(400, errore)
+        if not contatti:
+            raise Richiesta(400, "Scrivi l'email o il cellulare da usare.")
+        self._modifica(chat, p, lambda f: f.update(contatti))
+        return f"{self.bot.nome(p)}: contatti per il CUP aggiornati ({botmod.descr_contatti(contatti)})."
+
     def azione_cancella(self, chat, p, dati):
         vecchio = self.bot.nome(p)
         self.store.delete(p["id"])
@@ -593,7 +625,7 @@ class App:
     def _cerca(self, chat, dati, modo, p=None):
         cf = "".join(dati.get("cf", "").split()).upper()
         nre = "".join(dati.get("nre", "").split()).upper()
-        nome = ""
+        nome, contatti = "", {}
         if not cup_http.CF_RE.match(cf):
             return self._form_ricetta(chat, modo, p, "Il codice fiscale non sembra valido (16 caratteri).")
         if not cup_http.NRE_RE.match(nre):
@@ -607,6 +639,9 @@ class App:
                 return self._form_ricetta(chat, modo, p, "Scegli un nome breve, per esempio: Papà.")
             if not nome and pratiche:
                 nome = f"Ricetta {len(pratiche) + 1}"
+            contatti, errore = contatti_dal_modulo(dati, pratiche)
+            if errore:
+                return self._form_ricetta(chat, modo, p, errore, {"cf": cf, "nre": nre})
         token = secrets.token_hex(8)
         with self._lock:
             ora = time.time()
@@ -615,7 +650,7 @@ class App:
                 raise Richiesta(429, "C'è già una ricerca in corso: aspetta il risultato.")
             self._richieste[token] = (chat, ora, modo, p["id"] if p else None)
         consenso = modo == "nuova" and dati.get("consenso") == "1"
-        self._in_coda("cerca", chat, p["id"] if p else None, token, cf, nre, nome, modo, ora, consenso)
+        self._in_coda("cerca", chat, p["id"] if p else None, token, cf, nre, nome, modo, ora, consenso, contatti)
         return self._attesa(token)
 
     def azione_nuova(self, chat, dati):
@@ -1501,7 +1536,7 @@ class App:
     placeholder="es. Papà" autocomplete="off" required></label>
   <button class="primario">Rinomina</button>
 </form>
-<h3>Cambia ricetta</h3>
+{self._contatti(p)}<h3>Cambia ricetta</h3>
 <p class="nota">Per una nuova impegnativa della stessa persona (o di un'altra): cerco la prenotazione e la seguo al
   posto di quella attuale. La conferma automatica si spegne.</p>
 <form hx-post="/ui/r/{pid}/modifica" hx-target="#foglio" class="scelte" data-resta>
@@ -1516,6 +1551,28 @@ class App:
   <button class="pericolo">Cancella questa ricetta</button>
 </form>"""
 
+    def _contatti(self, p):
+        """Email e cellulare per il CUP, mascherati, con i campi per cambiarli e i pulsanti per toglierli."""
+        pid, c = p["id"], botmod.contatti_di(p)
+        togli = "".join(
+            f'<form hx-post="/ui/r/{pid}/contatti" hx-target="#ricette" hx-swap="innerMorph">'
+            f'<input type="hidden" name="togli" value="{campo}"><button class="pericolo">{testo}</button></form>'
+            for campo, testo in (("email", "Togli l'email"), ("cellulare", "Togli il cellulare")) if c.get(campo))
+        return f"""<h3>Contatti per il CUP</h3>
+<p class="nota">Li scrivo nel modulo di prenotazione del portale: il CUP ci manda la conferma, il promemoria e gli SMS.
+  Facoltativi; senza, il CUP usa i recapiti che ha già.</p>
+<ul class="elenco"><li><span>Email</span> {e(botmod.maschera_email(c["email"]) if c.get("email") else "nessuna")}</li>
+  <li><span>Cellulare</span> {e(botmod.maschera_cellulare(c["cellulare"]) if c.get("cellulare") else "nessuno")}</li></ul>
+<form hx-post="/ui/r/{pid}/contatti" hx-target="#ricette" hx-swap="innerMorph" class="scelte">
+  <label class="campo">Nuova email<input type="email" name="email" maxlength="100" autocomplete="off"
+    placeholder="nome@esempio.it"></label>
+  <label class="campo">Nuovo cellulare<input type="tel" name="cellulare" maxlength="20" autocomplete="off"
+    placeholder="333 123 4567"></label>
+  <button class="primario">Salva i contatti</button>
+</form>
+{togli}
+"""
+
     def _form_ricetta(self, chat, modo, p=None, errore="", valori=None, letto=None):
         """valori: cf e nre da mettere nei campi; letto: i dati letti dal PDF, mostrati da controllare."""
         if modo == "modifica" and p:
@@ -1529,6 +1586,18 @@ class App:
         nome = "" if not pratiche else """
   <label class="campo">Nome nei messaggi<input type="text" name="nome" maxlength="20" placeholder="es. Papà"
     autocomplete="off"></label>"""
+        # i contatti non si ripropongono mai in chiaro, nemmeno dopo un errore: si riscrivono
+        altri = botmod.contatti_da_altra(pratiche, None)
+        stessi = "" if not altri else f"""
+  <label class="scelta"><input type="checkbox" name="stessi" value="1">
+    <span>Usa gli stessi contatti dell'altra ricetta ({e(botmod.descr_contatti(altri))})</span></label>"""
+        contatti = f"""
+  <p class="nota">Facoltativi: li scrivo nel modulo di prenotazione del portale, così il CUP ti manda la conferma, il
+    promemoria e gli SMS. Li conservo cifrati.</p>{stessi}
+  <label class="campo">Email (facoltativa)<input type="email" name="email" maxlength="100" autocomplete="off"
+    placeholder="nome@esempio.it"></label>
+  <label class="campo">Cellulare (facoltativo)<input type="tel" name="cellulare" maxlength="20" autocomplete="off"
+    placeholder="333 123 4567"></label>"""
         if letto:
             righe = [("Prestazione", letto.get("prestazione")), ("Paziente", letto.get("paziente")),
                      ("Priorità", letto.get("priorita")), ("Data della ricetta", letto.get("data")),
@@ -1555,7 +1624,7 @@ class App:
   <label class="campo">Codice fiscale<input type="text" name="cf" maxlength="16" autocomplete="off"
     autocapitalize="characters" spellcheck="false" value="{e(valori.get("cf", ""))}" required></label>
   <label class="campo">Numero ricetta (NRE)<input type="text" name="nre" maxlength="15" autocomplete="off"
-    autocapitalize="characters" spellcheck="false" placeholder="010A…" value="{e(valori.get("nre", ""))}" required></label>{nome}{consenso}
+    autocapitalize="characters" spellcheck="false" placeholder="010A…" value="{e(valori.get("nre", ""))}" required></label>{nome}{contatti}{consenso}
   <button class="primario">Cerca la prenotazione</button>
 </form>"""
 
@@ -1581,11 +1650,13 @@ class App:
         pratiche = [p for p in self.store.della_chat(chat) if p.get("cf")]
         righe = "".join(
             f'<li><strong>{e(self.bot.nome(p))}</strong><small>Codice fiscale {e(botmod.maschera(p.get("cf", "")))} · '
-            f'Ricetta {e(botmod.maschera(p.get("nre", "")))}</small></li>' for p in pratiche)
+            f'Ricetta {e(botmod.maschera(p.get("nre", "")))} · '
+            f'Contatti per il CUP {e(botmod.descr_contatti(botmod.contatti_di(p)))}</small></li>' for p in pratiche)
         return f"""
 <h2>🔒 Dati e privacy</h2>
-<p class="nota">Conservo cifrati, per ogni ricetta, codice fiscale e NRE, la prenotazione e le date trovate nei controlli.
-  Si cancellano da soli quando la data della prenotazione è passata.</p>
+<p class="nota">Conservo cifrati, per ogni ricetta, codice fiscale e NRE, la prenotazione e le date trovate nei controlli
+  e, se me li hai dati, email e cellulare per il modulo del CUP. Si cancellano da soli quando la data della prenotazione è
+  passata.</p>
 <ul class="elenco">{righe or '<li>Nessun dato.</li>'}</ul>
 <details class="informativa"><summary>Informativa completa</summary><p>{e(self.bot.privacy()).replace(chr(10), "<br>")}</p></details>
 <form action="/ui/cancella-tutto" method="post" data-conferma="Cancello tutte le tue ricette e tutti i tuoi dati? I controlli si fermano.">
