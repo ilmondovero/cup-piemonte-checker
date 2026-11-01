@@ -27,6 +27,7 @@ from urllib.parse import parse_qsl
 import bot as botmod
 import cup_http
 import ricetta_pdf
+import segnalazioni_app
 import sonda as sonda_mod
 from store import Store
 
@@ -67,6 +68,7 @@ AUTO_NUOVA = ("La ricetta non è ancora prenotata: la prima data libera dove cer
               "oggi. Se poi non si può andare bisogna disdire almeno 2 giorni lavorativi prima, altrimenti si paga "
               "la prestazione.")
 MAX_ETA_PRENOTA = 2 * 3600  # per spostare o cancellare dati la firma dev'essere recente
+PERCORSO_SEGNALA = "/segnala"  # segnalazioni dei problemi dalle app desktop (segnalazioni_app.py)
 MAX_CORPO = 8192  # il calendario puo' mandare fino a MAX_NO_CAL date
 PERCORSO_PDF = "/ui/ricetta-pdf"  # il PDF arriva come corpo grezzo: l'unico a poter superare MAX_CORPO
 PAUSA_AZIONI = 1.5  # secondi minimi tra due azioni della stessa chat
@@ -152,6 +154,7 @@ class App:
         self._locale = threading.local()
         self._ultima_azione = {}  # chat -> ora dell'ultima azione (limite di frequenza)
         self._richieste = {}      # token di una ricerca in corso -> (chat, ora)
+        self.segnalazioni = segnalazioni_app.Ricevitore()  # POST /segnala dalle app desktop
         self._lock = threading.Lock()
         self._fermo = False  # il ciclo del bot e' fermo ed e' gia' stato segnalato
 
@@ -207,6 +210,11 @@ class App:
                 return self._html(200, self.pagina())
             if metodo == "GET" and percorso.startswith("/static/"):
                 return self.statico(percorso[len("/static/"):])
+            if metodo == "POST" and percorso == PERCORSO_SEGNALA:  # dalle app: senza Telegram, con i suoi limiti
+                # il server ascolta solo su 127.0.0.1 dietro il reverse proxy: l'ultimo X-Forwarded-For e' il suo
+                fonte = intestazioni.get("x-forwarded-for", "").split(",")[-1].strip()
+                stato, risposta = self.segnalazioni.ricevi(self.store, corpo, fonte=fonte)
+                return stato, {"Content-Type": "application/json"}, json.dumps(risposta).encode()
             firma = firma_da(intestazioni)
             chat = verifica_init_data(firma, self.bot.token)
             if chat is None:
@@ -1703,6 +1711,12 @@ class App:
             f'<li><strong>{botmod.orario(i):%d/%m %H:%M}</strong> – '
             f'{"ancora giù" if f is None else f"{botmod.orario(f):%d/%m %H:%M}"} · {durata(i, f)}<small>{e(m)}</small></li>'
             for i, f, m in episodi) or "<li>Nessun episodio registrato.</li>"
+        sospeso = s.valore("auto_sospeso")  # dal database di questo thread
+        icone = {"urgente": "🚨", "errore": "⚙️", "info": "ℹ️"}
+        righe_seg = "".join(
+            f'<li><strong>{icone.get(x["livello"], "")} {botmod.orario(x["ts"]):%d/%m %H:%M}</strong> · {e(x["origine"])}'
+            f'<small>{e(x["testo"])}{"" if x["inviata"] else " · da inviare"}</small></li>'
+            for x in s.segnalazioni(limite=15)) or "<li>Nessuna segnalazione.</li>"
         return f"""
 <h2>📈 Portale CUP</h2>
 <div class="tiles">
@@ -1720,7 +1734,13 @@ class App:
 <ul class="elenco per-ora">{righe_ora}</ul>
 <h3>Quando è stato giù</h3>
 <p class="nota">Un episodio inizia dopo {s.SONDA_SOGLIA} sonde fallite di fila e finisce alla prima riuscita.</p>
-<ul class="elenco">{righe_ep}</ul>"""
+<ul class="elenco">{righe_ep}</ul>
+<h3>Cambi del portale ed errori</h3>
+<p class="nota">{"⏸ Prenotazioni automatiche sospese: " + e(sospeso.partition(" ")[2]) + ". /automatico si in chat per riattivarle."
+                  if sospeso else "Prenotazioni automatiche attive."}
+Le pagine pubbliche si confrontano ogni 30 minuti, quelle delle sessioni a ogni controllo: solo nomi di form, campi
+e pulsanti, mai dati. I rapporti completi arrivano in chat.</p>
+<ul class="elenco">{righe_seg}</ul>"""
 
     def sorveglianza(self, ora):
         """Stato del ciclo del bot (battito) e del portale (ultima sessione riuscita, guasto segnalato)."""
@@ -1847,7 +1867,9 @@ class _Gestore(BaseHTTPRequestHandler):
             lunghezza = -1
         intestazioni = {k.lower(): v for k, v in self.headers.items()}
         e_pdf = self.path.split("?")[0] == PERCORSO_PDF
-        if lunghezza < 0 or lunghezza > (ricetta_pdf.MAX_BYTE if e_pdf else MAX_CORPO):
+        massimo = (ricetta_pdf.MAX_BYTE if e_pdf else segnalazioni_app.MAX_CORPO
+                   if self.path.split("?")[0] == PERCORSO_SEGNALA else MAX_CORPO)
+        if lunghezza < 0 or lunghezza > massimo:
             self.send_error(413)
             return
         if e_pdf and verifica_init_data(firma_da(intestazioni), self.app.bot.token) is None:

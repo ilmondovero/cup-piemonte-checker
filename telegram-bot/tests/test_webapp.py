@@ -1274,3 +1274,26 @@ def test_ics_dalla_app_solo_per_le_proprie_ricette(app):
     assert get(app, f"/ui/r/{pid}/ics", chat=2)[0] == 404
     assert post(app, f"/ui/r/{pid}/ics", {"pausa": "1"}, chat=2)[0] == 404
     assert app.store.get(pid)["stato"] == "attivo" and not list(app.bot.coda.queue)
+
+
+def test_portale_mostra_segnalazioni_e_automatico_sospeso(app):
+    b = app.bot
+    b.admin = "1"
+    b.store.sonda(time.time() - 60, 0.4, 200, "ok")
+    b.store.cambio_portale(time.time(), "pubblica/ricerca", "urgente", "comparso il segno di antibot reCAPTCHA (script)",
+                           "rapporto")
+    b.store.imposta("auto_sospeso", f"{time.time():.0f} pubblica/ricerca: comparso reCAPTCHA")
+    stato, _, corpo = get(app, "/ui/portale", chat=1)
+    t = corpo.decode()
+    assert stato == 200 and "Cambi del portale" in t and "reCAPTCHA (script)" in t and "da inviare" in t
+    assert "Prenotazioni automatiche sospese" in t
+
+
+def test_segnala_dalle_app_senza_telegram(app):
+    corpo = json.dumps({"v": 1, "app": "0.3.1", "sistema": "linux-x86_64", "installazione": "appimage",
+                        "id": "00112233445566ff", "tipo": "panico", "testo": "L'app si e' chiusa per un errore interno",
+                        "rapporto": "riga"}).encode()
+    stato, h, risposta = app.gestisci("POST", "/segnala", {}, corpo)
+    assert stato == 200 and json.loads(risposta) == {"ok": True}
+    assert app.bot.store.segnalazioni(da_inviare=True)[0]["origine"] == "app"
+    assert app.gestisci("POST", "/segnala", {}, b"{}")[0] == 400

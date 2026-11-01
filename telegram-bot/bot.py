@@ -39,6 +39,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 import cup_http
+import impronte
 import ricetta_pdf
 import store as storemod
 from store import REGISTRAZIONE, Store
@@ -74,6 +75,11 @@ ATTESA_GIORNI = 7  # quanti giorni di controlli guardare per imparare l'attesa
 MAX_RALLENTA = 60  # minuti: con il portale in difficolta' l'intervallo cresce fino a qui (o all'intervallo, se piu' lungo)
 GUASTO_MIN = 45  # minuti senza una sessione riuscita sul portale (con ricette da controllare): un avviso all'amministratore
 RITARDO_GUASTO = 10 * 60  # secondi: un controllo in ritardo di tanto, senza successi da GUASTO_MIN, e' un guasto
+RIEPILOGO_ORA = 9  # ora italiana del riepilogo giornaliero dei cambi minori del portale
+STESSA_SEGNALAZIONE = 6 * 3600  # secondi: la stessa segnalazione (stesso testo) non si ripete prima
+SEGNALAZIONI_GIRO = 5  # segnalazioni urgenti mandate al massimo in un giro del ciclo (il resto al giro dopo)
+PAUSA_SEGNALAZIONI = 10 * 60  # secondi: Telegram non risponde, le segnalazioni aspettano tanto prima di riprovare
+PASSI_PRENOTAZIONE = ("riepilogo", "conferma")  # passi delle sole prenotazioni, rare: una pagina non riconosciuta basta
 BATTITO_MAX = 15 * 60  # secondi senza un giro del ciclo ne' una risposta del portale: il bot e' fermo
 ICS_DURATA = timedelta(hours=1)  # durata dell'evento nel calendario: il portale non dice quanto dura la visita
 ICS_AVVISI = ("-P1D", "-PT2H")  # promemoria dell'evento: il giorno prima e due ore prima
@@ -779,6 +785,11 @@ class Bot:
         self.ko_di_fila = 0
         self.guasto = None  # inizio del guasto gia' segnalato
         self.battito = time.time()  # ultimo giro del ciclo principale (lo guarda la Mini App, da un altro thread)
+        self.cambiato = {}  # passo -> sessioni di fila in cui il bot non ha riconosciuto la pagina (cup_http.Cambiato)
+        self.riuscite_dopo_sospensione = {}  # passo -> sessioni che l'hanno superato da quando ha sospeso l'auto
+        self.segnalazioni_pausa = 0.0  # epoch prima del quale non si riprova a mandare segnalazioni
+        self.sospensione_detta = set()  # (id pratica, sospensione): l'utente sa gia' che l'automatico e' sospeso
+        self.versione = impronte.versione_bot(os.path.dirname(os.path.abspath(__file__)))
 
     def piena(self, n):
         """Una chat con n ricette puo' aggiungerne un'altra? Con max_pratiche 0 sempre."""
@@ -818,10 +829,189 @@ class Bot:
             data["reply_markup"] = {"inline_keyboard": buttons}
         return bool(self.tg("sendMessage", **data).get("ok"))
 
-    def alert_admin(self, text):
-        """Solo testo generico: mai dati degli utenti ne' testo di eccezioni."""
-        if self.admin:
-            self.send(self.admin, "⚙️ " + text)
+    def alert_admin(self, text, rapporto="", nome_file="rapporto", icona="⚙️"):
+        """Solo testo generico: mai dati degli utenti ne' testo di eccezioni. rapporto: il file da allegare,
+        con cio' che serve per correggere il bot (gia' senza dati personali). True se e' arrivato tutto; se
+        Telegram non risponde, False e niente ripiego (si riprova piu' tardi). Se Telegram rifiuta il file, il
+        solo testo con una nota: un file rifiutato non passerebbe nemmeno dopo."""
+        if not self.admin:
+            return False
+        if not rapporto:
+            return self.send(self.admin, f"{icona} {text}")
+        r = self.tg("sendDocument", chat_id=self.admin, caption=f"{icona} {text}"[:1000],
+                    files={"document": (f"{nome_file}-{adesso():%Y%m%d-%H%M}.txt", rapporto.encode(), "text/plain")})
+        if r.get("ok"):
+            return True
+        if not r:  # nessuna risposta: Telegram irraggiungibile
+            return False
+        log.warning("Telegram ha rifiutato il rapporto: %s", r.get("error_code"))
+        return self.send(self.admin, f"{icona} {text}\n\n(Il rapporto non e' partito: Telegram l'ha rifiutato.)")
+
+    def segnala_errore(self, e, contesto, testo, sessione=False, chi=None):
+        """Un errore imprevisto: va all'amministratore (dal ciclo, manda_segnalazioni) con lo stack e, se e'
+        successo in una sessione sul portale (sessione=True), il suo diario. testo e' uguale per tutti gli utenti
+        (lo stesso errore non si ripete per ognuno): chi lo ha incontrato va nel rapporto. Non fa mai fallire chi
+        lo chiama."""
+        if not self.admin:
+            return  # nessuno lo leggerebbe: resta nel log
+        rapporto = ""
+        try:
+            diario, richieste = (list(cup_http.DIARIO), list(cup_http.RICHIESTE)) if sessione else ((), ())
+            rapporto = impronte.rapporto_errore(e, contesto + (f" (utente {chi})" if chi else ""), diario, richieste,
+                                                self.versione)
+            self.store.cambio_portale(time.time(), "bot", "errore", testo, rapporto)
+        except Exception as e2:  # il database non risponde: almeno il messaggio
+            log.warning("segnalazione non salvata: %s", type(e2).__name__)
+            try:
+                self.alert_admin(testo, rapporto, "errore")
+            except Exception:
+                pass
+
+    def manda_segnalazioni(self, ora=None):
+        """Manda all'amministratore le segnalazioni in coda: urgenti, errori e riprese subito (la stessa non prima
+        di STESSA_SEGNALAZIONE), i cambi minori in un riepilogo al giorno dopo RIEPILOGO_ORA. Se Telegram non
+        risponde si riprova dopo PAUSA_SEGNALAZIONI: il ciclo dei controlli non deve aspettarlo a ogni giro."""
+        if not self.admin:
+            return
+        ora = ora or time.time()
+        if ora < self.segnalazioni_pausa:
+            return
+        coda = self.store.segnalazioni(da_inviare=True, livelli=(impronte.URGENTE, impronte.RIPRESA, "errore"),
+                                       limite=SEGNALAZIONI_GIRO * 4)
+        recenti = {(s["origine"], s["testo"]) for s in self.store.segnalazioni(limite=200, senza_rapporto=True)
+                   if s["inviata"] and ora - s["inviata"] < STESSA_SEGNALAZIONE} if coda else set()
+        inviate = 0
+        for s in coda:
+            if inviate >= SEGNALAZIONI_GIRO:
+                break
+            if (s["origine"], s["testo"]) not in recenti:
+                urgente, ripresa = s["livello"] == impronte.URGENTE, s["livello"] == impronte.RIPRESA
+                testo = f"Portale CUP cambiato ({s['origine']}): {s['testo']}" if urgente else s["testo"]
+                if urgente and self.auto_sospeso():
+                    testo += "\n\nHo sospeso le prenotazioni automatiche: /automatico per vedere e riattivarle."
+                if s["origine"] == "app":
+                    testo = "Segnalazione dall'app desktop: " + testo
+                icona = "🚨" if urgente else "✅" if ripresa else "⚙️"
+                if not self.alert_admin(testo, s["rapporto"], "cambio" if urgente else "errore", icona):
+                    self.segnalazioni_pausa = ora + PAUSA_SEGNALAZIONI  # si riprova dopo, nell'ordine
+                    return
+                recenti.add((s["origine"], s["testo"]))
+                inviate += 1
+            self.store.segna_inviate([s["id"]], ora)
+        oggi = orario(ora)
+        if oggi.hour < RIEPILOGO_ORA or self.store.valore("riepilogo_cambi") == f"{oggi:%Y-%m-%d}":
+            return
+        info = self.store.segnalazioni(da_inviare=True, livelli=(impronte.INFO,), limite=200)
+        if info:
+            righe = [f"• {s['origine']}: {s['testo']}" for s in info]
+            testo = (f"Riepilogo dei cambi minori del portale CUP ({len(info)}):\n" + "\n".join(righe[:20]) +
+                     (f"\n... e altri {len(righe) - 20}" if len(righe) > 20 else ""))
+            rapporto = "\n\n".join(f"===== {orario(s['ts']):%d/%m %H:%M} =====\n{s['rapporto']}" for s in info)
+            if not self.alert_admin(testo, rapporto, "cambi", "ℹ️"):
+                self.segnalazioni_pausa = ora + PAUSA_SEGNALAZIONI
+                return
+            self.store.segna_inviate([s["id"] for s in info], ora)
+        self.store.imposta("riepilogo_cambi", f"{oggi:%Y-%m-%d}")
+
+    def comando_automatico(self, chat, testo):
+        """/automatico: stato delle prenotazioni automatiche; "/automatico si" le riattiva, "no" le sospende."""
+        arg = (testo.split()[1:] or [""])[0].lower()
+        if arg in ("si", "sì", "on", "riattiva"):
+            impronte.riattiva_tutto(self.store)
+            log.info("conferma automatica riattivata dall'amministratore")
+            self.send(chat, "✅ Prenotazioni automatiche riattivate.")
+        elif arg in ("no", "off", "sospendi"):
+            impronte.sospendi(self.store, time.time(), "amministratore", "sospese a mano", riprende=False)
+            log.info("conferma automatica sospesa dall'amministratore")
+            self.send(chat, "⏸ Prenotazioni automatiche sospese per tutti. /automatico si per riattivarle.")
+        else:
+            c = impronte.cause(self.store)
+            if c:
+                righe = [f"• dal {orario(ts):%d/%m alle %H:%M}, {origine}: {testo}" +
+                         ("" if riprende else " (aspetta te)") for origine, (ts, testo, riprende) in c.items()]
+                self.send(chat, "⏸ Prenotazioni automatiche sospese.\n" + "\n".join(righe) +
+                          "\n\nQuelle senza \"(aspetta te)\" ripartono da sole quando il portale torna come prima. "
+                          "/automatico si per riattivarle subito.")
+            else:
+                self.send(chat, "✅ Prenotazioni automatiche attive. /automatico no per sospenderle per tutti.")
+
+    def auto_sospeso(self):
+        """Il motivo della sospensione delle prenotazioni automatiche (per tutti), o None. Senza amministratore non
+        c'e' sospensione: nessuno la vedrebbe ne' la toglierebbe. Se non si legge, per prudenza si e' sospesi."""
+        if not self.admin:
+            return None
+        try:
+            return self.store.valore("auto_sospeso")
+        except Exception:
+            return "0 database: stato della sospensione non leggibile"
+
+    def osserva_pagine(self, errore):
+        """Dopo ogni sessione sul portale: impronte delle sue pagine e conto, per passo, delle pagine non
+        riconosciute di fila. Un passo superato (pagina letta, e la sessione e' andata oltre o e' finita bene)
+        azzera il suo conto e conta per la ripresa delle prenotazioni automatiche sospese per quel passo."""
+        schema = ""
+        passo_ko = cup_http.PASSO if isinstance(errore, cup_http.Cambiato) else None
+        try:
+            pagine = list(cup_http.PAGINE)
+            for passo, origine, testo, cookie, server in pagine:
+                impronte.osserva(self.store, f"sessione/{passo}:{impronte.nome(origine, True)}", testo, cookie, server)
+            if passo_ko and pagine:
+                schema = impronte.scheletro(pagine[-1][2], pubblica=False)
+        except Exception as e:
+            log.warning("impronte: errore imprevisto %s", type(e).__name__)
+        finally:
+            cup_http.PAGINE.clear()  # contengono dati personali: non restano oltre la sessione
+        if errore is None or passo_ko:  # un errore di rete non dice nulla sulle pagine
+            superati = {r[1] for r in cup_http.RICHIESTE if r[3] == "ok"} - {passo_ko}
+            for passo in superati:
+                self.cambiato.pop(passo, None)
+            self.riprendi_passi(superati)
+        if not passo_ko:
+            return
+        self.cambiato[passo_ko] = self.cambiato.get(passo_ko, 0) + 1
+        di_fila = 1 if passo_ko in PASSI_PRENOTAZIONE else impronte.CAMBIATO_DI_FILA
+        log.warning("portale: pagina non riconosciuta al passo %s (%d di fila)", passo_ko, self.cambiato[passo_ko])
+        if self.cambiato[passo_ko] != di_fila:
+            return
+        try:
+            antibot = isinstance(errore, cup_http.Antibot)
+            testo = (f"il portale chiede una verifica antibot (passo {passo_ko})" if antibot else
+                     f"il bot non riconosce piu' la pagina al passo {passo_ko}")
+            # del messaggio solo la parte fissa scritta dal bot e, se c'e', la struttura della pagina
+            fisso, _, resto = str(errore).partition(": ")
+            struttura = resto if impronte.diario_sicuro([f"dopo la ricerca: {resto}, carrello 0"])[0].startswith(
+                "dopo la ricerca: sezioni") else ""
+            rapporto = "\n".join([
+                f"Pagina non riconosciuta {di_fila} volte di fila al passo {passo_ko}",
+                f"Versione del bot: {self.versione or '?'}",
+                f"Errore: {type(errore).__name__}: {impronte.pulisci(fisso)[:300]}" + (f": {struttura}" if struttura else ""),
+                "", "== Stack ==", impronte.stack(errore), "",
+                "== Diario della sessione (solo righe strutturali) ==", *impronte.diario_sicuro(cup_http.DIARIO), "",
+                "== Schema dell'ultima pagina (solo nomi, mai valori) ==", schema or "(nessuna pagina)", "",
+                "== Richieste al portale (passo, secondi, esito, codice) ==",
+                *impronte.righe_richieste(cup_http.RICHIESTE)])
+            self.store.cambio_portale(time.time(), f"sessione/{passo_ko}", impronte.URGENTE, testo, rapporto)
+            # un captcha aspetta l'amministratore; una pagina non riconosciuta riprende da sola (riprendi_passi)
+            if self.admin:
+                impronte.sospendi(self.store, time.time(), f"sessione/{passo_ko}", testo, riprende=not antibot)
+        except Exception as e:
+            log.warning("segnalazione non salvata: %s", type(e).__name__)
+
+    def riprendi_passi(self, superati):
+        """Le sospensioni per una pagina non riconosciuta finiscono da sole dopo CAMBIATO_DI_FILA sessioni che hanno
+        superato quel passo (era una manutenzione, o il portale e' tornato come prima)."""
+        try:
+            for origine in [o for o in impronte.cause(self.store) if o.startswith("sessione/")]:
+                passo = origine.split("/", 1)[1]
+                if passo not in superati:
+                    continue
+                self.riuscite_dopo_sospensione[passo] = self.riuscite_dopo_sospensione.get(passo, 0) + 1
+                if self.riuscite_dopo_sospensione[passo] >= impronte.CAMBIATO_DI_FILA:
+                    self.riuscite_dopo_sospensione.pop(passo)
+                    impronte.riprendi(self.store, origine, time.time(),
+                                      f"{impronte.CAMBIATO_DI_FILA} sessioni hanno superato di nuovo il passo {passo}")
+        except Exception as e:
+            log.warning("ripresa delle prenotazioni automatiche: %s", type(e).__name__)
 
     # --- pratiche -----------------------------------------------------------------------
     def nome(self, p):
@@ -899,8 +1089,10 @@ class Bot:
         cup_http.PIU_LENTA, cup_http.AREA_INCOMPLETA = 0.0, False
         cup_http.DIARIO.clear()
         cup_http.RICHIESTE.clear()
+        cup_http.PAGINE.clear()
         self.battito = time.time()
         inizio, riuscita, lenta, scaduta = time.time(), False, 0.0, False
+        errore = None
         guasto = False  # errore del portale (rete, codice HTTP, timeout), non della ricetta o della pagina
         try:
             risultato = fn(*args, **kwargs)
@@ -916,6 +1108,9 @@ class Bot:
             riuscita = True  # il portale ha risposto: e' la ricetta che non va
             self.meno_paziente(pid)
             raise
+        except cup_http.Cambiato as e:
+            errore = e
+            raise
         except requests.RequestException as e:
             guasto = True
             # il portale c'e' ma e' lento: la prossima volta un po' piu' di pazienza. Se invece non risponde
@@ -927,14 +1122,16 @@ class Bot:
             raise
         finally:
             self.ultimo_portale = self.battito = time.time()
+            self.osserva_pagine(errore if errore is not None or riuscita else "rete")
             if riuscita:
                 self.ultimo_ok, self.primo_ko, self.ko_di_fila = self.ultimo_portale, None, 0
+
             elif guasto:  # per la sorveglianza contano solo i guasti del portale, non le risposte applicative
                 self.primo_ko, self.ko_di_fila = self.primo_ko or inizio, self.ko_di_fila + 1
             lenta = round(max(lenta, cup_http.PIU_LENTA), 1)
             if cup_http.DIARIO:  # solo conteggi e id di form e pulsanti: per capire i flussi ancora da osservare
                 log.info("portale %s %s: %s", f"pratica {pid}" if pid is not None else "ricerca", fn.__name__,
-                         " | ".join(cup_http.DIARIO))
+                         " | ".join(impronte.diario_sicuro(cup_http.DIARIO)))
             self.metriche.append((inizio, self.ultimo_portale - inizio, riuscita, lenta, scaduta))
             try:  # sopravvive ai riavvii
                 self.store.metrica(inizio, self.ultimo_portale - inizio, riuscita, lenta, scaduta)
@@ -1030,7 +1227,9 @@ class Bot:
         if not isinstance(e, (cup_http.CupError, requests.RequestException)):
             log.error("controllo %s: errore imprevisto %s\n%s", uid(chat), type(e).__name__,
                       "".join(traceback.format_tb(e.__traceback__)))
-            self.alert_admin(f"Errore imprevisto nel controllo di {uid(chat)}: {type(e).__name__}")
+            self.segnala_errore(e, "controllo di una ricetta",
+                                f"Errore imprevisto nel controllo di una ricetta: {type(e).__name__}", sessione=True,
+                                chi=uid(chat))
         p["errori"] = p.get("errori", 0) + 1
         p["ultimo"] = {"ts": time.time(), "testo": f"errore: {cup_http.descrivi(e)}"}
         p["riassunto"] = {**(p.get("riassunto") or {}), "ts": time.time(), "errore": True}
@@ -1183,7 +1382,14 @@ class Bot:
         self.chiudi_disdetta_incerta(p, att)
         self.aggiorna_note(p, att, res.get("note"))
         auto = p.get("auto")  # appena riletta: se nel frattempo l'hanno spenta dall'app, niente prenotazione da solo
-        if auto:
+        sospeso = self.auto_sospeso() if auto else None  # un cambio del portale: niente prenotazioni da solo
+        if auto and sospeso and res["migliori"]:
+            if (p["id"], sospeso) not in self.sospensione_detta:
+                self.sospensione_detta.add((p["id"], sospeso))
+                self.dire(p, "⚡ La conferma automatica e' sospesa per un controllo sul portale CUP: per ora le "
+                             "date migliori te le propongo col pulsante.")
+            log.info("conferma automatica %s/%s: sospesa per un cambio del portale", uid(chat), p["id"])
+        if auto and not sospeso:
             # un solo tentativo automatico per data; le date gia' offerte col pulsante valgono comunque
             tentati = set(p.get("tentati_auto", []))
             oggi = adesso().date()  # mai per oggi: il giorno minimo lo decide il calendario
@@ -1193,14 +1399,23 @@ class Bot:
                 p["tentati_auto"] = sorted(tentati | {slot.key()})
                 self.salva(p, "tentati_auto")
                 piu_tardi = not nuova and slot.quando > att.quando  # la prenotazione e' in un giorno no
+                if self.auto_sospeso():  # sospese proprio adesso (dalla sonda): niente annuncio, la data va col pulsante
+                    p["tentati_auto"] = sorted(tentati)
+                    self.salva(p, "tentati_auto")
+                    candidati = []
+            if candidati:
                 self.dire(p, f"⚡ Conferma automatica: ho trovato una data"
                              f"{'' if nuova else ' nei giorni che vuoi' if piu_tardi else ' prima'}.\n\n" + descrivi(res) +
                           "\n\n" + self.regola(p))
-                if self.prenota(p, slot, res["sessione"], automatica=True,
-                                trovata=self.sessioni.get(p["id"], {}).get("ts")) != "fallita":
+                esito = self.prenota(p, slot, res["sessione"], automatica=True,
+                                     trovata=self.sessioni.get(p["id"], {}).get("ts"))
+                if esito not in ("fallita", "sospesa"):
                     return res
                 p = self.store.get(p["id"])
-                if p and p.get("auto") and nuova and " + " in (res.get("cosa") or ""):
+                if p and esito == "sospesa":  # nessun tentativo: la data si potra' riprovare da sola piu' avanti
+                    p["tentati_auto"] = sorted(set(p.get("tentati_auto", [])) - {slot.key()})
+                    self.salva(p, "tentati_auto")
+                elif p and p.get("auto") and nuova and " + " in (res.get("cosa") or ""):
                     # piu' prestazioni: ogni tentativo tiene occupate date per niente, meglio non ripeterlo da solo
                     p["auto"] = None
                     self.salva(p, "auto")
@@ -1482,7 +1697,8 @@ class Bot:
         return True
 
     def prenota(self, p, slot, sessione, automatica=False, libera=False, trovata=None):
-        """Ritorna "ok", "fallita" o "incerta" (conferma inviata ma esito non verificato). Durante la
+        """Ritorna "ok", "fallita", "incerta" (conferma inviata ma esito non verificato) o "sospesa" (automatica,
+        ma le prenotazioni automatiche sono sospese per un cambio del portale: nessun tentativo). Durante la
         prenotazione p["in_corso"] dice a pannello e Mini App cosa sta succedendo; alla fine si toglie sempre.
         trovata: quando il controllo ha trovato la data (per i tempi nella pagina dell'amministratore)."""
         inizio, esito, finita = time.time(), "fallita", False
@@ -1537,6 +1753,9 @@ class Bot:
 
     def _prenota(self, p, slot, sessione, automatica=False, libera=False):
         chat = p["chat_id"]
+        if automatica and self.auto_sospeso():  # sospese mentre il controllo finiva: si propone col pulsante
+            log.info("conferma automatica %s/%s: sospesa prima di prenotare", uid(chat), p["id"])
+            return "sospesa"
         self.sessioni.pop(p["id"], None)  # la sessione va al Riepilogo: nessun'altra data la riusa
         nuova = da_prenotare(p)
         if nuova and p.get("incerta"):  # una conferma di prima potrebbe essere andata: prima si verifica quella
@@ -1638,7 +1857,8 @@ class Bot:
                       "".join(traceback.format_tb(e.__traceback__)))
             self.dire(p, f"🚨 Errore imprevisto durante la prenotazione ({type(e).__name__}). Verifica subito su "
                          f"{cup_http.LISTA_URL} o al {cup_http.CALL_CENTER}.")
-            self.alert_admin(f"Errore imprevisto nella prenotazione di {uid(chat)}: {type(e).__name__}")
+            self.segnala_errore(e, "prenotazione", f"Errore imprevisto in una prenotazione: {type(e).__name__}",
+                                sessione=True, chi=uid(chat))
             self.sospendi_auto(p)
             if ic.get("fase") in ("conferma", "verifica"):  # la Conferma era partita: la chiude un controllo
                 p["incerta"] = incerta_da(ic)
@@ -2473,6 +2693,9 @@ class Bot:
             self.send(chat, f"Chat registrate: {self.store.chat_count()} / {self.max_utenti}. Ricette seguite: "
                             f"{self.store.count()}. Offerte aperte: {sum(self.offerta_valida(k) for k in list(self.offerte))}.")
             return
+        if cmd == "/automatico" and self.admin and str(chat) == self.admin:
+            self.comando_automatico(chat, testo)
+            return
         if not pratiche:
             self.send(chat, "Scrivi /start per iniziare.")
             return
@@ -2821,7 +3044,8 @@ class Bot:
                     self.esegui("calendario", p)
             except Exception as e:
                 log.error("coda: errore imprevisto %s\n%s", type(e).__name__, "".join(traceback.format_tb(e.__traceback__)))
-                self.alert_admin(f"Errore imprevisto in un'azione dalla Mini App: {type(e).__name__}")
+                self.segnala_errore(e, "azione dalla Mini App",
+                                    f"Errore imprevisto in un'azione dalla Mini App: {type(e).__name__}")
 
     # --- ciclo principale ---------------------------------------------------------------
     def poll(self, timeout):
@@ -2851,7 +3075,8 @@ class Bot:
                         self.dimentica(m["chat"]["id"], "bot bloccato")
             except Exception as e:
                 log.error("update: errore imprevisto %s\n%s", type(e).__name__, "".join(traceback.format_tb(e.__traceback__)))
-                self.alert_admin(f"Errore imprevisto nella gestione di un messaggio: {type(e).__name__}")
+                self.segnala_errore(e, "messaggio Telegram",
+                                    f"Errore imprevisto nella gestione di un messaggio: {type(e).__name__}")
 
     def pulizia(self):
         if time.time() - self.ultima_pulizia < 3600:
@@ -2907,6 +3132,10 @@ class Bot:
             try:
                 self.battito = time.time()
                 self.sorveglia()
+                try:  # una segnalazione che non parte non deve fermare controlli e prenotazioni
+                    self.manda_segnalazioni()
+                except Exception as e:
+                    log.warning("segnalazioni non mandate: %s", type(e).__name__)
                 self.pulizia()
                 self.esegui_coda()
                 fatto = self.controllo_pianificato()
@@ -2917,6 +3146,10 @@ class Bot:
                 raise
             except Exception as e:
                 log.error("ciclo: errore imprevisto %s\n%s", type(e).__name__, "".join(traceback.format_tb(e.__traceback__)))
+                try:
+                    self.segnala_errore(e, "ciclo principale", f"Errore imprevisto nel ciclo del bot: {type(e).__name__}")
+                except Exception:
+                    pass
                 time.sleep(10)
 
 

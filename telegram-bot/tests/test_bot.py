@@ -670,8 +670,17 @@ def test_errore_imprevisto_avvisa_admin_senza_dati(b, monkeypatch):
         raise KeyError("x")
     monkeypatch.setattr(c, "check", boom)
     b.controlla(pratica(b))
-    admin = [d["text"] for m, d in b.out if m == "sendMessage" and d["chat_id"] == "999"]
-    assert admin and CF not in admin[0] and NRE not in admin[0]
+    b.manda_segnalazioni()
+    admin = [d for m, d in b.out if m == "sendDocument" and d["chat_id"] == "999"]
+    assert len(admin) == 1 and "KeyError" in admin[0]["caption"]
+    nome, rapporto, _ = admin[0]["files"]["document"]
+    rapporto = rapporto.decode()
+    assert nome.endswith(".txt") and "== Stack ==" in rapporto and "raise KeyError" in rapporto
+    for testo in (admin[0]["caption"], rapporto):
+        assert CF not in testo and NRE not in testo
+    b.controlla(pratica(b))  # lo stesso errore subito dopo: non si ripete
+    b.manda_segnalazioni()
+    assert len([1 for m, d in b.out if m == "sendDocument"]) == 1
 
 
 def test_timeout_isolato_non_avvisa(b, monkeypatch):
@@ -2870,3 +2879,203 @@ def test_pdf_in_chat_per_una_ricetta_in_piu(b, monkeypatch):
     b.on_message(doc_msg(1))
     assert len(b.store.della_chat(1)) == 2
     assert pratica(b, n=1)["cf"] == CF2
+
+
+# --- cambi del portale: segnalazioni e prenotazioni automatiche sospese ---------------------------------
+def test_pagina_non_riconosciuta_due_volte_di_fila_e_urgente(b, monkeypatch):
+    registra(b)
+    attiva_auto(b)
+
+    def cambiato(*a):
+        c._passo("elenco")
+        c.DIARIO.append("elenco: righe 0, prenotate 0, con data 0, date prenotate diverse 0, descrizioni vuote 0")
+        raise c.Cambiato("Elenco delle prenotazioni non leggibile (portale in manutenzione o cambiato?)")
+    monkeypatch.setattr(c, "check", cambiato)
+    b.controlla(pratica(b))
+    b.manda_segnalazioni()
+    assert not [1 for m, d in b.out if m == "sendDocument"]  # una volta sola: forse manutenzione
+    b.controlla(pratica(b))
+    b.manda_segnalazioni()
+    [doc] = [d for m, d in b.out if m == "sendDocument"]
+    assert doc["chat_id"] == "999" and doc["caption"].startswith("🚨") and "passo elenco" in doc["caption"]
+    assert "/automatico" in doc["caption"]
+    rapporto = doc["files"]["document"][1].decode()
+    assert "elenco: righe 0, prenotate 0" in rapporto and CF not in rapporto and NRE not in rapporto
+    assert "== Stack ==" in rapporto
+    assert b.auto_sospeso()
+
+
+def superato(vero, passo="elenco"):
+    """Il controllo finto dei test, ma con la richiesta riuscita al passo che il bot guarda."""
+    def f(*a, **k):
+        c.RICHIESTE.append((time.time(), passo, 0.1, "ok", 200))
+        return vero(*a, **k)
+    return f
+
+
+def test_un_successo_azzera_le_pagine_non_riconosciute(b, monkeypatch):
+    registra(b)
+    vero = superato(c.check)
+
+    def cambiato(*a):
+        raise c.Cambiato("Pagina CUP inattesa")
+    monkeypatch.setattr(c, "check", cambiato)
+    b.controlla(pratica(b))
+    monkeypatch.setattr(c, "check", vero)
+    b.controlla(pratica(b))
+    monkeypatch.setattr(c, "check", cambiato)
+    b.controlla(pratica(b))
+    assert not b.store.segnalazioni() and not b.auto_sospeso()
+
+
+def test_automatico_sospeso_propone_col_pulsante(b):
+    registra(b)
+    attiva_auto(b)
+    b.store.imposta("auto_sospeso", "1 pubblica/ricerca: comparso reCAPTCHA")
+    b.controlla(pratica(b))
+    assert b.chiamate == []  # niente prenotazione da solo
+    assert b.offerte and any("sospesa per un controllo sul portale" in t for t in inviati(b))
+    b.on_message(msg(999, "/automatico si"))
+    assert not b.auto_sospeso() and any("riattivate" in t for t in inviati(b))
+    b.offerte.clear()
+    b.controlla(pratica(b))
+    assert b.chiamate == [(CF, MEGLIO.key(), f"S-{CF}", False)]
+
+
+def test_automatico_solo_per_l_amministratore(b):
+    registra(b)
+    b.on_message(msg(1, "/automatico no"))
+    assert not b.auto_sospeso()
+    b.ultimo_msg.clear()
+    b.on_message(msg(999, "/automatico no"))
+    assert b.auto_sospeso()
+    b.ultimo_msg.clear()
+    b.on_message(msg(999, "/automatico"))
+    assert "sospese" in inviati(b)[-1] and "amministratore" in inviati(b)[-1]
+
+
+def test_cambi_minori_in_un_riepilogo_al_giorno(b):
+    ora = botmod.datetime(2026, 11, 2, 10, 0, tzinfo=botmod.TZ).timestamp()
+    b.store.cambio_portale(ora - 7200, "pubblica/ricerca", "info", "comparso il pulsante altroButton", "rapporto A")
+    b.store.cambio_portale(ora - 3600, "pubblica/elenco", "info", "comparso lo script nuovo.js", "rapporto B")
+    b.manda_segnalazioni(ora - 2 * 86400 + 3600 * 22)  # di notte: non ancora
+    assert not [1 for m, d in b.out if m == "sendDocument"]
+    b.manda_segnalazioni(ora)
+    [doc] = [d for m, d in b.out if m == "sendDocument"]
+    assert doc["caption"].startswith("ℹ️") and "altroButton" in doc["caption"] and "nuovo.js" in doc["caption"]
+    assert b"rapporto A" in doc["files"]["document"][1] and b"rapporto B" in doc["files"]["document"][1]
+    b.store.cambio_portale(ora + 60, "pubblica/elenco", "info", "altro", "")
+    b.manda_segnalazioni(ora + 120)  # lo stesso giorno: domani
+    assert len([1 for m, d in b.out if m == "sendDocument"]) == 1
+
+
+def test_sospensione_per_pagina_non_riconosciuta_finisce_da_sola(b, monkeypatch):
+    registra(b)
+    vero = superato(c.check)
+
+    def cambiato(*a):
+        c._passo("elenco")
+        raise c.Cambiato("Pagina CUP inattesa: campi JSF mancanti (sito cambiato o in manutenzione?)")
+    monkeypatch.setattr(c, "check", cambiato)
+    b.controlla(pratica(b))
+    b.controlla(pratica(b))
+    assert b.auto_sospeso()
+    monkeypatch.setattr(c, "check", vero)
+    b.controlla(pratica(b))
+    assert b.auto_sospeso()  # una sola sessione riuscita: ancora presto
+    b.controlla(pratica(b))
+    assert not b.auto_sospeso()
+    b.manda_segnalazioni()
+    assert any(d["caption"].startswith("✅") and "riattivate" in d["caption"] for m, d in b.out if m == "sendDocument") \
+        or any(d["text"].startswith("✅") and "riattivate" in d["text"] for m, d in b.out if m == "sendMessage")
+
+
+def test_sospesa_mentre_si_prenota_non_consuma_il_tentativo(b, monkeypatch):
+    registra(b)
+    attiva_auto(b)
+    letture = []
+
+    def sospeso():
+        letture.append(1)
+        return None if len(letture) == 1 else "1 pubblica/ricerca: comparso reCAPTCHA"
+    monkeypatch.setattr(b, "auto_sospeso", sospeso)
+    b.controlla(pratica(b))
+    assert b.chiamate == [] and b.offerte  # nessuna prenotazione, la data arriva col pulsante
+    assert MEGLIO.key() not in pratica(b).get("tentati_auto", [])
+    assert not any(t.startswith("Sposto la prenotazione") or t.startswith("Prenoto") for t in inviati(b))
+
+
+def test_segnalazione_resta_in_coda_se_telegram_non_risponde(b):
+    b.store.cambio_portale(time.time(), "bot", "errore", "Errore imprevisto nel ciclo del bot: KeyError", "r")
+    b.tg = lambda *a, **k: {}
+    b.manda_segnalazioni()
+    assert b.store.segnalazioni(da_inviare=True)
+
+
+def test_sessioni_che_non_superano_il_passo_non_fanno_riprendere(b, monkeypatch):
+    registra(b)
+
+    def cambiato(*a):
+        c._passo("appuntamenti")
+        raise c.Cambiato("Troppi passi prima degli appuntamenti")
+    monkeypatch.setattr(c, "check", cambiato)
+    b.controlla(pratica(b))
+    b.controlla(pratica(b))
+    assert b.auto_sospeso()
+    def non_trovata(*a, **k):
+        raise c.NonTrovata("Nessun record trovato")
+    monkeypatch.setattr(c, "check", superato(non_trovata))
+    for _ in range(3):  # sessioni che si fermano all'elenco: non dicono niente sul passo appuntamenti
+        b.controlla(pratica(b))
+    assert b.auto_sospeso()
+
+
+def test_pagina_non_riconosciuta_in_prenotazione_basta_una_volta(b):
+    b.cambiato.clear()
+    c.PASSO = "conferma"
+    b.osserva_pagine(c.Cambiato("Pulsante 'Conferma presa visione' non riconosciuto: non confermo"))
+    assert b.auto_sospeso() and b.store.segnalazioni(livello="urgente")
+
+
+def test_due_cause_la_sospensione_resta_finche_non_finiscono_tutte(b):
+    import impronte
+    impronte.sospendi(b.store, 1.0, "sessione/elenco", "pagina non riconosciuta")
+    impronte.sospendi(b.store, 2.0, "pubblica/ricerca comparso reCAPTCHA", "comparso reCAPTCHA", riprende=False)
+    impronte.riprendi(b.store, "sessione/elenco", 3.0, "tornato")
+    assert b.auto_sospeso() and "reCAPTCHA" in b.auto_sospeso()  # il captcha aspetta l'amministratore
+    b.on_message(msg(999, "/automatico"))
+    assert "aspetta te" in inviati(b)[-1]
+    b.ultimo_msg.clear()
+    b.on_message(msg(999, "/automatico si"))
+    assert not b.auto_sospeso()
+
+
+def test_rapporto_rifiutato_da_telegram_manda_il_testo(b):
+    b.store.cambio_portale(time.time(), "bot", "errore", "Errore imprevisto nel ciclo del bot: KeyError", "r")
+    vero = b.tg
+    b.tg = lambda m, **d: {"ok": False, "error_code": 400} if m == "sendDocument" else vero(m, **d)
+    b.manda_segnalazioni()
+    assert not b.store.segnalazioni(da_inviare=True)
+    assert any("rifiutato" in d["text"] for m, d in b.out if m == "sendMessage")
+
+
+def test_telegram_giu_pausa_prima_di_riprovare(b):
+    b.store.cambio_portale(time.time(), "bot", "errore", "Errore imprevisto nel ciclo del bot: KeyError", "r")
+    chiamate = []
+    b.tg = lambda m, **d: chiamate.append(m) or {}
+    b.manda_segnalazioni()
+    b.manda_segnalazioni()
+    assert chiamate == ["sendDocument"]  # una sola prova, poi PAUSA_SEGNALAZIONI
+
+
+def test_stesso_errore_per_utenti_diversi_un_solo_avviso(b, monkeypatch):
+    registra(b)
+    registra(b, chat=2, cf=CF2)
+
+    def boom(*a):
+        raise KeyError("x")
+    monkeypatch.setattr(c, "check", boom)
+    b.controlla(pratica(b))
+    b.controlla(pratica(b, 2))
+    b.manda_segnalazioni()
+    assert len([1 for m, d in b.out if m == "sendDocument"]) == 1

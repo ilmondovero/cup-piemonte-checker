@@ -49,6 +49,9 @@ ATTESE = {}
 # (ora, passo, secondi, esito, codice HTTP) di ogni richiesta: esito "ok", "timeout", "sovraccarico" o
 # "inattesa". Solo tempi e codici, mai indirizzi o dati. Il bot le salva e le azzera a ogni sessione
 RICHIESTE = collections.deque(maxlen=500)
+# pagine della sessione in corso, per le impronte (impronte.py): (passo, origine, testo, nomi dei cookie, server).
+# Restano solo in memoria: il bot ne tiene l'impronta (solo nomi e strutture) e le azzera a ogni sessione
+PAGINE = collections.deque(maxlen=20)
 ULTIMA = 0.0  # epoch dell'ultima risposta (o errore) del portale: un ciclo lento ma vivo non sembra fermo
 TEMPI = {}  # fasi dell'ultima prenotazione: {"elenco": secondi, ...} (vedi prenota)
 NOTE = []  # righe delle note del Riepilogo dell'ultima prenotazione (vedi note_riepilogo)
@@ -109,6 +112,15 @@ def descrivi(e):
         return str(e) if isinstance(e, CupError) else type(e).__name__
     cosa = f"HTTP {_codice(e)}" if _codice(e) else type(e).__name__
     return f"{cosa}, {'risposta inattesa' if tipo_errore(e) == 'inattesa' else 'portale sovraccarico'}"
+
+
+class Cambiato(CupError):
+    """La pagina non ha la forma che il bot conosce (form, campi o pulsanti mancanti): il portale e' cambiato,
+    o mostra una pagina di manutenzione. Il bot lo segnala all'amministratore se succede di fila."""
+
+
+class Antibot(Cambiato):
+    """Il portale chiede un captcha o una verifica antibot."""
 
 
 class NonTrovata(CupError):
@@ -290,7 +302,7 @@ class _Form:
         self.win = _hidden(page_html, "ice.window")
         self.view = _hidden(page_html, "ice.view")
         if not (self.enc and self.vs and self.win and self.view):
-            raise CupError("Pagina CUP inattesa: campi JSF mancanti (sito cambiato o in manutenzione?)")
+            raise Cambiato("Pagina CUP inattesa: campi JSF mancanti (sito cambiato o in manutenzione?)")
 
     def post(self, fields, form=None):
         if not self.enc.startswith(CUP + "/"):
@@ -362,6 +374,13 @@ def _chiama(metodo, url, **kw):
     elapsed = getattr(r, "elapsed", None)
     secondi = elapsed.total_seconds() if elapsed is not None else time.monotonic() - inizio
     RICHIESTE.append((time.time(), passo, round(secondi, 1), "ok", getattr(r, "status_code", None)))
+    testo = getattr(r, "text", "")
+    if isinstance(testo, str) and "<" in testo[:2000]:
+        dati = kw.get("data") if isinstance(kw.get("data"), dict) else {}
+        origine = "pagina" if getattr(metodo, "__name__", "") == "get" else dati.get("javax.faces.source") or "invio"
+        cookie = getattr(getattr(r, "cookies", None), "keys", lambda: [])()
+        server = (getattr(r, "headers", None) or {}).get("Server", "")
+        PAGINE.append((passo, origine, testo, list(cookie), server))
     return r
 
 
@@ -410,7 +429,7 @@ class CupSession:
             # sito cambiato) non deve far credere che la ricetta sia libera da prenotare
             msg = re.search(r"Non esistono[^<]*|Nessun record[^<]*", x)
             if not msg:
-                raise CupError("Elenco delle prenotazioni non leggibile (portale in manutenzione o cambiato?)")
+                raise Cambiato("Elenco delle prenotazioni non leggibile (portale in manutenzione o cambiato?)")
             raise NonTrovata(msg.group(0).strip())
         righe = [x[a:b] for a, b in zip(inizi, inizi[1:] + [len(x)])]
         stati =[(re.search(r"Stato:\s*(\S+)", _text(r[:400])) or [None, "?"])[1] for r in righe]
@@ -471,7 +490,7 @@ class CupSession:
         if len(si) != 1:
             ids = sorted({_id(b) for b in re.findall(r'id="([^"]*:_t\d+)"', testo)})[:12]
             DIARIO.append(f"disdetta: dialogo non riconosciuto, pulsanti Si' {len(si)}, componenti {ids}")
-            raise CupError("Dialogo di conferma della disdetta non riconosciuto: non disdico")
+            raise Cambiato("Dialogo di conferma della disdetta non riconosciuto: non disdico")
         return si.pop()
 
     def alternative(self, estendi=0):
@@ -516,12 +535,14 @@ class CupSession:
         if any(re.search(r"ricett|\bnre\b|codice fiscale|scadut|inesistent", e, re.I)
                and not re.search(r"disponibil|temporane|riprov|servizio|token|captcha", e, re.I) for e in errori):
             raise NonTrovata(errori[0])  # il portale rifiuta la ricetta (un disservizio invece si riprova)
+        if any(re.search(r"captcha|robot|verifica di sicurezza", e, re.I) for e in errori):
+            raise Antibot("Il portale chiede una verifica antibot alla Ricerca: " + errori[0])
         if errori:
             raise CupError("Il portale ha risposto: " + errori[0])  # altro (anche temporaneo): si riprova
         self.modo = "nuova"
         page = self._segui(xml)
         if R + ":CFInput" in page:  # i passi sono pagine distinte: se c'e' ancora la ricerca, non e' andato avanti
-            raise CupError("Il portale e' rimasto alla ricerca della ricetta: " + _struttura(page))
+            raise Cambiato("Il portale e' rimasto alla ricerca della ricetta: " + _struttura(page))
         self._carrello(page)
         DIARIO.append(f"dopo la ricerca: {_struttura(page)}, carrello {len(self.nomi)}")
         return page
@@ -550,10 +571,10 @@ class CupSession:
             forms = set(re.findall(r'<form[^>]*id="([^"]+)"', page))
             avanti = [b for b in avanti if b.rsplit(":", 1)[0] in forms]
             if not avanti:
-                raise CupError("Passo del portale non riconosciuto prima degli appuntamenti: " + _struttura(page))
+                raise Cambiato("Passo del portale non riconosciuto prima degli appuntamenti: " + _struttura(page))
             # solo nel passo Prestazioni: il pulsante e' suo o la pagina mostra il carrello
             if not any("prestazion" in x.lower() for x in avanti) and 'id="prestazioni_selezionate"' not in page:
-                raise CupError("Passo del portale non riconosciuto prima degli appuntamenti: " + _struttura(page))
+                raise Cambiato("Passo del portale non riconosciuto prima degli appuntamenti: " + _struttura(page))
             # a parita', il pulsante "principale" in fondo alla pagina, come negli altri passi
             b = sorted(avanti, key=lambda x: ("main" not in x, x))[0]
             form = b.rsplit(":", 1)[0]
@@ -567,7 +588,7 @@ class CupSession:
                 raise CupError("Il portale non va avanti: " + _errori(xml)[0])
             page = self._segui(xml)
             self._carrello(page)
-        raise CupError("Troppi passi prima degli appuntamenti: " + _struttura(page))
+        raise Cambiato("Troppi passi prima degli appuntamenti: " + _struttura(page))
 
     def appuntamenti(self, page, estendi=0):
         """Pagina Appuntamenti (la stessa per "Sposta" e per una prenotazione nuova): proposta e
@@ -705,7 +726,7 @@ class CupSession:
             return
         ids = re.findall(r'id="(%s:_t\d+)"' % re.escape(RIEPILOGO), riepilogo_page[max(0, i - 900):i])
         if not ids:
-            raise CupError("Pulsante 'Conferma presa visione' non riconosciuto: non confermo")
+            raise Cambiato("Pulsante 'Conferma presa visione' non riconosciuto: non confermo")
         _passo("conferma")
         xml = _Form(self.s, riepilogo_page, RIEPILOGO).post({**self._campi_riepilogo(riepilogo_page), **_event(ids[-1])})
         if "alert-danger" in xml or not re.search(r'icon-check"[^>]*></i>\s*<span[^>]*>\s*Presa visione delle note', xml):

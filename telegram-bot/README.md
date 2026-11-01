@@ -97,7 +97,7 @@ piccolo, senza Chromium.
    nome + comune (ci sono sedi omonime). Le date già trovate in una sede esclusa risultano "fuori zona".
 
 Comandi: `/stato`, `/date`, `/calendario`, `/controlla`, `/aggiungi`, `/dati`, `/modifica`, `/sede`, `/auto`, `/pausa`, `/riprendi`, `/cancella`,
-`/privacy`. Chi gestisce il bot ha anche `/admin`.
+`/privacy`. Chi gestisce il bot ha anche `/admin` e `/automatico` (vedi "Cambi del portale").
 
 ## Dove cercare
 
@@ -308,6 +308,27 @@ Come è protetta:
     normale. Se il ciclo del bot non fa un giro e non riceve risposte dal portale da 15 minuti, la Mini
     App (che gira in un altro thread) lo segnala nella pagina Admin e con un avviso, e poi di nuovo
     quando riparte. Stato solo in memoria.
+  - **Cambi del portale** (`impronte.py`). Il bot tiene l'"impronta" di ogni pagina del portale: nomi di
+    form, campi, pulsanti e script, e i segni di captcha o antibot. Mai valori o testi. Le pagine pubbliche
+    (Elenco e Ricerca, vuote) le legge la sonda ogni 30 minuti; quelle delle sessioni, a ogni controllo.
+    Le prime osservazioni insegnano com'è fatta la pagina; poi un elemento nuovo si segnala alla seconda
+    volta, uno stabile sparito dopo 3 osservazioni senza.
+    - **Urgente**, con un avviso subito: un captcha nuovo, un campo che il bot usa sparito, o una pagina che
+      il bot non riconosce 2 volte di fila (1 nei passi della prenotazione). Le prenotazioni automatiche si
+      sospendono per tutti e le date arrivano col pulsante. Ripartono da sole quando la causa sparisce;
+      un captcha aspetta il gestore. `/automatico` mostra le cause, `/automatico si` riattiva, `/automatico no`
+      sospende a mano.
+    - **Minore** (un pulsante in più, uno script nuovo): in un riepilogo al giorno dopo le 9.
+  - **Segnalazioni con rapporto.** Ogni avviso (cambi del portale, errori imprevisti del bot, segnalazioni
+    delle app desktop) arriva al gestore con un file `.txt`: cosa è cambiato, schema delle pagine, stack
+    dell'errore, diario della sessione ridotto alle righe strutturali, tempi delle richieste, versione del bot.
+    Niente testo del portale né messaggi delle eccezioni: possono contenere dati. Se Telegram non risponde,
+    resta in coda e si riprova; lo stesso errore non si ripete prima di 6 ore. Lo storico è nella pagina
+    Portale della Mini App.
+  - **Segnalazioni dalle app** (`segnalazioni_app.py`, `POST /segnala`). Le app desktop in cui l'utente ha
+    acceso l'opzione mandano i problemi gravi. Il server controlla il formato, toglie codici fiscali,
+    ricette, date, email e telefoni, e limita le segnalazioni: 5 al giorno per provenienza, 3 l'ora per
+    installazione, 30 al giorno in tutto. L'indirizzo IP serve solo al limite, in memoria, mai salvato.
 
   L'attesa vale per ogni richiesta, e un controllo ne fa diverse (elenco, "Sposta", una per ogni
   estensione dell'area). Mentre aspetta il portale il bot non risponde su Telegram né nella Mini App,

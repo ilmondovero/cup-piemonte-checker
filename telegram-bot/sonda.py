@@ -10,12 +10,15 @@ from datetime import datetime
 import requests
 
 import cup_http
+import impronte
 from store import Store
 
 log = logging.getLogger("cupbot.sonda")
 INTERVALLO = 300  # secondi tra due sonde
 ATTESA = (10, 30)  # connessione, risposta: oltre, il portale per noi e' giu'
 OK, TIMEOUT, RETE, ERRORE_HTTP = "ok", "timeout", "rete", "http"
+IMPRONTE_OGNI = 30 * 60  # secondi tra due letture delle pagine pubbliche per le impronte (impronte.py)
+PUBBLICHE = (("pubblica/elenco", cup_http.LISTA_URL), ("pubblica/ricerca", cup_http.RICETTA_URL))
 
 
 def misura():
@@ -31,11 +34,26 @@ def misura():
         return round(time.monotonic() - inizio, 2), None, RETE
 
 
+def impronte_pubbliche(store):
+    """Le pagine pubbliche (Elenco e Ricerca, vuote): una GET ciascuna, senza dati, come un browser che le apre.
+    Non aprono sessioni di prenotazione. Solo le risposte 200 sono osservazioni."""
+    for chiave, url in PUBBLICHE:
+        try:
+            r = requests.get(url, timeout=(10, 60), headers={"User-Agent": cup_http.UA})
+        except requests.RequestException:
+            continue
+        cookie = list(r.cookies.keys())
+        # un muro antibot (Cloudflare, DataDome...) risponde spesso 403/429/503: per la sonda e' "giu'", ma va visto
+        muro = r.status_code in (403, 429, 503) and "antibot" in impronte.impronta(r.text, cookie)
+        if r.status_code == 200 or muro:
+            impronte.osserva(store, chiave, r.text, cookie, r.headers.get("Server", ""))
+
+
 def avvia(db_path, key, intervallo=INTERVALLO):
     """Thread suo, con la sua connessione al database: i controlli lunghi del bot non ritardano la sonda.
     Un errore (database occupato all'avvio, scrittura fallita) si registra e il ciclo continua."""
     def ciclo():
-        store, prima = None, True
+        store, prima, ultime_impronte = None, True, 0.0
         while True:
             try:
                 if store is None:
@@ -46,6 +64,9 @@ def avvia(db_path, key, intervallo=INTERVALLO):
                     time.sleep(max(0.0, ultima + intervallo - time.time()))
                 secondi, codice, esito = misura()
                 store.sonda(time.time(), secondi, codice, esito)
+                if esito == OK and time.time() - ultime_impronte >= IMPRONTE_OGNI:
+                    ultime_impronte = time.time()
+                    impronte_pubbliche(store)
             except Exception as e:
                 log.error("sonda: errore imprevisto %s", type(e).__name__)
                 store = None  # alla prossima giro riapre la connessione

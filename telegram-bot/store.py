@@ -63,6 +63,24 @@ CREATE TABLE IF NOT EXISTS tempi_prenotazioni (  -- solo tempi ed esito, mai la 
     dalla_data REAL,                     -- secondi dal controllo che ha trovato la data all'inizio della prenotazione
     fasi       TEXT NOT NULL             -- JSON {"elenco": s, "riepilogo": s, "conferma": s, "verifica": s, "fine": s}
 );
+CREATE TABLE IF NOT EXISTS impronte (       -- com'e' fatta ogni pagina del portale (impronte.py): solo nomi
+    pagina TEXT PRIMARY KEY,             -- "pubblica/ricerca", "sessione/elenco:pagina", ...
+    stato  TEXT NOT NULL                 -- JSON: osservazioni, elementi visti, ultima impronta
+);
+CREATE TABLE IF NOT EXISTS segnalazioni (   -- cambi del portale ed errori, da mandare all'amministratore
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts       REAL NOT NULL,
+    origine  TEXT NOT NULL,              -- pagina del portale, "bot" o "app"
+    livello  TEXT NOT NULL,              -- urgente | info | errore
+    testo    TEXT NOT NULL,              -- una riga, senza dati personali
+    rapporto BLOB,                       -- rapporto cifrato (ripulito, ma da un'app potrebbe sfuggire qualcosa)
+    inviata  REAL                        -- quando e' partita verso Telegram (NULL: ancora da mandare)
+);
+CREATE INDEX IF NOT EXISTS ix_segnalazioni_inviata ON segnalazioni(inviata);
+CREATE TABLE IF NOT EXISTS valori (         -- impostazioni del bot che sopravvivono ai riavvii
+    chiave TEXT PRIMARY KEY,
+    valore TEXT
+);
 CREATE TABLE IF NOT EXISTS pannelli (
     chat_id    INTEGER PRIMARY KEY,
     message_id INTEGER NOT NULL           -- messaggio fissato che il bot aggiorna con lo stato delle ricette
@@ -334,6 +352,70 @@ class Store:
         for r in self.db.execute("SELECT chiave_comune, sede FROM sedi ORDER BY chiave_comune, sede"):
             sedi.setdefault(r["chiave_comune"], []).append(r["sede"])
         return sedi
+
+    # --- impronte del portale e segnalazioni (impronte.py) ---
+    def impronta(self, pagina):
+        r = self.db.execute("SELECT stato FROM impronte WHERE pagina = ?", (pagina,)).fetchone()
+        return json.loads(r["stato"]) if r else None
+
+    def salva_impronta(self, pagina, stato):
+        with self.db:
+            self.db.execute("INSERT INTO impronte (pagina, stato) VALUES (?, ?) ON CONFLICT (pagina) "
+                            "DO UPDATE SET stato = excluded.stato", (pagina, json.dumps(stato)))
+
+    def cambio_portale(self, ts, origine, livello, testo, rapporto="", tieni_giorni=180):
+        """Una segnalazione da mandare all'amministratore. Le vecchie (gia' inviate) si cancellano."""
+        with self.db:
+            self.db.execute("INSERT INTO segnalazioni (ts, origine, livello, testo, rapporto) VALUES (?, ?, ?, ?, ?)",
+                            (ts, origine, livello, testo[:500], self.f.encrypt(rapporto.encode()) if rapporto else None))
+            self.db.execute("DELETE FROM segnalazioni WHERE inviata IS NOT NULL AND ts < ?",
+                            (ts - tieni_giorni * 86400,))
+            # mai mandate da un mese (bot senza amministratore): non servono piu'
+            self.db.execute("DELETE FROM segnalazioni WHERE inviata IS NULL AND ts < ?", (ts - 30 * 86400,))
+
+    def segnalazioni(self, da_inviare=False, livello=None, limite=50, livelli=None, senza_rapporto=False):
+        """[{id, ts, origine, livello, testo, rapporto, inviata}], dalla piu' vecchia se da_inviare,
+        altrimenti dalla piu' recente. livelli: solo questi; senza_rapporto: senza decifrare i rapporti."""
+        dove, arg = [], []
+        if da_inviare:
+            dove.append("inviata IS NULL")
+        livelli = (livello,) if livello else livelli
+        if livelli:
+            dove.append(f"livello IN ({', '.join('?' * len(livelli))})")
+            arg.extend(livelli)
+        sql = ("SELECT id, ts, origine, livello, testo, inviata" + ("" if senza_rapporto else ", rapporto") +
+               " FROM segnalazioni" + (" WHERE " + " AND ".join(dove) if dove else "") +
+               (" ORDER BY id" if da_inviare else " ORDER BY id DESC") + " LIMIT ?")
+        out = []
+        for r in self.db.execute(sql, (*arg, limite)):
+            d = dict(r)
+            d["rapporto"] = "" if senza_rapporto else self._testo(d["rapporto"])
+            out.append(d)
+        return out
+
+    def _testo(self, blob):
+        if not blob:
+            return ""
+        try:
+            return self.f.decrypt(blob).decode()
+        except InvalidToken:
+            return ""
+
+    def segna_inviate(self, ids, ts):
+        with self.db:
+            self.db.executemany("UPDATE segnalazioni SET inviata = ? WHERE id = ?", [(ts, i) for i in ids])
+
+    def valore(self, chiave):
+        r = self.db.execute("SELECT valore FROM valori WHERE chiave = ?", (chiave,)).fetchone()
+        return r["valore"] if r else None
+
+    def imposta(self, chiave, valore):
+        with self.db:
+            if valore is None:
+                self.db.execute("DELETE FROM valori WHERE chiave = ?", (chiave,))
+            else:
+                self.db.execute("INSERT INTO valori (chiave, valore) VALUES (?, ?) ON CONFLICT (chiave) "
+                                "DO UPDATE SET valore = excluded.valore", (chiave, str(valore)))
 
     def tutte(self):
         """Tutte le pratiche, decifrate (per seminare il registro delle sedi all'avvio)."""
