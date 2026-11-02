@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use chrono::NaiveDateTime;
 
 use crate::analisi::{self, Prenotazione, Slot};
+use crate::contatti::Contatti;
 use crate::errore::Errore;
 use crate::portale::{Modo, Sessione};
 use crate::zona::{perche_no, Calendario, Zona};
@@ -23,6 +24,14 @@ pub const CALL_CENTER: &str = "800 000 500";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Fase {
     Riepilogo,
+    /// I contatti che vanno davvero nel Riepilogo (quelli dati che hanno un campo che si puo' scrivere), prima della
+    /// presa visione: solo se ce n'e' almeno uno. Per i messaggi all'utente.
+    Contatti {
+        email: bool,
+        cellulare: bool,
+    },
+    /// Il portale ha rifiutato email o cellulare: si conferma senza, una volta sola (per il registro).
+    SenzaContatti,
     Conferma,
     Verifica,
 }
@@ -81,6 +90,46 @@ fn verifica(attese: &Attese, mut controlla: impl FnMut(Duration) -> bool) -> boo
     false
 }
 
+/// Presa visione e Conferma con i contatti (se dati). Se il portale li rifiuta (vedi `analisi::contatti_rifiutati`)
+/// si rimanda una volta, nella stessa sessione, con i valori che il Riepilogo aveva gia': la prenotazione non si
+/// perde per un'email sbagliata. Mai una seconda Conferma dopo una risposta riuscita o che non arriva: li' vale la
+/// verifica.
+fn presa_visione_e_conferma(
+    sessione: &Sessione,
+    riep: &analisi::Riepilogo,
+    contatti: &Contatti,
+    fase: &mut dyn FnMut(Fase) -> Result<(), String>,
+    salvataggio: &str,
+) -> Result<(), Errore> {
+    let senza = Contatti::default();
+    // dati ma senza un campo in cui scriverli: e' come non averli
+    let (email, cellulare) = Sessione::contatti_scritti(riep, contatti);
+    let contatti = if email || cellulare {
+        let _ = fase(Fase::Contatti { email, cellulare });
+        contatti
+    } else {
+        &senza
+    };
+    let (view_state, rifiutati) = sessione.presa_visione(riep, contatti)?;
+    let contatti = if rifiutati {
+        let _ = fase(Fase::SenzaContatti);
+        &senza
+    } else {
+        contatti
+    };
+    fase(Fase::Conferma).map_err(|_| no(salvataggio))?;
+    // da qui ogni problema e' "esito incerto": senza risposta (timeout, 504) la Conferma puo' essere arrivata
+    let risposta = sessione.conferma(riep, view_state.clone(), contatti);
+    match risposta {
+        Ok(xml) if !contatti.vuoti() && analisi::contatti_rifiutati(&xml) => {
+            let _ = fase(Fase::SenzaContatti);
+            let _ = sessione.conferma(riep, analisi::view_state(&xml).or(view_state), &senza);
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 /// Una sessione nuova sul portale; con `Some(attesa)`, ogni risposta si aspetta al massimo tanto.
 pub type Nuova<'a> = &'a dyn Fn(Option<Duration>) -> Result<Sessione, Errore>;
 
@@ -99,6 +148,7 @@ pub fn sposta(
     cal: &Calendario,
     prova: bool,
     attese: &Attese,
+    contatti: &Contatti,
     fase: &mut dyn FnMut(Fase) -> Result<(), String>,
 ) -> Result<Spostamento, Errore> {
     // l'elenco in una sessione a parte: non tocca lo stato di quella che ha trovato la data
@@ -181,10 +231,8 @@ pub fn sposta(
     }
 
     // prima della Conferma: se fallisce non e' partito niente
-    let view_state = sessione.presa_visione(&riep)?;
-    fase(Fase::Conferma).map_err(|_| no("Non riesco a salvare lo stato dello spostamento: non confermo"))?;
-    // da qui ogni problema e' "esito incerto": senza risposta (timeout, 504) la Conferma puo' essere arrivata
-    let _ = sessione.conferma(&riep, view_state);
+    let salvataggio = "Non riesco a salvare lo stato dello spostamento: non confermo";
+    presa_visione_e_conferma(&sessione, &riep, contatti, fase, salvataggio)?;
     drop(sessione);
     let _ = fase(Fase::Verifica);
     let vecchia = (insieme.len() > 1).then_some(att.quando);
@@ -261,6 +309,7 @@ pub fn prenota(
     cal: &Calendario,
     prova: bool,
     attese: &Attese,
+    contatti: &Contatti,
     fase: &mut dyn FnMut(Fase) -> Result<(), String>,
 ) -> Result<Prenotata, Errore> {
     let nre = ancora_da_prenotare(nuova, attese)?;
@@ -345,10 +394,8 @@ pub fn prenota(
     }
 
     // prima della Conferma: se fallisce non e' partito niente
-    let view_state = sessione.presa_visione(&riep)?;
-    fase(Fase::Conferma).map_err(|_| no("Non riesco a salvare lo stato della prenotazione: non confermo"))?;
-    // da qui ogni problema e' "esito incerto": senza risposta (timeout, 504) la Conferma puo' essere arrivata
-    let _ = sessione.conferma(&riep, view_state);
+    let salvataggio = "Non riesco a salvare lo stato della prenotazione: non confermo";
+    presa_visione_e_conferma(&sessione, &riep, contatti, fase, salvataggio)?;
     drop(sessione);
     let _ = fase(Fase::Verifica);
     let mut letta: Option<NaiveDateTime> = None;
@@ -519,6 +566,7 @@ mod test {
             &Calendario::default(),
             prova,
             &attese(),
+            &Contatti::default(),
             &mut |f| {
                 fasi.push(f);
                 if f == Fase::Conferma && !salva {
@@ -575,6 +623,148 @@ mod test {
         assert_eq!(valore(&viste[11].2, "javax.faces.ViewState").as_deref(), Some("vs2"));
         // la verifica con una sessione nuova
         assert_eq!(viste[12].0, "GET /web/guest/lista-prenotazioni HTTP/1.1");
+    }
+
+    fn contatti() -> Contatti {
+        Contatti { email: Some("mario@example.it".into()), cellulare: Some("3471234567".into()) }
+    }
+
+    /// Lo spostamento con i contatti, fino al Riepilogo con le note, poi le risposte `dopo` (presa visione,
+    /// Conferma...) e la verifica.
+    fn sposta_con_contatti(
+        contatti: &Contatti,
+        dopo: Vec<(u16, String)>,
+        verificata: bool,
+    ) -> (Result<Spostamento, Errore>, Vec<Fase>, Vec<crate::prova::Vista>) {
+        let (base, h) = portale(|b| {
+            let mut r = lista(b, &prenotata(PRIMA, "MOLINETTE"));
+            r.extend(fino_alle_date(b, &prenotata(PRIMA, "MOLINETTE")));
+            r.extend([ok("selezionata"), riep(b, "SAN GIOVANNI BOSCO", &["VISITA"], true)]);
+            r.extend(dopo);
+            if verificata {
+                r.extend(lista(b, &prenotata(NUOVA, "SAN GIOVANNI BOSCO")));
+            }
+            r
+        });
+        let nuova = |_: Option<Duration>| Sessione::verso(&base, CF, NRE);
+        let mut fasi = vec![];
+        let z = Zona::new(Dove::Tutte);
+        let esito = sposta(&nuova, None, CHIAVE, &z, &Calendario::default(), false, &attese(), contatti, &mut |f| {
+            fasi.push(f);
+            Ok(())
+        });
+        (esito, fasi, h.join().unwrap())
+    }
+
+    #[test]
+    fn contatti_nel_riepilogo_mai_nei_campi_disabilitati() {
+        let (esito, fasi, viste) =
+            sposta_con_contatti(&contatti(), vec![presa_visione_ok(), ok("conclusa con successo")], true);
+        assert!(esito.unwrap().fatto);
+        assert_eq!(
+            fasi,
+            [Fase::Riepilogo, Fase::Contatti { email: true, cellulare: true }, Fase::Conferma, Fase::Verifica]
+        );
+        assert_eq!(viste.len(), 14); // una presa visione, una Conferma
+        let campo = |i: usize, n: &str| valore(&viste[i].2, &format!("{RIEPILOGO}:{n}"));
+        for i in [10, 11] {
+            assert_eq!(campo(i, "email").as_deref(), Some("mario@example.it"));
+            // il cellulare nel primo telefono che si puo' scrivere, al posto di quello gia' scritto
+            assert_eq!(campo(i, "tel3").as_deref(), Some("3471234567"));
+            // tel1 e tel2 sono disabilitati: si mandano come sono (come sempre), il cellulare non ci va
+            assert_eq!((campo(i, "tel1").as_deref(), campo(i, "tel2").as_deref()), (Some("0110000000"), Some("")));
+            assert_eq!(campo(i, "privacy").as_deref(), Some("si"));
+        }
+        // senza contatti restano i valori del Riepilogo, tutti
+        let (esito, _, viste) = sposta_con_contatti(&Contatti::default(), vec![presa_visione_ok(), ok("ok")], true);
+        assert!(esito.unwrap().fatto);
+        let campo = |n: &str| valore(&viste[11].2, &format!("{RIEPILOGO}:{n}"));
+        assert_eq!(
+            (campo("tel3").as_deref(), campo("email").as_deref(), campo("tel1").as_deref()),
+            (Some("3330000000"), Some(""), Some("0110000000"))
+        );
+    }
+
+    #[test]
+    fn contatti_rifiutati_alla_conferma_si_conferma_una_volta_senza() {
+        let rifiuto = (200, risposta(Some("Formato dell'indirizzo email non valido")));
+        let (esito, fasi, viste) = sposta_con_contatti(
+            &contatti(),
+            vec![presa_visione_ok(), rifiuto.clone(), ok("conclusa con successo")],
+            true,
+        );
+        assert!(esito.unwrap().fatto);
+        assert_eq!(
+            fasi,
+            [
+                Fase::Riepilogo,
+                Fase::Contatti { email: true, cellulare: true },
+                Fase::Conferma,
+                Fase::SenzaContatti,
+                Fase::Verifica
+            ]
+        );
+        assert_eq!(viste.len(), 15); // due Conferme
+        let conferma = format!("{RIEPILOGO}:riepilogo-nextButton-bottom");
+        assert_eq!(valore(&viste[12].2, "javax.faces.source"), Some(conferma.clone()));
+        let campo = |n: &str| valore(&viste[12].2, &format!("{RIEPILOGO}:{n}"));
+        assert_eq!((campo("email").as_deref(), campo("tel3").as_deref()), (Some(""), Some("3330000000")));
+        // un rifiuto anche della seconda: niente terza Conferma, decide la verifica
+        let (_, _, viste) = sposta_con_contatti(&contatti(), vec![presa_visione_ok(), rifiuto.clone(), rifiuto], true);
+        assert_eq!(viste.iter().filter(|v| valore(&v.2, "javax.faces.source").as_ref() == Some(&conferma)).count(), 2);
+        // riuscita (anche con un avviso che parla di email) o senza risposta: mai una seconda Conferma
+        let riuscita =
+            ok(r#"<div class="messagifyMsg alert-danger">email non inviata</div>Prenotazione conclusa con successo"#);
+        let (esito, fasi, viste) = sposta_con_contatti(&contatti(), vec![presa_visione_ok(), riuscita], true);
+        assert!(esito.unwrap().fatto && !fasi.contains(&Fase::SenzaContatti) && viste.len() == 14);
+        // un errore che non parla dei contatti ("non valido" da solo): niente seconda Conferma
+        let altro = (200, risposta(Some("Numero ricetta non valido")));
+        let (_, fasi, viste) = sposta_con_contatti(&contatti(), vec![presa_visione_ok(), altro], true);
+        assert!(!fasi.contains(&Fase::SenzaContatti) && viste.len() == 14);
+        let (_, fasi, viste) = sposta_con_contatti(&contatti(), vec![presa_visione_ok(), (500, "giu'".into())], true);
+        assert!(!fasi.contains(&Fase::SenzaContatti) && viste.len() == 14);
+    }
+
+    #[test]
+    fn contatti_rifiutati_alla_presa_visione_si_rifa_senza_e_si_conferma_senza() {
+        let rifiuto = ok(
+            r#"<div class="messagifyMsg alert-danger"><span>Recapito telefonico non valido</span></div><update id="javax.faces.ViewState"><![CDATA[vs-err]]></update>"#,
+        );
+        let (esito, fasi, viste) = sposta_con_contatti(
+            &contatti(),
+            vec![rifiuto.clone(), presa_visione_ok(), ok("conclusa con successo")],
+            true,
+        );
+        assert!(esito.unwrap().fatto);
+        assert_eq!(
+            fasi,
+            [
+                Fase::Riepilogo,
+                Fase::Contatti { email: true, cellulare: true },
+                Fase::SenzaContatti,
+                Fase::Conferma,
+                Fase::Verifica
+            ]
+        );
+        assert_eq!(viste.len(), 15);
+        // la seconda presa visione senza contatti e col ViewState della risposta; la Conferma senza contatti
+        assert_eq!(valore(&viste[11].2, "javax.faces.ViewState").as_deref(), Some("vs-err"));
+        for i in [11, 12] {
+            assert_eq!(valore(&viste[i].2, &format!("{RIEPILOGO}:tel3")).as_deref(), Some("3330000000"));
+            assert_eq!(valore(&viste[i].2, &format!("{RIEPILOGO}:email")).as_deref(), Some(""));
+        }
+        assert_eq!(valore(&viste[12].2, "javax.faces.ViewState").as_deref(), Some("vs2"));
+        // la seconda risposta senza ViewState: la Conferma usa il piu' recente visto, quello del rifiuto
+        let senza_vs = ok(r#"<i class="icon-check"></i> <span>Presa visione delle note</span>"#);
+        let (esito, _, viste) =
+            sposta_con_contatti(&contatti(), vec![rifiuto.clone(), senza_vs, ok("conclusa con successo")], true);
+        assert!(esito.unwrap().fatto);
+        assert_eq!(valore(&viste[12].2, "javax.faces.ViewState").as_deref(), Some("vs-err"));
+        // un errore che non parla di contatti: non si rifa', non si conferma
+        let (esito, fasi, viste) =
+            sposta_con_contatti(&contatti(), vec![(200, risposta(Some("Sessione scaduta")))], false);
+        assert!(matches!(esito, Err(Errore::Inattesa(m)) if m.contains("presa visione")));
+        assert!(!fasi.contains(&Fase::Conferma) && viste.len() == 11);
     }
 
     #[test]
@@ -729,7 +919,11 @@ mod test {
         let z = Zona::new(Dove::Tutte);
         // la prima verifica dopo che il finto portale ha smesso di aspettare la Conferma (1,5 s)
         let attese = Attese { pause: vec![Duration::from_secs(1)], ..attese() };
-        let s = sposta(&nuova, None, CHIAVE, &z, &Calendario::default(), false, &attese, &mut |_| Ok(())).unwrap();
+        let s =
+            sposta(&nuova, None, CHIAVE, &z, &Calendario::default(), false, &attese, &Contatti::default(), &mut |_| {
+                Ok(())
+            })
+            .unwrap();
         assert!(s.fatto);
         assert_eq!(h.join().unwrap().len(), 13); // senza note: niente presa visione
                                                  // dopo la Conferma il portale mostra sempre la data vecchia: esito incerto, mai "non spostata"
@@ -781,8 +975,18 @@ mod test {
         tenuta.alternative(0).unwrap();
         let nuova = |_: Option<Duration>| Sessione::verso(&base, CF, NRE);
         let z = Zona::new(Dove::Tutte);
-        let s = sposta(&nuova, Some(tenuta), PROPOSTA, &z, &Calendario::default(), false, &attese(), &mut |_| Ok(()))
-            .unwrap();
+        let s = sposta(
+            &nuova,
+            Some(tenuta),
+            PROPOSTA,
+            &z,
+            &Calendario::default(),
+            false,
+            &attese(),
+            &Contatti::default(),
+            &mut |_| Ok(()),
+        )
+        .unwrap();
         assert!(s.fatto && s.dopo.proposta);
         let viste = h.join().unwrap();
         // la proposta e' gia' selezionata: dopo l'elenco, subito "Avanti" nella sessione del controllo
@@ -833,10 +1037,20 @@ mod test {
         let tenuta = tenuta.map(|t| t(&base));
         let mut fasi = vec![];
         let z = Zona::new(Dove::Tutte);
-        let esito = prenota(&nuova, tenuta, chiave, &z, &Calendario::default(), prova, &attese(), &mut |f| {
-            fasi.push(f);
-            Ok(())
-        });
+        let esito = prenota(
+            &nuova,
+            tenuta,
+            chiave,
+            &z,
+            &Calendario::default(),
+            prova,
+            &attese(),
+            &Contatti::default(),
+            &mut |f| {
+                fasi.push(f);
+                Ok(())
+            },
+        );
         (esito, fasi, h.join().unwrap())
     }
 
@@ -1092,6 +1306,7 @@ mod test {
             &Calendario::default(),
             true,
             &attese(),
+            &Contatti::default(),
             &mut |_| Ok(()),
         )
         .unwrap_err();

@@ -2,14 +2,16 @@
 //! controllo), lo stato salvato sul disco prima della Conferma (se non si salva, la Conferma non parte) e un esito
 //! incerto che blocca altre operazioni finche' l'utente non ha controllato sul portale.
 
+use std::cell::Cell;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use chrono::NaiveDateTime;
 use cup_core::operazioni::{Fase, Prenotata, Spostamento, CALL_CENTER};
-use cup_core::{Errore, Sessione};
+use cup_core::{contatti, Errore, Sessione};
 
 use crate::archivio::{Dati, Operazione, Ricetta, Visita, ISO};
 use crate::controlli::{adesso, blocca, impostazioni, tipo, Attivita, Notifica, Stato, TENUTA};
+use crate::segnalazioni;
 
 /// Le fasi dell'operazione, come le chiama il motore.
 pub type Fasi<'a> = &'a mut dyn FnMut(Fase) -> Result<(), String>;
@@ -58,7 +60,11 @@ fn prendi(
 /// disco resta lo stato di prima, che dice il vero).
 fn segna(stato: &Stato, id: u64, tipo: &str, fase: Fase, descrizione: &str) -> Result<(), String> {
     let nome = match fase {
-        Fase::Riepilogo => return Ok(()),
+        Fase::Riepilogo | Fase::Contatti { .. } => return Ok(()),
+        Fase::SenzaContatti => {
+            stato.registro.scrivi(&format!("ricetta {id}: contatti rifiutati dal portale, confermo senza"));
+            return Ok(());
+        }
         Fase::Conferma => "conferma",
         Fase::Verifica => "verifica",
     };
@@ -119,13 +125,20 @@ fn incerta(d: &mut Dati, r: &Ricetta, cosa: &str, messaggio: String) -> Fine {
 /// lo mostra, dopo un errore interno), se no non e' cambiato niente.
 fn fallita(stato: &Stato, d: &mut Dati, r: &Ricetta, cosa: &str, descrizione: &str, e: Errore) -> Fine {
     let partita = d.ricette.iter().any(|x| x.id == r.id && x.operazione.is_some());
+    // un esito incerto si segnala allo sviluppatore (se l'utente le ha accese): una frase fissa, senza il messaggio
+    let segnala = || {
+        let testo = if cosa == "disdetta" { segnalazioni::INCERTA_DISDETTA } else { segnalazioni::INCERTO };
+        segnalazioni::segnala(segnalazioni::Tipo::Errore, testo)
+    };
     match e {
         Errore::Incerto(m) => {
             stato.registro.scrivi(&format!("ricetta {}: {cosa}, esito incerto", r.id));
+            segnala();
             incerta(d, r, cosa, format!("{} {descrizione}: {m}", maiuscola(cosa)))
         }
         _ if partita => {
             stato.registro.scrivi(&format!("ricetta {}: {cosa}, errore interno dopo la conferma", r.id));
+            segnala();
             let m = format!(
                 "{} {descrizione}: errore dell'app dopo la conferma, l'esito non è verificato. Controlla subito sul \
                  sito del CUP (Recupera Prenotazioni) o al call center {CALL_CENTER}.",
@@ -165,6 +178,62 @@ fn dopo_incerta(r: &mut Ricetta) {
     }
 }
 
+/// Nel registro solo se ci sono, mai i valori.
+fn contatti_nel_registro(stato: &Stato, r: &Ricetta) {
+    let si = |c: &Option<String>| if c.is_some() { "si" } else { "no" };
+    stato.registro.scrivi(&format!(
+        "ricetta {}: contatti: email {}, cellulare {}",
+        r.id,
+        si(&r.email),
+        si(&r.cellulare)
+    ));
+}
+
+/// Cosa e' successo ai contatti durante un'operazione, come lo dice il motore: quali sono andati davvero nel
+/// Riepilogo (email, cellulare) e se il portale li ha rifiutati.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Scritti {
+    email: bool,
+    cellulare: bool,
+    rifiutati: bool,
+}
+
+impl Scritti {
+    fn segna(&mut self, f: Fase) {
+        match f {
+            Fase::Contatti { email, cellulare } => (self.email, self.cellulare) = (email, cellulare),
+            Fase::SenzaContatti => self.rifiutati = true,
+            _ => {}
+        }
+    }
+}
+
+/// Dove il CUP manda la conferma, per il messaggio dopo una prenotazione o uno spostamento riusciti (mascherati).
+/// Parla solo dei contatti che sono andati davvero nel Riepilogo.
+fn dove_la_conferma(r: &Ricetta, s: Scritti) -> String {
+    let email = r.email.as_deref().filter(|_| s.email);
+    let cellulare = r.cellulare.as_deref().filter(|_| s.cellulare);
+    if email.is_none() && cellulare.is_none() {
+        return String::new();
+    }
+    if s.rifiutati {
+        let quali = match (email, cellulare) {
+            (Some(_), Some(_)) => "email e cellulare",
+            (Some(_), None) => "l'email",
+            _ => "il cellulare",
+        };
+        return format!("\nIl portale non ha accettato {quali}: la conferma arriva ai recapiti che il CUP aveva già.");
+    }
+    let mut dove = vec![];
+    if let Some(e) = email {
+        dove.push(format!("la conferma per email a {}", contatti::email_mascherata(e)));
+    }
+    if let Some(c) = cellulare {
+        dove.push(format!("gli SMS al {}", contatti::cellulare_mascherato(c)));
+    }
+    format!("\nIl CUP manda {}.", dove.join(" e "))
+}
+
 fn maiuscola(s: &str) -> String {
     let mut c = s.chars();
     c.next().map_or(String::new(), |p| p.to_uppercase().chain(c).collect())
@@ -199,9 +268,16 @@ pub fn sposta(stato: &Stato, id: u64, chiave: &str, motore: MotoreSposta, inizio
         "ricetta {id}: spostamento{}",
         if tenuta.is_some() { " (con la sessione del controllo)" } else { "" }
     ));
+    contatti_nel_registro(stato, &r);
     let descrizione = format!("al {} · {}", scelta.quando, scelta.luogo);
+    let scritti = Cell::new(Scritti::default());
     let esito = catch_unwind(AssertUnwindSafe(|| {
-        motore(&r, tenuta, &mut |f| segna(stato, id, "spostamento", f, &descrizione))
+        motore(&r, tenuta, &mut |f| {
+            let mut s = scritti.get();
+            s.segna(f);
+            scritti.set(s);
+            segna(stato, id, "spostamento", f, &descrizione)
+        })
     }))
     .unwrap_or_else(|_| Err(Errore::Inattesa("errore interno dell'app".into())));
     let fine = {
@@ -223,14 +299,15 @@ pub fn sposta(stato: &Stato, id: u64, chiave: &str, motore: MotoreSposta, inizio
                 }
                 stato.registro.scrivi(&format!("ricetta {id}: spostamento fatto"));
                 let note = if s.note.is_empty() { "" } else { "\nNell'app trovi le note per la visita." };
+                let conferma = dove_la_conferma(&r, scritti.get());
                 Fine {
                     ok: true,
-                    messaggio: format!("Prenotazione spostata: {} · {}", dopo.quando, dopo.luogo),
+                    messaggio: format!("Prenotazione spostata: {} · {}{conferma}", dopo.quando, dopo.luogo),
                     notifica: Some(Notifica {
                         ricetta: id,
                         tipo: "spostata",
                         titolo: format!("{}: prenotazione spostata", r.nome),
-                        testo: format!("{} · {}{note}", dopo.quando, dopo.luogo),
+                        testo: format!("{} · {}{note}{conferma}", dopo.quando, dopo.luogo),
                     }),
                 }
             }
@@ -273,9 +350,16 @@ pub fn prenota(stato: &Stato, id: u64, chiave: &str, motore: MotorePrenota, iniz
         "ricetta {id}: prenotazione{}",
         if tenuta.is_some() { " (con la sessione del controllo)" } else { "" }
     ));
+    contatti_nel_registro(stato, &r);
     let descrizione = format!("al {} · {}", scelta.quando, scelta.luogo);
+    let scritti = Cell::new(Scritti::default());
     let esito = catch_unwind(AssertUnwindSafe(|| {
-        motore(&r, tenuta, &mut |f| segna(stato, id, "prenotazione", f, &descrizione))
+        motore(&r, tenuta, &mut |f| {
+            let mut s = scritti.get();
+            s.segna(f);
+            scritti.set(s);
+            segna(stato, id, "prenotazione", f, &descrizione)
+        })
     }))
     .unwrap_or_else(|_| Err(Errore::Inattesa("errore interno dell'app".into())));
     let fine = {
@@ -307,14 +391,15 @@ pub fn prenota(stato: &Stato, id: u64, chiave: &str, motore: MotorePrenota, iniz
                     "
 Nell'app trovi le note per la visita."
                 };
+                let conferma = dove_la_conferma(&r, scritti.get());
                 Fine {
                     ok: true,
-                    messaggio: format!("Prenotazione fatta: {} · {}", dopo.quando, dopo.luogo),
+                    messaggio: format!("Prenotazione fatta: {} · {}{conferma}", dopo.quando, dopo.luogo),
                     notifica: Some(Notifica {
                         ricetta: id,
                         tipo: "prenotata",
                         titolo: format!("{}: prenotazione fatta", r.nome),
-                        testo: format!("{} · {}{note}", dopo.quando, dopo.luogo),
+                        testo: format!("{} · {}{note}{conferma}", dopo.quando, dopo.luogo),
                     }),
                 }
             }
@@ -425,7 +510,6 @@ pub fn riprendi(d: &mut Dati) -> Vec<Notifica> {
 
 #[cfg(test)]
 mod test {
-    use std::cell::Cell;
     use std::path::PathBuf;
 
     use chacha20poly1305::aead::{KeyInit, OsRng};
@@ -480,6 +564,8 @@ mod test {
             operazione: None,
             incerta: None,
             nuova: false,
+            email: None,
+            cellulare: None,
         }
     }
 
@@ -551,6 +637,65 @@ mod test {
         assert!(s.in_corso().is_empty());
         registro_pulito(&s);
         std::fs::remove_dir_all(&c).unwrap();
+    }
+
+    #[test]
+    fn contatti_al_motore_e_nel_messaggio_mai_nel_registro() {
+        let con_contatti = |nome: &str| {
+            let (s, c) = stato(nome);
+            let mut d = s.dati();
+            (d.ricette[0].email, d.ricette[0].cellulare) =
+                (Some("mario.rossi@example.it".into()), Some("3471234567".into()));
+            drop(d);
+            (s, c)
+        };
+        let (s, c) = con_contatti("contatti");
+        let motore = |r: &Ricetta, _: Option<Sessione>, fase: Fasi| {
+            assert_eq!(r.contatti().cellulare.as_deref(), Some("3471234567"));
+            fase(Fase::Contatti { email: true, cellulare: true }).unwrap();
+            fase(Fase::Conferma).unwrap();
+            fase(Fase::Verifica).unwrap();
+            Ok(spostata(vec![]))
+        };
+        let f = sposta(&s, 1, CHIAVE, &motore, &|| {}).unwrap();
+        let dove = "Il CUP manda la conferma per email a m***@example.it e gli SMS al *** *** 4567.";
+        assert!(f.ok && f.messaggio.ends_with(dove) && f.notifica.unwrap().testo.ends_with(dove), "{}", f.messaggio);
+        // il portale li rifiuta: si conferma senza, e il messaggio lo dice
+        let (s2, c2) = con_contatti("contatti-rifiutati");
+        // solo l'email ha un campo nel Riepilogo: il messaggio parla solo dell'email
+        let rifiutati = |_: &Ricetta, _: Option<Sessione>, fase: Fasi| {
+            fase(Fase::Contatti { email: true, cellulare: false }).unwrap();
+            fase(Fase::Conferma).unwrap();
+            fase(Fase::SenzaContatti).unwrap();
+            fase(Fase::Verifica).unwrap();
+            Ok(spostata(vec![]))
+        };
+        let f = sposta(&s2, 1, CHIAVE, &rifiutati, &|| {}).unwrap();
+        assert!(f.ok && f.messaggio.contains("non ha accettato l'email:"), "{}", f.messaggio);
+        assert!(!f.messaggio.contains("cellulare"), "{}", f.messaggio);
+        for s in [&s, &s2] {
+            let righe = s.registro.ultime(20);
+            assert!(righe.iter().any(|r| r.ends_with("ricetta 1: contatti: email si, cellulare si")), "{righe:?}");
+            for r in &righe {
+                assert!(!r.contains("mario") && !r.contains("3471234567") && !r.contains("4567"), "{r}");
+            }
+        }
+        assert!(s2.registro.ultime(20).iter().any(|r| r.ends_with("contatti rifiutati dal portale, confermo senza")));
+        // senza contatti il messaggio resta quello di sempre
+        let (s3, c3) = stato("senza-contatti");
+        let f = sposta(&s3, 1, CHIAVE, &motore_senza(), &|| {}).unwrap();
+        assert!(f.messaggio.ends_with("SAN GIOVANNI BOSCO, AMB, TORINO (TO)"));
+        assert!(s3.registro.ultime(20).iter().any(|r| r.ends_with("contatti: email no, cellulare no")));
+        for c in [c, c2, c3] {
+            std::fs::remove_dir_all(&c).unwrap();
+        }
+    }
+
+    fn motore_senza() -> impl Fn(&Ricetta, Option<Sessione>, Fasi) -> Result<Spostamento, Errore> {
+        |_, _, fase| {
+            fase(Fase::Conferma).unwrap();
+            Ok(spostata(vec![]))
+        }
     }
 
     #[test]

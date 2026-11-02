@@ -19,6 +19,7 @@ use reqwest::header::CONTENT_TYPE;
 use chrono::NaiveDateTime;
 
 use crate::analisi::{self, Elenco, Riepilogo, Slot, A, AVANTI, L, R, RIEPILOGO};
+use crate::contatti::Contatti;
 use crate::errore::Errore;
 use crate::zona::{candidata, Calendario, Zona};
 
@@ -516,38 +517,87 @@ impl Sessione {
         Ok(analisi::riepilogo(pagina))
     }
 
-    /// I campi del modulo del Riepilogo, senza quelli dello stato JSF (li aggiunge `Modulo::invia`).
-    fn campi_riepilogo(pagina: &str) -> Campi {
+    /// I campi del modulo del Riepilogo, senza quelli dello stato JSF (li aggiunge `Modulo::invia`). Gli input
+    /// disabilitati (tel1 e tel2, dall'anagrafe sanitaria) si mandano come sono, come sempre: le prenotazioni dal vivo
+    /// sono andate cosi', e JSF ignora i componenti disabilitati. Con i contatti, l'email va nel suo campo e il
+    /// cellulare nel primo tra tel1, tel2 e tel3 che non e' disabilitato ne' in sola lettura (di solito tel3), al posto
+    /// del numero gia' scritto; un campo che non c'e', disabilitato o in sola lettura resta com'e'.
+    fn campi_riepilogo(pagina: &str, contatti: &Contatti) -> Campi {
         let via = [RIEPILOGO, "javax.faces.encodedURL", "ice.window", "ice.view", "javax.faces.ViewState"];
-        Campi(
+        let campi = Campi(
             analisi::campi_modulo(pagina, RIEPILOGO).into_iter().filter(|(k, _)| !via.contains(&k.as_str())).collect(),
-        )
+        );
+        let (campo_email, campo_tel) = Self::dove_i_contatti(pagina);
+        let campi = match contatti.email.as_ref().zip(campo_email) {
+            Some((e, k)) => campi.metti(k, e),
+            None => campi,
+        };
+        match contatti.cellulare.as_ref().zip(campo_tel) {
+            Some((n, k)) => campi.metti(k, n),
+            None => campi,
+        }
+    }
+
+    /// I campi del Riepilogo in cui vanno email e cellulare, se ci sono e si possono scrivere (vedi
+    /// `campi_riepilogo`).
+    fn dove_i_contatti(pagina: &str) -> (Option<String>, Option<String>) {
+        let bloccati = analisi::non_scrivibili(pagina, RIEPILOGO);
+        let campi = analisi::campi_modulo(pagina, RIEPILOGO);
+        let scrivibile = |k: &String| !bloccati.contains(k) && campi.iter().any(|(n, _)| n == k);
+        let c = |n: &str| format!("{RIEPILOGO}:{n}");
+        let email = Some(c("email")).filter(scrivibile);
+        let tel = ["tel1", "tel2", "tel3"].into_iter().map(c).find(scrivibile);
+        (email, tel)
+    }
+
+    /// Quali contatti il Riepilogo riceve davvero (email, cellulare): solo quelli dati che hanno un campo che si puo'
+    /// scrivere. Per i messaggi all'utente e il registro.
+    pub fn contatti_scritti(r: &Riepilogo, contatti: &Contatti) -> (bool, bool) {
+        let (email, tel) = Self::dove_i_contatti(&r.pagina);
+        (contatti.email.is_some() && email.is_some(), contatti.cellulare.is_some() && tel.is_some())
     }
 
     /// Se il Riepilogo ha delle note, il portale vuole "Conferma presa visione" prima di "Conferma" (dal vivo,
     /// 2026-10-08: senza, risponde "Non e' stata effettuata la presa visione delle note" e non prenota). Ritorna il
-    /// ViewState nuovo, se il portale ne da' uno. Err se il click non risulta registrato: niente e' ancora partito.
-    pub fn presa_visione(&self, r: &Riepilogo) -> Result<Option<String>, Errore> {
-        let Some(id) = analisi::presa_visione(&r.pagina)? else { return Ok(None) };
-        let modulo = Modulo::da_pagina(&r.pagina, RIEPILOGO)?;
-        let xml =
-            modulo.invia(&self.client, &self.base, Self::campi_riepilogo(&r.pagina).con(evento(&id, None, true)))?;
+    /// ViewState nuovo, se il portale ne da' uno, e true se il portale ha rifiutato i contatti: allora la presa
+    /// visione si rifa' una volta senza, e anche la Conferma va senza. Err se il click non risulta registrato:
+    /// niente e' ancora partito.
+    pub fn presa_visione(&self, r: &Riepilogo, contatti: &Contatti) -> Result<(Option<String>, bool), Errore> {
+        let Some(id) = analisi::presa_visione(&r.pagina)? else { return Ok((None, false)) };
+        let mut modulo = Modulo::da_pagina(&r.pagina, RIEPILOGO)?;
+        let click = |m: &Modulo, c: &Contatti| {
+            m.invia(&self.client, &self.base, Self::campi_riepilogo(&r.pagina, c).con(evento(&id, None, true)))
+        };
+        let mut xml = click(&modulo, contatti)?;
+        let mut rifiutati = false;
+        // il ViewState piu' recente visto: quello della risposta che ha rifiutato i contatti, se la seconda non ne ha
+        let mut visto = None;
+        if !contatti.vuoti() && !analisi::presa_visione_registrata(&xml) && analisi::contatti_rifiutati(&xml) {
+            visto = analisi::view_state(&xml);
+            if let Some(vs) = &visto {
+                modulo.view_state = vs.clone();
+            }
+            xml = click(&modulo, &Contatti::default())?;
+            rifiutati = true;
+        }
         if !analisi::presa_visione_registrata(&xml) {
             return Err(Errore::Inattesa(
                 "Il portale non ha registrato la presa visione delle note: non confermo".into(),
             ));
         }
-        Ok(analisi::view_state(&xml))
+        Ok((analisi::view_state(&xml).or(visto), rifiutati))
     }
 
-    /// Preme "Conferma" sul Riepilogo. Da qui la prenotazione puo' essere cambiata anche se la risposta non arriva.
-    pub fn conferma(&self, r: &Riepilogo, view_state: Option<String>) -> Result<String, Errore> {
+    /// Preme "Conferma" sul Riepilogo, con i contatti se dati. Da qui la prenotazione puo' essere cambiata anche se
+    /// la risposta non arriva.
+    pub fn conferma(&self, r: &Riepilogo, view_state: Option<String>, contatti: &Contatti) -> Result<String, Errore> {
         let mut modulo = Modulo::da_pagina(&r.pagina, RIEPILOGO)?;
         if let Some(vs) = view_state {
             modulo.view_state = vs; // dopo la presa visione il portale ne ha dato uno nuovo
         }
         let conferma = format!("{RIEPILOGO}:riepilogo-nextButton-bottom");
-        modulo.invia(&self.client, &self.base, Self::campi_riepilogo(&r.pagina).con(evento(&conferma, None, true)))
+        let campi = Self::campi_riepilogo(&r.pagina, contatti).con(evento(&conferma, None, true));
+        modulo.invia(&self.client, &self.base, campi)
     }
 
     /// Preme "Disdici" sulla prenotazione di questa data (e di questo luogo, `Luogo::chiave`, se dato: due
@@ -641,6 +691,50 @@ mod test {
 
     use super::*;
     use crate::prova::{campi, portale};
+
+    #[test]
+    fn contatti_mai_in_un_campo_disabilitato() {
+        let campo = |n: &str, v: &str, dis: bool| {
+            let d = if dis { r#" disabled="disabled""# } else { "" };
+            format!(r#"<input type="text" name="{RIEPILOGO}:{n}" value="{v}"{d} />"#)
+        };
+        let c = Contatti { email: Some("mario@example.it".into()), cellulare: Some("3471234567".into()) };
+        let valore = |campi: &Campi, n: &str| {
+            campi.0.iter().find(|(k, _)| *k == format!("{RIEPILOGO}:{n}")).map(|(_, v)| v.clone())
+        };
+        // email e tutti i telefoni disabilitati: si mandano come sono, i contatti non ci vanno
+        let tutti: String = [("email", "x@y.it"), ("tel1", "011"), ("tel2", "012"), ("tel3", "333")]
+            .iter()
+            .map(|(n, v)| campo(n, v, true))
+            .collect();
+        let p = crate::prova::modulo(RIEPILOGO, "/r", &tutti);
+        let campi = Sessione::campi_riepilogo(&p, &c);
+        for (n, v) in [("email", "x@y.it"), ("tel1", "011"), ("tel2", "012"), ("tel3", "333")] {
+            assert_eq!(valore(&campi, n).as_deref(), Some(v), "{n}");
+        }
+        // tel1 disabilitato, tel2 scrivibile: il cellulare va in tel2, tel3 resta com'e'
+        let p = crate::prova::modulo(
+            RIEPILOGO,
+            "/r",
+            &[campo("tel1", "011", true), campo("tel2", "", false), campo("tel3", "333", false)].concat(),
+        );
+        let campi = Sessione::campi_riepilogo(&p, &c);
+        assert_eq!(
+            (valore(&campi, "tel1"), valore(&campi, "tel2"), valore(&campi, "tel3")),
+            (Some("011".into()), Some("3471234567".into()), Some("333".into()))
+        );
+        // senza il campo email, l'email non si aggiunge
+        assert_eq!(valore(&campi, "email"), None);
+        // in sola lettura vale come disabilitato: email e tel2 restano, il cellulare va in tel3
+        let sola_lettura = format!(r#"<input type="text" name="{RIEPILOGO}:tel2" value="012" readonly="readonly" />"#);
+        let email = format!(r#"<input type="text" name="{RIEPILOGO}:email" value="" readonly />"#);
+        let p = crate::prova::modulo(RIEPILOGO, "/r", &[sola_lettura, email, campo("tel3", "333", false)].concat());
+        let campi = Sessione::campi_riepilogo(&p, &c);
+        assert_eq!(
+            (valore(&campi, "email"), valore(&campi, "tel2"), valore(&campi, "tel3")),
+            (Some("".into()), Some("012".into()), Some("3471234567".into()))
+        );
+    }
 
     /// La pagina di Recupera Prenotazioni con lo stato JSF; `azione` e' dove il portale dice di mandare il POST.
     fn pagina_lista(azione: &str) -> String {

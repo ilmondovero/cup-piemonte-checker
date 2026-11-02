@@ -759,14 +759,14 @@ checksum = "914a755b7c2d4af2bdcff7ce1739e2db9a1b81a9b07123d8015786ae03c0980d"
 
 [[package]]
 name = "cup-cli"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "cup-core",
 ]
 
 [[package]]
 name = "cup-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "chrono",
  "html-escape",
@@ -779,12 +779,14 @@ dependencies = [
 
 [[package]]
 name = "cup-desktop"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "chacha20poly1305",
  "chrono",
  "cup-core",
  "keyring",
+ "regex",
+ "reqwest 0.12.28",
  "semver",
  "serde",
  "serde_json",

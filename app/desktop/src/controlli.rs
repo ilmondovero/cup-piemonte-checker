@@ -15,6 +15,7 @@ use serde::Serialize;
 
 use crate::archivio::{Archivio, Data, Dati, Esito, Ricetta, Visita, NOTIFICATE_MAX};
 use crate::registro::Registro;
+use crate::segnalazioni;
 
 /// Secondi tra due controlli della stessa ricetta: come il bot.
 pub const INTERVALLO: i64 = 20 * 60;
@@ -190,6 +191,14 @@ pub fn tipo(e: &Errore) -> String {
         Errore::Incerto(_) => "esito incerto".into(),
     }
 }
+
+/// Una pagina che il motore non riconosce (sito cambiato): non un codice HTTP inatteso (sovraccarico, manutenzione)
+/// e non un errore interno del controllo (lo segnala il gancio del panico).
+pub fn non_riconosciuta(e: &Errore) -> bool {
+    matches!(e, Errore::Inattesa(m) if !m.starts_with("HTTP ") && m != INTERNO)
+}
+
+const INTERNO: &str = "errore interno del controllo";
 
 #[derive(Debug)]
 pub struct Notifica {
@@ -394,7 +403,7 @@ pub fn giro(
     let esito = zona_di(&r).map(|(zona, cal)| {
         // un errore imprevisto nel motore non deve fermare i controlli: vale come una risposta inattesa
         let c = catch_unwind(AssertUnwindSafe(|| controlla(&r, &zona, &cal)))
-            .unwrap_or_else(|_| Err(Errore::Inattesa("errore interno del controllo".into())));
+            .unwrap_or_else(|_| Err(Errore::Inattesa(INTERNO.into())));
         (zona, c)
     });
     let secondi = partito.elapsed().as_secs();
@@ -421,6 +430,8 @@ pub fn giro(
         ),
         Err(e) => format!("ricetta {}: {} dopo {secondi} s", r.id, tipo(e)),
     });
+    // due pagine non riconosciute di fila: una segnalazione allo sviluppatore, se l'utente le ha accese
+    segnalazioni::controllo(esito.as_ref().err().is_some_and(non_riconosciuta));
     let notifiche = {
         let mut d = stato.dati();
         // la ricetta puo' essere stata cancellata o cambiata nel frattempo: allora l'esito non vale
@@ -500,6 +511,8 @@ mod test {
             operazione: None,
             incerta: None,
             nuova: false,
+            email: None,
+            cellulare: None,
         }
     }
 
@@ -652,6 +665,10 @@ mod test {
         let s = "Passo del portale non riconosciuto: sezioni [Prestazioni], moduli [quesitoForm], pulsanti []";
         assert_eq!(e(s), format!("risposta inattesa ({s})"));
         assert_eq!(e("timeout dell'area"), "risposta inattesa (timeout dell'area)");
+        // da segnalare: una pagina non riconosciuta, non un codice HTTP o un errore interno
+        assert!(non_riconosciuta(&Errore::Inattesa(s.into())));
+        assert!(!non_riconosciuta(&Errore::Inattesa("HTTP 500, risposta inattesa".into())));
+        assert!(!non_riconosciuta(&Errore::Inattesa(INTERNO.into())) && !non_riconosciuta(&Errore::Timeout));
         assert_eq!(cup_core::analisi::id_breve("x:riga_RSSMRA80A01L219X"), "?");
         assert_eq!(cup_core::analisi::id_breve("x:riga_010A00000000001_b"), "?");
         assert_eq!(cup_core::analisi::id_breve("x:prestazioni-nextButton-main"), "prestazioni-nextButton-main");

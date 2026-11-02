@@ -375,6 +375,12 @@ re!(DISSERVIZIO, r"(?i)disponibil|temporane|riprov|servizio|token|captcha");
 re!(QUATTRO_LETTERE, r"[A-Za-z]{4}");
 re!(CF_DENTRO, r"[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]");
 re!(LUNGO_ALFANUMERICO, r"[0-9A-Z]{15,}");
+re!(NON_SCRIVIBILE, r#"(?i)\s(?:disabled|readonly)(?:\s*=\s*"[^"]*")?(?:[\s/>]|$)"#);
+re!(CONFERMA_OK, r"(?i)conclus\w*\s+con\s+successo");
+// "***email***:", "***tel3***:" o l'id del componente ("riepilogoForm:tel3")
+re!(CAMPO_CONTATTO, r"(?i)\*{3}\s*(?:email|tel\d)\s*\*{3}|riepilogoForm:(?:email|tel\d)");
+re!(PAROLA_CONTATTO, r"(?i)\b(?:e-?mail|indirizzo (?:di posta|email)|telefono|cellulare|recapito)\b");
+re!(ASSISTENZA, r"(?i)call center|assistenza|contatt|numero verde");
 
 /// L'indice di byte valido piu' vicino a `i`, andando indietro (mai a meta' di un carattere).
 fn confine(s: &str, i: usize) -> usize {
@@ -423,6 +429,36 @@ pub fn campi_modulo(pagina: &str, id: &str) -> Vec<(String, String)> {
         metti(dec(&c[1]), dec(&c[2]));
     }
     campi
+}
+
+/// I nomi degli input di un modulo che l'utente non puo' scrivere, disabilitati o in sola lettura (nel Riepilogo tel1
+/// e tel2, presi dall'anagrafe sanitaria): li' i contatti non vanno.
+pub fn non_scrivibili(pagina: &str, id: &str) -> Vec<String> {
+    let f = modulo(pagina, id).unwrap_or("");
+    INPUT
+        .find_iter(f)
+        .map(|m| m.as_str())
+        .filter(|tag| NON_SCRIVIBILE.is_match(tag))
+        .filter_map(|tag| NOME.captures(tag).map(|n| html_escape::decode_html_entities(&n[1]).into_owned()))
+        .collect()
+}
+
+/// La risposta a presa visione o Conferma rifiuta i contatti (email o cellulare). Conta solo un messaggio d'errore
+/// del portale (riquadro messagify) legato a un campo che l'app ha scritto: il suo prefisso ("***email***:") o l'id
+/// del componente nomina email o telN, oppure il testo parla proprio di email, telefono, cellulare o recapito e non
+/// del call center o dell'assistenza ("non valido" da solo no, puo' essere la ricetta). Mai con "conclusa con
+/// successo".
+pub fn contatti_rifiutati(xml: &str) -> bool {
+    if CONFERMA_OK.is_match(&testo(xml)) {
+        return false;
+    }
+    ERRORE.captures_iter(xml).any(|c| {
+        let grezzo = testo(&c[1]);
+        let messaggio = CAMPO_ERRORE.replace(&grezzo, "");
+        CAMPO_CONTATTO.is_match(&c[1])
+            || CAMPO_CONTATTO.is_match(&grezzo)
+            || (PAROLA_CONTATTO.is_match(&messaggio) && !ASSISTENZA.is_match(&messaggio))
+    })
 }
 
 /// L'indirizzo a cui il portale rimanda dopo un "Avanti", se c'e'.
@@ -806,6 +842,35 @@ mod test {
         assert_eq!(nascosto(p, "altro"), None);
         assert!(modulo(p, "F").unwrap().contains("ViewState") && !modulo(p, "F").unwrap().contains("\"G\""));
         assert_eq!(modulo(p, "H"), None);
+    }
+
+    #[test]
+    fn input_non_scrivibili_e_contatti_rifiutati() {
+        let p = r#"<form id="F"><input type="text" name="F:tel1" value="1" disabled="true" /><input name="F:tel2" disabled><input type="text" name="F:tel3" value="3" readonly="readonly" /><input name="F:email" readonly><input name="F:disabledX" value="" /><input name="F:x" class="readonly" /></form>"#;
+        assert_eq!(non_scrivibili(p, "F"), ["F:tel1", "F:tel2", "F:tel3", "F:email"]);
+        let errore = |campo: &str, m: &str| {
+            format!(r#"<div class="messagifyMsg alert-danger"><span>***{campo}***: {m}</span></div>"#)
+        };
+        // il prefisso nomina un campo che l'app ha scritto: basta quello
+        assert!(contatti_rifiutati(&errore("email", "Formato non valido")));
+        assert!(contatti_rifiutati(&errore("tel3", "Valore errato")));
+        assert!(contatti_rifiutati(
+            r#"<div class="messagifyMsg alert-danger"><span id="_x_:riepilogoForm:email_msg">Non valido</span></div>"#
+        ));
+        // un altro campo: solo se il testo parla proprio dei contatti
+        assert!(contatti_rifiutati(&errore("x", "Indirizzo e-mail non valido")));
+        assert!(contatti_rifiutati(&errore("x", "Numero di cellulare errato")));
+        assert!(!contatti_rifiutati(&errore("nre", "Sessione scaduta")));
+        assert!(!contatti_rifiutati(&errore("nre", "Numero ricetta non valido")));
+        assert!(!contatti_rifiutati(&errore("nre", "Formato della data errato")));
+        // il call center o l'assistenza non sono i contatti dell'utente
+        assert!(!contatti_rifiutati(&errore("nre", "Errore, contattare il call center telefonando al 800 000 500")));
+        assert!(!contatti_rifiutati(&errore("nre", "Per assistenza scrivi una email al numero verde")));
+        // solo i riquadri del portale, mai con "conclusa con successo"
+        assert!(!contatti_rifiutati(r#"<div class="alert alert-danger">Email non valida</div>"#));
+        let riuscita = format!("{}Prenotazione conclusa con successo", errore("email", "email non inviata"));
+        assert!(!contatti_rifiutati(&riuscita));
+        assert!(!contatti_rifiutati("<partial-response>ok</partial-response>"));
     }
 
     #[test]

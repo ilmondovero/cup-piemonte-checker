@@ -177,7 +177,8 @@ si possono incollare (non contengono questi dati), dopo averle rilette.
 - `desktop/`: l'app [Tauri 2](https://tauri.app/). Usa il browser del sistema (WebView2, WebKit), non
   porta con sé Chromium. `archivio.rs` salva le ricette, `controlli.rs` fa i controlli in un thread a parte,
   `operazioni.rs` sposta e disdice (il percorso sul portale è in `core/src/operazioni.rs`),
-  `aggiornamenti.rs` controlla e installa le versioni nuove.
+  `aggiornamenti.rs` controlla e installa le versioni nuove, `segnalazioni.rs` manda le segnalazioni dei
+  problemi (se accese).
 
 ## Provarla
 
@@ -195,6 +196,18 @@ cargo run -p cup-desktop                    # apre la finestra
 Il comando `cup` legge codice fiscale e numero ricetta da `CUP_CF` e `CUP_NRE` oppure li chiede. Non li
 accetta come argomenti, perché resterebbero nella cronologia dei comandi.
 
+## Contatti per il CUP
+
+Ogni ricetta può avere un'email e un cellulare, facoltativi ("Aggiungi ricetta" e "Modifica"; "Usa gli stessi
+contatti" copia quelli di un'altra ricetta). Quando l'app sposta o prenota, li scrive nel Riepilogo del portale:
+l'email nel suo campo, il cellulare nel primo numero che si può cambiare (di solito il terzo; i primi due vengono
+dall'anagrafe sanitaria e il portale non li fa cambiare: restano come sono). Il CUP manda lì
+la conferma, il promemoria e gli SMS. Il cellulare deve essere italiano (comincia con 3); spazi, trattini e +39 si
+tolgono da soli. Se il portale rifiuta i contatti (un suo messaggio d'errore sul campo dell'email o del telefono,
+o che parla proprio di email, telefono o recapito, non del call center), l'app conferma una volta sola senza, con
+i recapiti che il Riepilogo aveva già: la prenotazione non si perde. Dopo una prenotazione o uno spostamento
+riusciti l'app dice dove arriva la conferma, nominando solo i contatti che sono andati davvero nel Riepilogo.
+
 ## Registro
 
 L'app scrive in un file di testo cosa fa e quando: avvio, controlli con quante date ha trovato e quanto sono
@@ -202,8 +215,33 @@ durati, errori del portale, pause, spostamenti e disdette (riusciti, fermati o i
 nel registro non ci sono codice fiscale, numero ricetta, prestazione né date della visita. Si legge dalle
 impostazioni (Registro dell'app), dove c'è anche il percorso del file. Il file ruota oltre i 512 KB.
 
-Non c'è telemetria: l'app non manda nulla a nessuno. Fa solo le richieste al portale CUP e, ogni 6 ore, legge
-da GitHub se c'è una versione nuova (vedi [Aggiornamenti](#aggiornamenti)).
+Non c'è telemetria. L'app fa le richieste al portale CUP e, ogni 6 ore, legge da GitHub se c'è una versione
+nuova (vedi [Aggiornamenti](#aggiornamenti)). Manda qualcosa allo sviluppatore solo se accendi le
+[segnalazioni dei problemi](#segnalazioni-dei-problemi), che all'inizio sono spente.
+
+## Segnalazioni dei problemi
+
+Nelle impostazioni (⚙) c'è "Invia allo sviluppatore le segnalazioni dei problemi", spenta all'inizio. Accesa,
+l'app manda una segnalazione quando succede qualcosa di serio: un errore interno (mandato all'avvio dopo), un
+avvio non riuscito, un aggiornamento che non si installa, una pagina del portale che non riconosce per due
+controlli di fila, un esito incerto dopo una conferma o una disdetta. Arriva allo sviluppatore su Telegram,
+passando dal server del bot.
+
+Dentro ci sono versione, sistema, tipo di installazione, che cosa è successo (una frase scritta dall'app) e le
+ultime 80 righe del registro, con i secondi trascorsi al posto di data e ora; per un errore interno anche il
+punto del codice (file e riga), mai il messaggio né la pila. Nomi, prestazioni e luoghi non ci sono perché il
+registro non li scrive mai (l'app non saprebbe riconoscerli in un testo). Prima di partire l'app toglie anche
+codici fiscali, numeri di ricetta, date, orari, email, telefoni e i percorsi della cartella dell'utente. C'è anche un
+numero a caso scelto la prima volta (16 cifre esadecimali), che non dice nulla di te o del computer: serve solo
+a capire se più segnalazioni vengono dalla stessa installazione.
+
+Al massimo una segnalazione dello stesso tipo ogni 6 ore e 10 al giorno, 5 in attesa (con la coda piena si
+butta la più vecchia); anche il server ha i suoi limiti. Si mandano in un thread a parte e non fermano mai
+controlli, spostamenti o aggiornamenti. Senza rete si riprova all'avvio dopo, al massimo 3 volte.
+L'indirizzo del server (solo https) entra nell'app quando si compila (`CUP_SEGNALAZIONI_URL`, un segreto del
+repository): non è nel codice pubblico, ma è dentro l'app installata, e chi la smonta lo trova. Una copia
+compilata senza non ha l'opzione e non manda mai nulla. Nel registro resta una riga per ogni
+segnalazione inviata o scartata, senza il contenuto.
 
 ## Privacy
 
@@ -212,6 +250,14 @@ cifrato (XChaCha20-Poly1305) nella cartella dei dati dell'app, con la chiave nel
 (Gestione credenziali di Windows, Portachiavi di macOS, Secret Service su Linux). Se il portachiavi non
 c'è, la chiave sta in un file leggibile solo dall'utente, e l'app lo dice nelle impostazioni.
 Nell'interfaccia codice fiscale e ricetta compaiono solo in parte (RSS…19X).
+Email e cellulare di una ricetta, se li scrivi, stanno nello stesso file cifrato, vanno solo al portale CUP
+(nel Riepilogo, quando sposti o prenoti con l'app) e nella scheda si vedono mascherati (m\*\*\*@gmail.com,
+\*\*\* \*\*\* 4567, solo le ultime 4 cifre). Non finiscono mai nel registro: lì c'è solo se ci sono ("contatti: email si/no, cellulare
+si/no").
+Allo sviluppatore non arriva nulla, a meno che tu non accenda le
+[segnalazioni dei problemi](#segnalazioni-dei-problemi). Anche allora codice fiscale, numero ricetta, nomi e
+luoghi restano fuori perché il registro non li scrive mai, e prima di mandare l'app toglie comunque codici
+fiscali, numeri di ricetta, date, orari, email, telefoni e percorsi delle cartelle.
 
 ## Pubblicare una versione nuova
 

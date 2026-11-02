@@ -111,6 +111,8 @@ pre#registro {
   color: var(--tenue);
 }
 #file-registro { word-break: break-all; }
+/* "Prenotazione fatta: ..." e, a capo, dove il CUP manda la conferma */
+#messaggio { white-space: pre-line; }
 
 ul.date { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
 ul.date li {

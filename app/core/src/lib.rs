@@ -7,6 +7,7 @@
 //! ~40 minuti, e non c'e' modo di rilasciarlo.
 
 pub mod analisi;
+pub mod contatti;
 pub mod errore;
 pub mod operazioni;
 pub mod portale;
@@ -16,6 +17,7 @@ pub mod zona;
 mod prova;
 
 pub use analisi::{Elenco, Luogo, Prenotazione, Slot};
+pub use contatti::Contatti;
 pub use errore::Errore;
 pub use portale::{Alternative, Controllo, Sessione};
 pub use zona::{Calendario, Dove, Sede, Zona};

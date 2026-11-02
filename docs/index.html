@@ -176,8 +176,8 @@ footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--bordo)
     <div class="punti">
       <div class="carta"><h3>I dati restano sul tuo computer</h3>
         <p>Codice fiscale e ricetta vanno solo al portale CUP, come quando lo usi dal browser. Sul computer sono
-          cifrati, con la chiave di solito nel portachiavi del sistema. Nessun server, nessun account: l'app non manda
-          niente a nessuno, legge solo da GitHub se c'è una versione nuova.</p></div>
+          cifrati, con la chiave di solito nel portachiavi del sistema. Nessun account: l'app legge solo da GitHub se
+          c'è una versione nuova, e manda allo sviluppatore le segnalazioni dei problemi solo se le accendi tu.</p></div>
       <div class="carta"><h3>Non sposta mai niente da sola</h3>
         <p>Ogni spostamento, prenotazione o disdetta parte solo da un tuo clic e chiede conferma mostrando data, ora e
           luogo.
@@ -265,6 +265,16 @@ footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--bordo)
       <summary>Ho trovato un problema</summary>
       <p>Segnalalo nelle <a href="https://github.com/ilmondovero/cup-piemonte-checker/issues/new/choose">Issues</a> del
         progetto. La pagina è pubblica: non scrivere mai codice fiscale, numero della ricetta o dati della visita.</p>
+    </details>
+    <details>
+      <summary>L'app manda qualcosa allo sviluppatore?</summary>
+      <p>Solo se lo scegli. Dalla versione 0.3.1, in ⚙ c'è "Invia allo sviluppatore le segnalazioni dei problemi",
+        spenta all'inizio. Accesa, quando l'app ha un problema serio (un errore interno, un avvio o un aggiornamento
+        non riuscito, una pagina del portale che non riconosce, un esito incerto) manda versione, sistema, che cosa
+        è successo e le ultime righe del registro. Il registro non contiene mai codice fiscale, numero della
+        ricetta, nomi o luoghi; prima di mandare l'app toglie anche codici fiscali, numeri di ricetta, date, orari,
+        email, telefoni e percorsi delle cartelle. L'indirizzo del server è dentro l'app (chi la smonta lo trova) e
+        il server accetta solo poche segnalazioni al giorno. Puoi spegnerla quando vuoi.</p>
     </details>
   </section>
 

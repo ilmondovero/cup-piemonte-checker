@@ -6,12 +6,14 @@ mod archivio;
 mod controlli;
 mod operazioni;
 mod registro;
+mod segnalazioni;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use chrono::{Local, TimeZone};
 use cup_core::analisi::credenziali;
+use cup_core::contatti;
 use cup_core::operazioni::Attese;
 use cup_core::{Dove, Errore, Prenotazione, Sessione};
 use serde::Serialize;
@@ -27,6 +29,7 @@ use archivio::{Archivio, Data, Esito, Protezione, Ricetta, Visita};
 use controlli::{adesso, zona_di, Attivita, Notifica, Stato, INTERVALLO};
 use operazioni::Fine;
 use registro::Registro;
+use segnalazioni::{Segnalazioni, Tipo};
 
 type Condiviso<'a> = State<'a, Arc<Stato>>;
 type Canale<'a> = State<'a, Arc<Aggiornamenti>>;
@@ -85,6 +88,9 @@ struct Scheda {
     in_corso: Option<Attivita>,
     /// Un'operazione dall'esito incerto, da controllare sul portale.
     incerta: Option<String>,
+    /// "m***@gmail.com" e "*** *** 4567": come codice fiscale e ricetta, mai per intero nella scheda.
+    email: Option<String>,
+    cellulare: Option<String>,
     prossimo: Option<String>,
     esito: Option<EsitoUi>,
 }
@@ -121,6 +127,8 @@ fn scheda(r: &Ricetta, in_corso: Option<Attivita>) -> Scheda {
         nuova: r.nuova,
         in_corso,
         incerta: r.incerta.clone(),
+        email: r.email.as_deref().map(contatti::email_mascherata),
+        cellulare: r.cellulare.as_deref().map(contatti::cellulare_mascherato),
         prossimo: controlli::prossimo(r, adesso()).map(ora),
         esito: r.esito.as_ref().map(|e| EsitoUi {
             ora: ora(e.ts),
@@ -157,6 +165,38 @@ fn ricette(stato: Condiviso) -> Elenco {
     let in_corso = stato.in_corso();
     let ricette = stato.dati().ricette.iter().map(|r| scheda(r, in_corso.get(&r.id).copied())).collect();
     Elenco { ricette, avviso: stato.avviso() }
+}
+
+/// Email e cellulare scritti dall'utente, controllati (vuoti = nessuno).
+fn contatti_puliti(email: &str, cellulare: &str) -> Result<(Option<String>, Option<String>), String> {
+    Ok((contatti::email(email)?, contatti::cellulare(cellulare)?))
+}
+
+/// I contatti per intero, per il modulo di modifica.
+#[derive(Serialize)]
+struct ContattiUi {
+    email: String,
+    cellulare: String,
+}
+
+impl ContattiUi {
+    fn da(r: &Ricetta) -> Self {
+        ContattiUi { email: r.email.clone().unwrap_or_default(), cellulare: r.cellulare.clone().unwrap_or_default() }
+    }
+}
+
+/// I contatti di una ricetta (per il modulo di modifica), o con `altra` quelli della prima altra ricetta che ne ha
+/// ("Usa gli stessi contatti").
+#[tauri::command]
+fn contatti_di(stato: Condiviso, id: Option<u64>, altra: bool) -> Option<ContattiUi> {
+    let d = stato.dati();
+    let mut ricette = d.ricette.iter();
+    let r = if altra {
+        ricette.find(|r| Some(r.id) != id && (r.email.is_some() || r.cellulare.is_some()))
+    } else {
+        ricette.find(|r| Some(r.id) == id)
+    };
+    r.map(ContattiUi::da)
 }
 
 fn nome_pulito(nome: &str) -> Result<String, String> {
@@ -214,8 +254,11 @@ async fn aggiungi(
     valore: String,
     evita: Vec<u32>,
     attiva: bool,
+    email: String,
+    cellulare: String,
 ) -> Result<String, String> {
     let nome = nome_pulito(&nome)?;
+    let (email, cellulare) = contatti_puliti(&email, &cellulare)?;
     Dove::da_scelta(&dove, &valore).map_err(|e| e.to_string())?;
     let (cf, nre) = credenziali(&cf, &nre).map_err(|e| e.to_string())?;
     if stato.dati().ricette.iter().any(|r| r.nre == nre) {
@@ -265,6 +308,8 @@ async fn aggiungi(
         operazione: None,
         incerta: None,
         nuova,
+        email,
+        cellulare,
     });
     stato.registro.scrivi(&format!(
         "ricetta {id}: aggiunta{}{}",
@@ -286,6 +331,7 @@ async fn aggiungi(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 fn modifica(
     app: AppHandle,
     stato: Condiviso,
@@ -294,8 +340,11 @@ fn modifica(
     dove: String,
     valore: String,
     evita: Vec<u32>,
+    email: String,
+    cellulare: String,
 ) -> Result<(), String> {
     let nome = nome_pulito(&nome)?;
+    let (email, cellulare) = contatti_puliti(&email, &cellulare)?;
     Dove::da_scelta(&dove, &valore).map_err(|e| e.to_string())?;
     let mut d = stato.dati();
     let r = d.ricetta(id)?;
@@ -307,7 +356,7 @@ fn modifica(
             e.buone.clear();
         }
     }
-    (r.nome, r.dove, r.valore, r.evita) = (nome, dove, valore, evita);
+    (r.nome, r.dove, r.valore, r.evita, r.email, r.cellulare) = (nome, dove, valore, evita, email, cellulare);
     stato.registro.scrivi(&format!("ricetta {id}: modificata"));
     salva(&app, &stato, &d)
 }
@@ -366,6 +415,7 @@ async fn sposta(app: AppHandle, stato: Condiviso<'_>, id: u64, chiave: String) -
                 &cal,
                 false,
                 &Attese::default(),
+                &r.contatti(),
                 fasi,
             )
         };
@@ -395,6 +445,7 @@ async fn prenota(app: AppHandle, stato: Condiviso<'_>, id: u64, chiave: String) 
                 &cal,
                 false,
                 &Attese::default(),
+                &r.contatti(),
                 fasi,
             )
         };
@@ -485,6 +536,22 @@ fn aggiornamenti(agg: Canale) -> aggiornamenti::Info {
 fn imposta_aggiornamenti(stato: Condiviso, agg: Canale, si: bool) -> Result<(), String> {
     agg.imposta(si).map_err(|e| format!("Non riesco a salvare la scelta: {e}"))?;
     stato.registro.scrivi(if si { "aggiornamenti automatici accesi" } else { "aggiornamenti automatici spenti" });
+    Ok(())
+}
+
+#[tauri::command]
+fn segnalazioni() -> segnalazioni::Info {
+    match segnalazioni::globali() {
+        Some(s) => s.info(),
+        None => segnalazioni::Info { disponibili: false, accese: false, ultima: None },
+    }
+}
+
+#[tauri::command]
+fn imposta_segnalazioni(stato: Condiviso, si: bool) -> Result<(), String> {
+    let s = segnalazioni::globali().ok_or("Le segnalazioni non sono disponibili in questa versione dell'app.")?;
+    s.imposta(si)?;
+    stato.registro.scrivi(if si { "segnalazioni accese" } else { "segnalazioni spente" });
     Ok(())
 }
 
@@ -613,13 +680,25 @@ fn main() {
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--nascosta"])))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
-            let registro = Registro::new(&app.path().app_log_dir()?);
+            let cartella_registro = app.path().app_log_dir()?;
+            let registro = Registro::new(&cartella_registro);
             registro.scrivi(&format!("avvio, versione {}", app.package_info().version));
+            // le segnalazioni dei problemi (se l'utente le ha accese) e il gancio del panico, prima di tutto il resto
+            if let Ok(cartella) = app.path().app_data_dir() {
+                let contesto = segnalazioni::Contesto {
+                    versione: app.package_info().version.to_string(),
+                    sistema: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
+                    installazione: aggiornamenti::nome_installazione(tauri::utils::platform::bundle_type().as_ref()),
+                };
+                let s = Segnalazioni::new(&cartella, &cartella_registro, contesto, segnalazioni::indirizzo());
+                segnalazioni::avvia(s);
+            }
             let (stato, interrotte) = match prepara(app, registro) {
                 Ok(s) => s,
                 Err((registro, e)) => {
                     // senza console (in release non c'e') l'utente deve vederlo: una finestra, poi si esce
                     registro.scrivi(&format!("avvio non riuscito: {e}"));
+                    segnalazioni::segnala(Tipo::Avvio, segnalazioni::NON_PARTE);
                     // una versione difettosa (per esempio che non apre le ricette) si corregge da sola: se c'e' una
                     // versione nuova si installa subito
                     let installando = app.path().app_data_dir().ok().map(|cartella| {
@@ -673,6 +752,7 @@ fn main() {
                 }
                 Ok(Some(Avvio::NonRiuscito { a, volte })) => {
                     stato.registro.scrivi(&format!("aggiornamenti: installazione della versione {a} non riuscita ({volte})"));
+                    segnalazioni::segnala(Tipo::Aggiornamento, &segnalazioni::aggiornamento_non_riuscito(&a));
                     if volte >= aggiornamenti::TENTATIVI {
                         avvisa(
                             app.handle(),
@@ -764,6 +844,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             ricette,
+            contatti_di,
             aggiungi,
             modifica,
             elimina,
@@ -778,7 +859,9 @@ fn main() {
             aggiornamenti,
             imposta_aggiornamenti,
             controlla_aggiornamenti,
-            aggiorna_ora
+            aggiorna_ora,
+            segnalazioni,
+            imposta_segnalazioni
         ])
         .run(tauri::generate_context!())
         .expect("avvio dell'app non riuscito");

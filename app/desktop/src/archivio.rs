@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use chacha20poly1305::aead::{Aead, AeadCore, KeyInit, OsRng};
 use chacha20poly1305::{Key, XChaCha20Poly1305, XNonce};
 use cup_core::analisi::breve;
-use cup_core::{Prenotazione, Slot};
+use cup_core::{Contatti, Prenotazione, Slot};
 use serde::{Deserialize, Serialize};
 
 const FILE: &str = "ricette.cifrate";
@@ -146,6 +146,19 @@ pub struct Ricetta {
     /// Ricetta mai prenotata: i controlli cercano il primo appuntamento libero (Ricerca e Prestazioni, non "Sposta").
     #[serde(default)]
     pub nuova: bool,
+    /// Facoltativi, per la conferma, il promemoria e gli SMS del CUP: vanno solo al portale (nel Riepilogo) e, come
+    /// codice fiscale e ricetta, stanno solo qui dentro, cifrati. Mai nel registro.
+    #[serde(default)]
+    pub email: Option<String>,
+    /// Solo cifre, senza prefisso (vedi cup_core::contatti::cellulare).
+    #[serde(default)]
+    pub cellulare: Option<String>,
+}
+
+impl Ricetta {
+    pub fn contatti(&self) -> Contatti {
+        Contatti { email: self.email.clone(), cellulare: self.cellulare.clone() }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -433,6 +446,8 @@ mod test {
             operazione: None,
             incerta: None,
             nuova: false,
+            email: None,
+            cellulare: None,
         }
     }
 
@@ -442,6 +457,25 @@ mod test {
 
     fn nuova_chiave() -> Key {
         XChaCha20Poly1305::generate_key(&mut OsRng)
+    }
+
+    #[test]
+    fn contatti_cifrati_e_archivi_di_prima_senza() {
+        // un archivio della 0.3.0, senza email ne' cellulare: si legge, senza contatti
+        let vecchio = r#"{"prossimo_id":2,"ricette":[{"id":1,"nome":"Prova","cf":"RSSMRA80A01L219X",
+            "nre":"010A00000000001","dove":"comune","valore":"","evita":[4],"attiva":true}]}"#;
+        let d: Dati = serde_json::from_str(vecchio).unwrap();
+        assert_eq!(d.ricette[0].contatti(), Contatti::default());
+        // con i contatti: cifrati come il resto, e si rileggono
+        let c = cartella("contatti");
+        let a = Archivio::con_chiave(c.join(FILE), nuova_chiave());
+        let mut d = dati();
+        (d.ricette[0].email, d.ricette[0].cellulare) = (Some("mario@example.it".into()), Some("3471234567".into()));
+        a.scrivi(&d).unwrap();
+        assert_eq!(a.leggi().unwrap(), d);
+        let grezzo = fs::read(c.join(FILE)).unwrap();
+        assert!(!grezzo.windows(5).any(|w| w == b"mario") && !grezzo.windows(7).any(|w| w == b"3471234"));
+        fs::remove_dir_all(&c).unwrap();
     }
 
     #[test]

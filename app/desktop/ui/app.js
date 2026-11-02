@@ -4,6 +4,8 @@ const $ = (id) => document.getElementById(id);
 const modulo = $("modulo");
 const messaggio = $("messaggio");
 let modifica = null; // id della ricetta in modifica, null per una nuova
+// le ultime schede lette: servono per "Usa gli stessi contatti"
+let schede = [];
 // "Elimina" chiede conferma per qualche secondo; resta valida anche se nel frattempo le schede si ridisegnano
 let daEliminare = { id: null, fino: 0 };
 // l'operazione da confermare: { id, tipo: "sposta" | "prenota" | "disdici", data } (data: per "sposta" e "prenota")
@@ -177,6 +179,9 @@ function scheda(r) {
   }
   if (r.attiva && r.prossimo && !r.in_corso) s.append(el("p", "nota", `Prossimo controllo: ${r.prossimo}`));
   s.append(el("p", "nota piccola", `CF ${r.cf} · ricetta ${r.nre}`));
+  // dove il CUP manda conferma e SMS, mascherati come codice fiscale e ricetta
+  const recapiti = [r.email && "✉️ " + r.email, r.cellulare && "📱 " + r.cellulare].filter(Boolean);
+  if (recapiti.length) s.append(el("p", "nota piccola", recapiti.join(" · ")));
 
   const azioni = el("div", "azioni");
   azioni.append(pulsante(r.attiva ? "Pausa" : "Riprendi", "secondario",
@@ -210,6 +215,7 @@ function scheda(r) {
 async function carica() {
   try {
     const { ricette, avviso } = await invoke("ricette");
+    schede = ricette;
     $("ricette").replaceChildren(...ricette.map(scheda));
     $("vuoto").hidden = ricette.length > 0;
     $("avviso").textContent = avviso || "";
@@ -229,6 +235,7 @@ async function caricaImpostazioni() {
       "ai dati, nella cartella del tuo utente. È meno sicuro: chi può leggere i tuoi file può leggere anche le ricette.";
   $("file-registro").textContent = i.registro;
   caricaAggiornamenti();
+  caricaSegnalazioni();
   const parte = $("messo-da-parte");
   parte.hidden = !i.messo_da_parte;
   if (i.messo_da_parte) {
@@ -254,6 +261,20 @@ async function caricaAggiornamenti() {
   }
 }
 
+// le segnalazioni dei problemi allo sviluppatore: spente finche' l'utente non le accende
+async function caricaSegnalazioni() {
+  try {
+    const s = await invoke("segnalazioni");
+    $("segn-accese").checked = s.accese;
+    $("segn-accese").disabled = !s.disponibili;
+    $("segn-testo").textContent = !s.disponibili
+      ? "Non disponibile in questa versione dell'app."
+      : "Ultima segnalazione inviata: " + (s.ultima || "nessuna") + ".";
+  } catch (e) {
+    $("segn-testo").textContent = String(e);
+  }
+}
+
 async function caricaRegistro() {
   try {
     const righe = await invoke("registro");
@@ -276,6 +297,16 @@ function apri(r) {
   $("credenziali").hidden = !!r; // codice fiscale e ricetta non si cambiano: si aggiunge un'altra ricetta
   $("riga-attiva").hidden = !!r;
   modulo.cf.required = modulo.nre.required = !r;
+  // i contatti per intero arrivano solo per il modulo, non con le schede
+  $("stessi-contatti").hidden = !schede.some((x) => (!r || x.id !== r.id) && (x.email || x.cellulare));
+  if (r) {
+    invoke("contatti_di", { id: r.id, altra: false }).then((c) => {
+      if (c && modifica === r.id) {
+        modulo.email.value = c.email;
+        modulo.cellulare.value = c.cellulare;
+      }
+    }).catch((e) => avvisa(String(e)));
+  }
   if (r) {
     const [dove, valore] = sceltaDove(r.dove, r.valore);
     modulo.nome.value = r.nome;
@@ -310,29 +341,50 @@ modulo.addEventListener("submit", async (ev) => {
   }
   const comune = { ...(scelta === "altro" ? { dove: valore.includes(",") ? "comuni" : "comune", valore } : { dove: scelta, valore: "" }) };
   const evita = [...modulo.querySelectorAll("input[name=evita]:checked")].map((x) => Number(x.value));
+  // controllati dall'app (formato, cellulare italiano): un errore torna come messaggio
+  const contatti = { email: modulo.email.value, cellulare: modulo.cellulare.value };
   const salva = $("salva");
   salva.disabled = true;
   if (modifica === null) avvisa("Leggo la prenotazione dal portale… può volerci un minuto.", false);
   const ok = modifica === null
     ? await esegui("aggiungi", { nome: modulo.nome.value, cf: modulo.cf.value, nre: modulo.nre.value, ...comune, evita,
-                                 attiva: modulo.attiva.checked })
-    : await esegui("modifica", { id: modifica, nome: modulo.nome.value, ...comune, evita }, "Modifiche salvate.");
+                                 attiva: modulo.attiva.checked, ...contatti })
+    : await esegui("modifica", { id: modifica, nome: modulo.nome.value, ...comune, evita, ...contatti },
+                   "Modifiche salvate.");
   salva.disabled = false;
   if (ok) chiudi();
 });
 
 $("annulla").addEventListener("click", () => { chiudi(); avvisa(""); });
+$("stessi-contatti").addEventListener("click", async () => {
+  try {
+    const c = await invoke("contatti_di", { id: modifica, altra: true });
+    if (c) {
+      modulo.email.value = c.email;
+      modulo.cellulare.value = c.cellulare;
+    }
+  } catch (e) {
+    avvisa(String(e));
+  }
+});
 $("nuova").addEventListener("click", () => apri(null));
 $("apri-impostazioni").addEventListener("click", (ev) => {
   const p = $("impostazioni");
   p.hidden = !p.hidden;
-  if (!p.hidden) caricaAggiornamenti();
+  if (!p.hidden) {
+    caricaAggiornamenti();
+    caricaSegnalazioni();
+  }
   ev.currentTarget.setAttribute("aria-expanded", String(!p.hidden));
 });
 $("dettagli-registro").addEventListener("toggle", (ev) => { if (ev.target.open) caricaRegistro(); });
 $("agg-auto").addEventListener("change", async (ev) => {
   if (!(await esegui("imposta_aggiornamenti", { si: ev.target.checked }))) ev.target.checked = !ev.target.checked;
   caricaAggiornamenti();
+});
+$("segn-accese").addEventListener("change", async (ev) => {
+  if (!(await esegui("imposta_segnalazioni", { si: ev.target.checked }))) ev.target.checked = !ev.target.checked;
+  caricaSegnalazioni();
 });
 $("agg-controlla").addEventListener("click", async (ev) => {
   ev.currentTarget.disabled = true;

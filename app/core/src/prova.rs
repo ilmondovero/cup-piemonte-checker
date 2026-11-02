@@ -108,7 +108,8 @@ pub fn elenco(righe: &[(&str, &str, &str, &str, &str)]) -> String {
 }
 
 /// Il Riepilogo di uno spostamento: le prestazioni, la data alle 09:00 e subito dopo sede e ambulatorio, il pulsante
-/// "Conferma"; con `note`, anche le note dell'appuntamento e "Conferma presa visione".
+/// "Conferma"; con `note`, anche le note dell'appuntamento e "Conferma presa visione". I recapiti come dal vivo:
+/// tel1 e tel2 disabilitati (dall'anagrafe), tel3 gia' scritto, email vuota.
 pub fn riepilogo(azione: &str, quando: &str, sede: &str, amb: &str, cose: &[&str], note: bool) -> String {
     let note = if note {
         format!(
@@ -119,7 +120,7 @@ pub fn riepilogo(azione: &str, quando: &str, sede: &str, amb: &str, cose: &[&str
     };
     let cose: String = cose.iter().map(|c| format!("<div>{c}</div>")).collect();
     let corpo = format!(
-        r#"<div>Prestazioni selezionate: {n}</div>{cose}<span>Quando:</span><span>{quando}</span><span>alle ore</span><span>09:00</span><div>{sede}</div><div>{amb}</div>{note}<input type="hidden" name="{RIEPILOGO}:privacy" value="si" /><div id="{RIEPILOGO}:riepilogo-nextButton-bottom">Conferma</div>"#,
+        r#"<div>Prestazioni selezionate: {n}</div>{cose}<span>Quando:</span><span>{quando}</span><span>alle ore</span><span>09:00</span><div>{sede}</div><div>{amb}</div>{note}<input type="hidden" name="{RIEPILOGO}:privacy" value="si" /><input type="text" name="{RIEPILOGO}:tel1" value="0110000000" disabled="true" /><input type="text" name="{RIEPILOGO}:tel2" value="" disabled="true" /><input type="text" name="{RIEPILOGO}:tel3" value="3330000000" /><input type="text" name="{RIEPILOGO}:email" value="" /><div id="{RIEPILOGO}:riepilogo-nextButton-bottom">Conferma</div>"#,
         n = cose.matches("<div>").count()
     );
     format!("<h1>Riepilogo e conferma</h1>{}", modulo(RIEPILOGO, azione, &corpo))

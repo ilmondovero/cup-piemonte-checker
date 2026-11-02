@@ -37,6 +37,7 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 
 use crate::controlli::{adesso, blocca, Stato};
 use crate::registro::Registro;
+use crate::segnalazioni::{self, Tipo};
 
 const FILE: &str = "aggiornamenti.json";
 /// Tra due controlli del canale.
@@ -596,6 +597,9 @@ impl Aggiornamenti {
                         let e = senza_percorsi(&e.to_string());
                         amb.scrivi(&format!("aggiornamenti: versione {v} non scaricata: {e}"));
                         let _ = self.cambia(|c| c.non_installata(&v, adesso(), !rete));
+                        if !rete {
+                            segnalazioni::segnala(Tipo::Aggiornamento, &segnalazioni::aggiornamento_non_riuscito(&v));
+                        }
                         return Err(format!("Non riesco a scaricare la versione {v}: {e}"));
                     }
                 }
@@ -655,6 +659,9 @@ impl Aggiornamenti {
             }
             Err((messaggio, conta)) => {
                 let _ = self.cambia(|c| c.non_installata(a, adesso(), conta));
+                if conta {
+                    segnalazioni::segnala(Tipo::Aggiornamento, &segnalazioni::aggiornamento_non_riuscito(a));
+                }
                 Err(messaggio) // la guardia fa ripartire controlli e operazioni
             }
         }

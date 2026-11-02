@@ -25,6 +25,13 @@
           <button type="button" id="agg-aggiorna" hidden></button>
         </div>
       </div>
+      <div id="segnalazioni">
+        <label class="riga"><input type="checkbox" id="segn-accese"> Invia allo sviluppatore le segnalazioni dei
+          problemi</label>
+        <p class="nota">Se l'app ha un problema serio manda versione, sistema, che cosa è successo e le ultime righe
+          del registro. Il registro non contiene mai codice fiscale, numero ricetta, nomi o luoghi; prima di mandare
+          l'app toglie anche date, orari, email, telefoni e percorsi delle cartelle. <span id="segn-testo"></span></p>
+      </div>
       <p id="messo-da-parte" class="errore" hidden></p>
       <details id="dettagli-registro">
         <summary>Registro dell'app</summary>
@@ -58,6 +65,19 @@
                  placeholder="010A0 0000000001">
         </label>
       </div>
+      <fieldset id="contatti">
+        <legend>Contatti per il CUP (facoltativi)</legend>
+        <label>Email
+          <input name="email" inputmode="email"spellcheck="false" autocapitalize="off"
+                 placeholder="nome@esempio.it">
+        </label>
+        <label>Cellulare
+          <input name="cellulare" type="tel"placeholder="333 123 4567">
+        </label>
+        <button type="button" id="stessi-contatti" class="secondario" hidden>Usa gli stessi contatti</button>
+        <p class="nota">Il CUP ti manda la conferma e il promemoria per email, e gli SMS al cellulare; facoltativi.
+          Restano cifrati su questo computer e vanno solo al portale, quando sposti o prenoti con l'app.</p>
+      </fieldset>
       <fieldset>
         <legend>Dove cerco</legend>
         <select name="dove">

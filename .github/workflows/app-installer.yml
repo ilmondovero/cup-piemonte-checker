@@ -111,6 +111,8 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+          # dove l'app manda le segnalazioni dei problemi (se l'utente le accende): entra nell'app quando si compila
+          CUP_SEGNALAZIONI_URL: ${{ secrets.CUP_SEGNALAZIONI_URL }}
         with:
           projectPath: app/desktop
           tauriScript: tauri
