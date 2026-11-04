@@ -249,7 +249,10 @@ Codice fiscale e numero ricetta vanno solo al portale CUP. Sul computer le ricet
 cifrato (XChaCha20-Poly1305) nella cartella dei dati dell'app, con la chiave nel portachiavi del sistema
 (Gestione credenziali di Windows, Portachiavi di macOS, Secret Service su Linux). Se il portachiavi non
 c'è, la chiave sta in un file leggibile solo dall'utente, e l'app lo dice nelle impostazioni.
-Nell'interfaccia codice fiscale e ricetta compaiono solo in parte (RSS…19X).
+Nell'interfaccia codice fiscale e ricetta compaiono solo in parte (RSS…19X). Con "Copia" accanto a ciascuno
+l'app li mette interi negli appunti, per cercare la ricetta sul sito del CUP: su Windows fuori dalla cronologia
+degli appunti (Win+V) e dalla sincronizzazione, e dopo 2 minuti, o alla chiusura dell'app, gli appunti si
+svuotano se contengono ancora quello.
 Email e cellulare di una ricetta, se li scrivi, stanno nello stesso file cifrato, vanno solo al portale CUP
 (nel Riepilogo, quando sposti o prenoti con l'app) e nella scheda si vedono mascherati (m\*\*\*@gmail.com,
 \*\*\* \*\*\* 4567, solo le ultime 4 cifre). Non finiscono mai nel registro: lì c'è solo se ci sono ("contatti: email si/no, cellulare

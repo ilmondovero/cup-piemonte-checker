@@ -56,6 +56,10 @@ button.secondario { background: transparent; color: var(--accento); border: 1px 
 button.pericolo { color: var(--errore); border-color: var(--errore); }
 button.pericolo-pieno { background: var(--errore); color: var(--scheda); }
 button.icona { background: transparent; color: var(--tenue); font-size: 1.2rem; padding: 4px 8px; }
+button.copia {
+  background: transparent; color: var(--accento); border: 1px solid var(--accento);
+  font-size: 0.75rem; padding: 1px 7px; border-radius: 6px; vertical-align: baseline;
+}
 
 .avviso, .scheda {
   border: 1px solid var(--bordo);

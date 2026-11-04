@@ -419,7 +419,7 @@ fn chiave_dal_file(file: &Path) -> Result<Key, String> {
 }
 
 #[cfg(test)]
-mod test {
+pub(crate) mod test {
     use super::*;
 
     fn cartella(nome: &str) -> PathBuf {
@@ -429,7 +429,7 @@ mod test {
         c
     }
 
-    fn ricetta() -> Ricetta {
+    pub(crate) fn ricetta() -> Ricetta {
         Ricetta {
             id: 1,
             nome: "Prova".into(),

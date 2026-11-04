@@ -41,6 +41,25 @@ function pulsante(testo, classe, azione) {
   return b;
 }
 
+// copia il valore intero (l'interfaccia vede solo quello mascherato): per cercare la ricetta sul sito del CUP
+function copia(r, cosa, nome) {
+  const b = pulsante("Copia", "copia", async () => {
+    try {
+      await invoke("copia", { id: r.id, cosa });
+      // il messaggio resta anche se la lista si ridisegna; 2 minuti come appunti::DURATA
+      avvisa(`Copiato il ${nome}: incollalo sul sito del CUP. Tra 2 minuti l'app svuota gli appunti.`, false);
+      b.textContent = "Copiato ✓";
+      clearTimeout(b.dataset.timer);
+      b.dataset.timer = setTimeout(() => { b.textContent = "Copia"; }, 3000);
+    } catch (e) {
+      avvisa(String(e));
+    }
+  });
+  b.title = `Copia il ${nome} intero`;
+  b.setAttribute("aria-label", `Copia il ${nome}`);
+  return b;
+}
+
 function avvisa(testo, errore = true) {
   messaggio.textContent = testo;
   messaggio.className = errore ? "errore" : "nota";
@@ -178,7 +197,10 @@ function scheda(r) {
     s.append(el("p", "nota", "\"Estendi area\" non ha risposto in tempo: le date più lontane potrebbero mancare."));
   }
   if (r.attiva && r.prossimo && !r.in_corso) s.append(el("p", "nota", `Prossimo controllo: ${r.prossimo}`));
-  s.append(el("p", "nota piccola", `CF ${r.cf} · ricetta ${r.nre}`));
+  const codici = el("p", "nota piccola");
+  codici.append(`CF ${r.cf} `, copia(r, "cf", "codice fiscale"), ` · ricetta ${r.nre} `,
+    copia(r, "nre", "numero della ricetta"));
+  s.append(codici);
   // dove il CUP manda conferma e SMS, mascherati come codice fiscale e ricetta
   const recapiti = [r.email && "✉️ " + r.email, r.cellulare && "📱 " + r.cellulare].filter(Boolean);
   if (recapiti.length) s.append(el("p", "nota piccola", recapiti.join(" · ")));

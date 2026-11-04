@@ -29,3 +29,5 @@ tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2"
+# copia di ricetta e codice fiscale; su Linux anche Wayland, se no X11
+arboard = { version = "3", default-features = false, features = ["wayland-data-control"] }

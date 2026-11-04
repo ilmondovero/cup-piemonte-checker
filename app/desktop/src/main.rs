@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod aggiornamenti;
+mod appunti;
 mod archivio;
 mod controlli;
 mod operazioni;
@@ -197,6 +198,18 @@ fn contatti_di(stato: Condiviso, id: Option<u64>, altra: bool) -> Option<Contatt
         ricette.find(|r| Some(r.id) == id)
     };
     r.map(ContattiUi::da)
+}
+
+/// Copia negli appunti il numero della ricetta ("nre") o il codice fiscale ("cf"), per cercarla sul sito del CUP.
+#[tauri::command]
+fn copia(stato: Condiviso, id: u64, cosa: String) -> Result<(), String> {
+    let cosa = appunti::Cosa::da(&cosa).ok_or("Non si può copiare.")?;
+    let valore = {
+        let d = stato.dati();
+        let r = d.ricette.iter().find(|r| r.id == id).ok_or("Ricetta non trovata.")?;
+        cosa.di(r).to_string()
+    };
+    appunti::copia(&valore)
 }
 
 fn nome_pulito(nome: &str) -> Result<String, String> {
@@ -845,6 +858,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             ricette,
             contatti_di,
+            copia,
             aggiungi,
             modifica,
             elimina,
@@ -863,6 +877,11 @@ fn main() {
             segnalazioni,
             imposta_segnalazioni
         ])
-        .run(tauri::generate_context!())
-        .expect("avvio dell'app non riuscito");
+        .build(tauri::generate_context!())
+        .expect("avvio dell'app non riuscito")
+        .run(|_, evento| {
+            if let tauri::RunEvent::Exit = evento {
+                appunti::alla_chiusura();
+            }
+        });
 }
