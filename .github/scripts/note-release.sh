@@ -25,7 +25,8 @@ link() { # il primo file che corrisponde, come link markdown
 
 cat <<EOF
 App per il computer che controlla il [CUP Piemonte](https://cup.isan.csi.it/) ogni 20 minuti e avvisa quando
-si libera una data prima della tua prenotazione. Sposta o disdice solo quando lo chiedi tu.
+si libera una data prima della tua prenotazione. Sposta o disdice quando lo chiedi tu, o da sola se accendi
+la prenotazione automatica.
 Pagina di download: https://ilmondovero.github.io/cup-piemonte-checker/
 
 ## Scarica la versione $v

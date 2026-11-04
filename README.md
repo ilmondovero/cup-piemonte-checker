@@ -19,11 +19,11 @@ ogni 20 minuti. Gratuita, senza account e senza server.
 
 | Sistema | Download | |
 |---|---|---|
-| **Windows** 10 e 11 | [**Installer (.exe)**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.3.1/CUP-Piemonte_0.3.1_x64-setup.exe) | consigliato · oppure [.msi](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.3.1/CUP-Piemonte_0.3.1_x64.msi) per tutti gli utenti |
-| **macOS** (Intel e Apple Silicon) | [**Immagine disco (.dmg)**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.3.1/CUP-Piemonte_0.3.1_universal.dmg) | trascina l'app in Applicazioni |
-| **Linux** 64 bit (x86_64) | [**.deb**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.3.1/CUP-Piemonte_0.3.1_amd64.deb) · [**.rpm**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.3.1/CUP-Piemonte-0.3.1-1.x86_64.rpm) · [**.AppImage**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.3.1/CUP-Piemonte_0.3.1_amd64.AppImage) | Ubuntu 22.04+, Debian 12+, Mint 21+ · Fedora e openSUSE · le altre |
+| **Windows** 10 e 11 | [**Installer (.exe)**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.3.2/CUP-Piemonte_0.3.2_x64-setup.exe) | consigliato · oppure [.msi](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.3.2/CUP-Piemonte_0.3.2_x64.msi) per tutti gli utenti |
+| **macOS** (Intel e Apple Silicon) | [**Immagine disco (.dmg)**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.3.2/CUP-Piemonte_0.3.2_universal.dmg) | trascina l'app in Applicazioni |
+| **Linux** 64 bit (x86_64) | [**.deb**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.3.2/CUP-Piemonte_0.3.2_amd64.deb) · [**.rpm**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.3.2/CUP-Piemonte-0.3.2-1.x86_64.rpm) · [**.AppImage**](https://github.com/ilmondovero/cup-piemonte-checker/releases/download/app-v0.3.2/CUP-Piemonte_0.3.2_amd64.AppImage) | Ubuntu 22.04+, Debian 12+, Mint 21+ · Fedora e openSUSE · le altre |
 
-Versione 0.3.1 (versione di prova). La [**pagina di download**](https://ilmondovero.github.io/cup-piemonte-checker/)
+Versione 0.3.2 (versione di prova). La [**pagina di download**](https://ilmondovero.github.io/cup-piemonte-checker/)
 propone l'ultima versione per il tuo sistema; tutte le versioni e le somme SHA-256 sono nella
 pagina [Releases](https://github.com/ilmondovero/cup-piemonte-checker/releases).
 
@@ -44,8 +44,12 @@ pagina [Releases](https://github.com/ilmondovero/cup-piemonte-checker/releases).
 - Cerca dove vuoi tu: la stessa sede, il tuo comune o un altro, Torino e prima cintura, la provincia o
   dove propone il CUP. Puoi escludere dei giorni.
 - Quando esce una data prima arriva una notifica con data, ora e luogo.
-- **Non sposta mai nulla da sola.** "Sposta qui" mostra la data attuale e quella nuova e sposta solo
+- **Sposta solo quando lo dici tu.** "Sposta qui" mostra la data attuale e quella nuova e sposta solo
   dopo il tuo "Sì", poi controlla sul portale che sia andata. Puoi anche disdire.
+- **Prenotazione automatica, se la accendi** (dalla versione 0.3.2, per ricetta, spenta di default): la prima
+  data buona la sposta o la prenota da sola e te lo dice con data, ora e luogo. Ogni data la prova una
+  volta sola, e si spegne da sola se l'esito non è certo o il portale risponde in modo inatteso.
+- **"Copia"** accanto a codice fiscale e ricetta (dalla 0.3.2), per cercarla sul sito del CUP.
 - **Ricetta non ancora prenotata** (dalla versione 0.2.0): cerca il primo posto libero nella zona scelta e
   te lo propone; prenota solo con "Prenota qui" e il tuo "Sì", poi cerca date prima. È una funzione nuova:
   un passo del portale non è ancora stato visto con una ricetta vera, e se qualcosa non torna l'app si
@@ -69,7 +73,7 @@ scrivere codice fiscale, ricetta o dati della visita.
 | Dove gira | sul tuo computer | su un server (VPS) | sul tuo computer |
 | Avvisi | notifiche del sistema | messaggi Telegram, anche sul telefono | messaggi Telegram |
 | Visita già prenotata: cerca date prima | sì | sì | no |
-| Sposta la prenotazione | sì, solo con il tuo "Sì" | sì, con un tocco (o in automatico, se lo attivi) | no |
+| Sposta la prenotazione | sì, con il tuo "Sì" (o in automatico, se lo attivi, dalla 0.3.2) | sì, con un tocco (o in automatico, se lo attivi) | no |
 | Ricetta mai prenotata | sì, cerca e prenota col tuo "Sì" (dalla 0.2.0, sperimentale) | sì, cerca e prenota (sperimentale) | sì, avvisa quando c'è posto |
 | Installazione | un installer | server Linux, Docker o systemd | Python, Playwright, Chromium |
 | Cartella | [`app/`](app/) | [`telegram-bot/`](telegram-bot/) | questa |
