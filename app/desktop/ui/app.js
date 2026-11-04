@@ -4,6 +4,8 @@ const $ = (id) => document.getElementById(id);
 const modulo = $("modulo");
 const messaggio = $("messaggio");
 let modifica = null; // id della ricetta in modifica, null per una nuova
+// la prenotazione automatica com'era all'apertura del modulo (vedi il comando modifica)
+let automaticaPrima = false;
 // le ultime schede lette: servono per "Usa gli stessi contatti"
 let schede = [];
 // "Elimina" chiede conferma per qualche secondo; resta valida anche se nel frattempo le schede si ridisegnano
@@ -156,7 +158,14 @@ function scheda(r) {
     s.append(el("p", "quando", "📅 Non ancora prenotata: cerco il primo posto libero"));
     if (r.esito && r.esito.cosa) s.append(el("p", "cosa", "🩺 " + r.esito.cosa));
   }
-  s.append(el("p", "nota", `🔎 Cerco ${r.zona} · ${r.giorni}`), riepilogo(r));
+  s.append(el("p", "nota", `🔎 Cerco ${r.zona} · ${r.giorni}`));
+  // in pausa o con un esito da controllare non parte niente: allora non la si mostra
+  if (r.automatica && r.attiva && !r.incerta) {
+    s.append(el("p", "nota automatica", r.nuova
+      ? "⚡ Prenotazione automatica: il primo posto libero che va bene lo prenoto da sola"
+      : "⚡ Prenotazione automatica: una data prima che va bene la prenoto da sola"));
+  }
+  s.append(riepilogo(r));
   const libera = !r.in_corso && !r.incerta && !inViaggio.has(r.id);
   if (r.esito && r.esito.note_visita.length) {
     const note = el("details", "note");
@@ -178,10 +187,10 @@ function scheda(r) {
       lista.append(li);
     }
     s.append(lista, el("p", "nota", r.nuova
-      ? "Puoi prenotare qui con \"Prenota qui\", o dal sito del CUP Piemonte o al call center 800 000 500. L'app " +
-        "non prenota mai nulla da sola."
-      : "Puoi spostarla qui con \"Sposta qui\", o dal sito del CUP Piemonte o al call center 800 000 500. L'app " +
-        "non sposta mai nulla da sola."));
+      ? "Puoi prenotare qui con \"Prenota qui\", o dal sito del CUP Piemonte o al call center 800 000 500." +
+        (r.automatica ? "" : " L'app non prenota mai nulla da sola.")
+      : "Puoi spostarla qui con \"Sposta qui\", o dal sito del CUP Piemonte o al call center 800 000 500." +
+        (r.automatica ? "" : " L'app non sposta mai nulla da sola.")));
     if (r.esito.solo_proposta) {
       s.append(el("p", "nota", "La ricetta ha più prestazioni: l'app prenota solo la data che il portale propone " +
         "per tutte insieme."));
@@ -335,6 +344,7 @@ function apri(r) {
     modulo.dove.value = dove;
     modulo.valore.value = valore;
     for (const c of modulo.querySelectorAll("input[name=evita]")) c.checked = r.evita.includes(Number(c.value));
+    modulo.automatica.checked = automaticaPrima = r.automatica;
   }
   modulo.valore.hidden = modulo.dove.value !== "altro";
   modulo.hidden = false;
@@ -365,13 +375,15 @@ modulo.addEventListener("submit", async (ev) => {
   const evita = [...modulo.querySelectorAll("input[name=evita]:checked")].map((x) => Number(x.value));
   // controllati dall'app (formato, cellulare italiano): un errore torna come messaggio
   const contatti = { email: modulo.email.value, cellulare: modulo.cellulare.value };
+  const automatica = modulo.automatica.checked;
   const salva = $("salva");
   salva.disabled = true;
   if (modifica === null) avvisa("Leggo la prenotazione dal portale… può volerci un minuto.", false);
   const ok = modifica === null
     ? await esegui("aggiungi", { nome: modulo.nome.value, cf: modulo.cf.value, nre: modulo.nre.value, ...comune, evita,
-                                 attiva: modulo.attiva.checked, ...contatti })
-    : await esegui("modifica", { id: modifica, nome: modulo.nome.value, ...comune, evita, ...contatti },
+                                 attiva: modulo.attiva.checked, ...contatti, automatica })
+    : await esegui("modifica", { id: modifica, nome: modulo.nome.value, ...comune, evita, ...contatti, automatica,
+                                 automaticaPrima },
                    "Modifiche salvate.");
   salva.disabled = false;
   if (ok) chiudi();

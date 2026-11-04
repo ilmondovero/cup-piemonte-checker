@@ -139,3 +139,4 @@ ul.date li button { justify-self: start; margin-top: 4px; padding: 5px 10px; fon
 .conferma .titolo { font-weight: 700; }
 .conferma .pulsanti button { padding: 7px 10px; }
 details.note summary { font-size: 0.85rem; color: var(--tenue); }
+.nota.automatica { color: var(--accento); font-weight: 600; }

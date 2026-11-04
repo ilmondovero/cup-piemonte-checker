@@ -15,7 +15,7 @@ use std::sync::Arc;
 use chrono::{Local, TimeZone};
 use cup_core::analisi::credenziali;
 use cup_core::contatti;
-use cup_core::operazioni::Attese;
+use cup_core::operazioni::{Attese, Prenotata, Spostamento};
 use cup_core::{Dove, Errore, Prenotazione, Sessione};
 use serde::Serialize;
 use tauri::menu::{Menu, MenuItem};
@@ -92,6 +92,8 @@ struct Scheda {
     /// "m***@gmail.com" e "*** *** 4567": come codice fiscale e ricetta, mai per intero nella scheda.
     email: Option<String>,
     cellulare: Option<String>,
+    /// La prenotazione automatica e' accesa.
+    automatica: bool,
     prossimo: Option<String>,
     esito: Option<EsitoUi>,
 }
@@ -130,6 +132,7 @@ fn scheda(r: &Ricetta, in_corso: Option<Attivita>) -> Scheda {
         incerta: r.incerta.clone(),
         email: r.email.as_deref().map(contatti::email_mascherata),
         cellulare: r.cellulare.as_deref().map(contatti::cellulare_mascherato),
+        automatica: r.automatica,
         prossimo: controlli::prossimo(r, adesso()).map(ora),
         esito: r.esito.as_ref().map(|e| EsitoUi {
             ora: ora(e.ts),
@@ -269,6 +272,7 @@ async fn aggiungi(
     attiva: bool,
     email: String,
     cellulare: String,
+    automatica: bool,
 ) -> Result<String, String> {
     let nome = nome_pulito(&nome)?;
     let (email, cellulare) = contatti_puliti(&email, &cellulare)?;
@@ -323,15 +327,22 @@ async fn aggiungi(
         nuova,
         email,
         cellulare,
+        automatica,
+        tentate: vec![],
     });
     stato.registro.scrivi(&format!(
-        "ricetta {id}: aggiunta{}{}",
+        "ricetta {id}: aggiunta{}{}{}",
         if nuova { " (mai prenotata)" } else { "" },
-        if attiva { "" } else { " (in pausa)" }
+        if attiva { "" } else { " (in pausa)" },
+        if automatica { " (prenotazione automatica)" } else { "" }
     ));
     salva(&app, &stato, &d)?;
     Ok(if !nuova {
         "Ricetta aggiunta.".into()
+    } else if attiva && automatica {
+        "Ricetta aggiunta. Non è ancora prenotata: l'app cerca il primo posto libero e lo prenota da sola \
+         (prenotazione automatica)."
+            .into()
     } else if attiva {
         "Ricetta aggiunta. Non è ancora prenotata: l'app cerca il primo posto libero e te lo propone, e prenota solo \
          se tocchi «Prenota qui»."
@@ -355,6 +366,8 @@ fn modifica(
     evita: Vec<u32>,
     email: String,
     cellulare: String,
+    automatica: bool,
+    automatica_prima: bool,
 ) -> Result<(), String> {
     let nome = nome_pulito(&nome)?;
     let (email, cellulare) = contatti_puliti(&email, &cellulare)?;
@@ -370,7 +383,17 @@ fn modifica(
         }
     }
     (r.nome, r.dove, r.valore, r.evita, r.email, r.cellulare) = (nome, dove, valore, evita, email, cellulare);
+    // solo se l'utente l'ha cambiata nel modulo: se l'app l'ha spenta mentre il modulo era aperto, resta spenta
+    let cambiata = automatica != automatica_prima && r.automatica != automatica;
+    if cambiata {
+        r.automatica = automatica;
+    }
     stato.registro.scrivi(&format!("ricetta {id}: modificata"));
+    if cambiata {
+        stato
+            .registro
+            .scrivi(&format!("ricetta {id}: prenotazione automatica {}", if automatica { "accesa" } else { "spenta" }));
+    }
     salva(&app, &stato, &d)
 }
 
@@ -411,6 +434,78 @@ fn finita(app: &AppHandle, fine: Result<Fine, String>) -> Result<String, String>
     }
 }
 
+/// Lo spostamento vero sul portale, sulla data con questa chiave.
+fn sposta_sul_portale(
+    r: &Ricetta,
+    tenuta: Option<Sessione>,
+    chiave: &str,
+    fasi: operazioni::Fasi,
+) -> Result<Spostamento, Errore> {
+    let (zona, cal) = zona_di(r)?;
+    let (cf, nre) = (r.cf.clone(), r.nre.clone());
+    cup_core::operazioni::sposta(
+        &|attesa| Sessione::con_limite(&cf, &nre, attesa),
+        tenuta,
+        chiave,
+        &zona,
+        &cal,
+        false,
+        &Attese::default(),
+        &r.contatti(),
+        fasi,
+    )
+}
+
+/// La prima prenotazione vera sul portale, sulla data con questa chiave.
+fn prenota_sul_portale(
+    r: &Ricetta,
+    tenuta: Option<Sessione>,
+    chiave: &str,
+    fasi: operazioni::Fasi,
+) -> Result<Prenotata, Errore> {
+    let (zona, cal) = zona_di(r)?;
+    let (cf, nre) = (r.cf.clone(), r.nre.clone());
+    cup_core::operazioni::prenota(
+        &|attesa| Sessione::con_limite(&cf, &nre, attesa),
+        tenuta,
+        chiave,
+        &zona,
+        &cal,
+        false,
+        &Attese::default(),
+        &r.contatti(),
+        fasi,
+    )
+}
+
+/// La prenotazione automatica dopo un controllo (dal thread dei controlli): sposta o prenota la ricetta sulla data,
+/// poi la notifica con data, ora e luogo. True se e' riuscita.
+fn da_sola(app: &AppHandle, stato: &Stato, id: u64, chiave: &str) -> bool {
+    let Some(nuova) = stato.dati().ricette.iter().find(|r| r.id == id).map(|r| r.nuova) else { return false };
+    let _ = app.emit("ricette", ());
+    let fine = if nuova {
+        operazioni::prenota_da_sola(stato, id, chiave, &|r, t, f| prenota_sul_portale(r, t, chiave, f))
+    } else {
+        operazioni::sposta_da_sola(stato, id, chiave, &|r, t, f| sposta_sul_portale(r, t, chiave, f))
+    };
+    let riuscita = match fine {
+        Ok(fine) => {
+            if let Some(n) = &fine.notifica {
+                avvisa(app, &n.titolo, &n.testo, &format!("ricetta {}, {}", n.ricetta, n.tipo));
+            }
+            fine.ok
+        }
+        // spenta o in pausa nel frattempo, data sparita, operazione in corso: non e' partito niente
+        Err(_) => {
+            stato.registro.scrivi(&format!("ricetta {id}: prenotazione automatica non partita"));
+            operazioni::non_partita(stato, id, chiave);
+            false
+        }
+    };
+    let _ = app.emit("ricette", ());
+    riuscita
+}
+
 /// Sposta la prenotazione su una delle date buone trovate (l'utente l'ha confermato nell'interfaccia).
 #[tauri::command]
 async fn sposta(app: AppHandle, stato: Condiviso<'_>, id: u64, chiave: String) -> Result<String, String> {
@@ -418,19 +513,7 @@ async fn sposta(app: AppHandle, stato: Condiviso<'_>, id: u64, chiave: String) -
     let h = app.clone();
     let fine = tauri::async_runtime::spawn_blocking(move || {
         let motore = |r: &Ricetta, tenuta: Option<Sessione>, fasi: operazioni::Fasi| {
-            let (zona, cal) = zona_di(r)?;
-            let (cf, nre) = (r.cf.clone(), r.nre.clone());
-            cup_core::operazioni::sposta(
-                &|attesa| Sessione::con_limite(&cf, &nre, attesa),
-                tenuta,
-                &chiave,
-                &zona,
-                &cal,
-                false,
-                &Attese::default(),
-                &r.contatti(),
-                fasi,
-            )
+            sposta_sul_portale(r, tenuta, &chiave, fasi)
         };
         operazioni::sposta(&st, id, &chiave, &motore, &|| {
             let _ = h.emit("ricette", ());
@@ -448,19 +531,7 @@ async fn prenota(app: AppHandle, stato: Condiviso<'_>, id: u64, chiave: String) 
     let h = app.clone();
     let fine = tauri::async_runtime::spawn_blocking(move || {
         let motore = |r: &Ricetta, tenuta: Option<Sessione>, fasi: operazioni::Fasi| {
-            let (zona, cal) = zona_di(r)?;
-            let (cf, nre) = (r.cf.clone(), r.nre.clone());
-            cup_core::operazioni::prenota(
-                &|attesa| Sessione::con_limite(&cf, &nre, attesa),
-                tenuta,
-                &chiave,
-                &zona,
-                &cal,
-                false,
-                &Attese::default(),
-                &r.contatti(),
-                fasi,
-            )
+            prenota_sul_portale(r, tenuta, &chiave, fasi)
         };
         operazioni::prenota(&st, id, &chiave, &motore, &|| {
             let _ = h.emit("ricette", ());
@@ -815,7 +886,8 @@ fn main() {
             }
             // archivio, icona e finestra pronti (la prova degli installer su GitHub aspetta questa riga)
             stato.registro.scrivi("avvio completato");
-            let (h1, h2) = (app.handle().clone(), app.handle().clone());
+            let (h1, h2, h5) = (app.handle().clone(), app.handle().clone(), app.handle().clone());
+            let st5 = stato.clone();
             let (h3, h4) = (app.handle().clone(), app.handle().clone());
             let amb: Arc<dyn aggiornamenti::Ambiente> = stato.clone();
             aggiornamenti::avvia(app.handle().clone(), amb, agg.clone(), move |titolo, testo, registro| {
@@ -837,6 +909,7 @@ fn main() {
                 move || {
                     let _ = h2.emit("ricette", ());
                 },
+                move |id, chiave| da_sola(&h5, &st5, id, chiave),
             );
             Ok(())
         })

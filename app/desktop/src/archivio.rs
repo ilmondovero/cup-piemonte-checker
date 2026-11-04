@@ -153,6 +153,13 @@ pub struct Ricetta {
     /// Solo cifre, senza prefisso (vedi cup_core::contatti::cellulare).
     #[serde(default)]
     pub cellulare: Option<String>,
+    /// L'utente ha acceso la prenotazione automatica: dopo un controllo l'app sposta (o prenota) da sola sulla data
+    /// buona piu' vicina, senza aspettare "Sposta qui". Si spegne da sola dopo un esito incerto.
+    #[serde(default)]
+    pub automatica: bool,
+    /// Le chiavi delle date gia' tentate in automatico: ogni data una volta sola.
+    #[serde(default)]
+    pub tentate: Vec<String>,
 }
 
 impl Ricetta {
@@ -448,6 +455,8 @@ pub(crate) mod test {
             nuova: false,
             email: None,
             cellulare: None,
+            automatica: false,
+            tentate: vec![],
         }
     }
 

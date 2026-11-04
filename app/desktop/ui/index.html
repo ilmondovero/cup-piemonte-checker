@@ -102,14 +102,27 @@
           <label><input type="checkbox" name="evita" value="6">dom</label>
         </div>
       </fieldset>
+      <fieldset>
+        <legend>Prenotazione automatica</legend>
+        <label class="riga"><input type="checkbox" name="automatica"> ⚡ Prenota da sola la prima data buona</label>
+        <p class="nota">Se la accendi, quando un controllo trova una data che va bene (prima della prenotazione, dove
+          cerchi e nei giorni che non eviti, mai per oggi) l'app la prenota subito, senza aspettare il tuo tocco: le
+          date buone spariscono in pochi minuti. La prenotazione attuale viene sostituita e la data vecchia si perde.
+          Se poi non puoi andare, disdici o sposta almeno 2 giorni lavorativi prima, altrimenti si paga l'intera
+          prestazione. Ti avvisa subito con data, ora e luogo. Ogni data la prova una volta sola. Si spegne da sola
+          se l'esito non è certo, se il portale risponde in un modo inatteso, dopo una disdetta e se la ricetta
+          risulta prenotata da un'altra parte.</p>
+      </fieldset>
       <label class="riga" id="riga-attiva"><input type="checkbox" name="attiva" checked> Inizia subito a cercare</label>
-      <p class="nota">Ricetta non ancora prenotata? L'app cerca il primo posto libero e lo prenota solo quando tocchi
-        "Prenota qui". Finché non è prenotata, "nel comune", "nella provincia" o "nella sede della prenotazione"
-        valgono come "Dove propone il CUP": per un comune preciso scegli "In un altro comune…".</p>
+      <p class="nota">Ricetta non ancora prenotata? L'app cerca il primo posto libero e lo prenota quando tocchi
+        "Prenota qui", o da sola con la prenotazione automatica. Finché non è prenotata, "nel comune", "nella
+        provincia" o "nella sede della prenotazione" valgono come "Dove propone il CUP": per un comune preciso
+        scegli "In un altro comune…".</p>
       <p class="nota">Ogni controllo apre gli appuntamenti sul portale: la data che il portale propone resta bloccata
         per circa 40 minuti, anche per te dal sito del CUP. Per questo l'app controlla ogni ricetta al massimo ogni
-        20 minuti, e non sposta né prenota mai nulla da sola: lo fai tu, con "Sposta qui" o "Prenota qui" su una data
-        trovata. Se segui la stessa ricetta anche con il bot Telegram, usa uno solo dei due.</p>
+        20 minuti. Senza la prenotazione automatica non sposta né prenota mai nulla da sola: lo fai tu, con "Sposta
+        qui" o "Prenota qui" su una data trovata. Se segui la stessa ricetta anche con il bot Telegram, usa uno
+        solo dei due.</p>
       <div class="pulsanti">
         <button type="button" id="annulla" class="secondario">Annulla</button>
         <button type="submit" id="salva">Salva</button>

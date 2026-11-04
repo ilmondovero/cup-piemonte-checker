@@ -37,8 +37,8 @@ non apre "Sposta", mette in pausa e dice quale delle due disdire. Mette in pausa
 disdetta o erogata, o se il portale non la trova per tre controlli di fila. Se segui la stessa ricetta anche
 con il bot, usa uno solo dei due.
 
-**Spostare e disdire.** L'app non sposta mai nulla da sola. Su ogni data trovata c'è "Sposta qui", e sulla
-scheda "Disdici": entrambi chiedono conferma mostrando data, ora e luogo. Lo spostamento segue il bot passo
+**Spostare e disdire.** Senza la prenotazione automatica l'app non sposta mai nulla da sola. Su ogni data
+trovata c'è "Sposta qui", e sulla scheda "Disdici": entrambi chiedono conferma mostrando data, ora e luogo. Lo spostamento segue il bot passo
 per passo:
 - riusa la sessione del controllo che ha trovato la data, che tiene bloccata la proposta, se ha meno di
   35 minuti; altrimenti ne apre una nuova;
@@ -57,6 +57,21 @@ Se dopo la Conferma non riesce a verificare l'esito, o se si chiude a metà, lo 
 caso mette la ricetta in pausa e non fa altre operazioni finché non tocchi "Ho controllato" dopo aver
 guardato sul sito del CUP. Su una ricetta si fa una cosa alla volta: mai uno spostamento durante un
 controllo.
+
+**Prenotazione automatica** (dalla versione 0.3.2, facoltativa, spenta finché non la accendi in "Modifica" o
+quando aggiungi la ricetta). Dopo un controllo che trova date buone l'app sposta da sola la prenotazione, o
+prenota una ricetta mai prenotata, sulla data più vicina, con lo stesso spostamento di "Sposta qui" e la
+sessione del controllo appena fatto. Come la conferma automatica del bot:
+- solo date che vanno bene (prima della prenotazione, nella zona scelta, nei giorni che non eviti), con una
+  sede, mai per oggi;
+- ogni data la prova una volta sola: la data tentata si salva sul disco prima di toccare il portale;
+- una notifica con data, ora e luogo, sia se riesce sia se non riesce (la data trovata non si notifica a
+  parte);
+- si spegne da sola dopo un esito incerto (che ferma comunque la ricetta, anche se l'app si è chiusa a metà),
+  dopo un tentativo non riuscito per un motivo diverso dalla data presa da un altro o dal portale lento
+  (pagine o Riepiloghi che il motore non riconosce), se una ricetta mai prenotata con più prestazioni non
+  riesce, dopo una disdetta e se la ricetta risulta prenotata da un'altra parte (sito del CUP, telefono);
+- se il tentativo non riesce o non parte, le date trovate si notificano come senza l'automatica.
 
 **Ricette mai prenotate** (dalla versione 0.2.0, sperimentale). Se il portale non trova prenotazioni per la
 ricetta, o le ha tutte disdette, l'app la segue come "mai prenotata":

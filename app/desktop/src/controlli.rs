@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use chrono::NaiveDate;
 use cup_core::analisi::breve;
 use cup_core::{Calendario, Controllo, Dove, Errore, Sessione, Slot, Zona};
 use serde::Serialize;
@@ -280,6 +281,8 @@ pub fn applica(r: &mut Ricetta, esito: Result<Controllo, Errore>, zona: &Zona, t
         Err(Errore::GiaPrenotata(m)) => {
             r.nuova = false;
             r.assenze = 0;
+            // la data l'ha scelta l'utente (sito del CUP, telefono): non la si sposta da sola senza che lo decida
+            let spenta = std::mem::take(&mut r.automatica);
             r.esito = Some(Esito {
                 ts,
                 controllo: false,
@@ -293,7 +296,14 @@ pub fn applica(r: &mut Ricetta, esito: Result<Controllo, Errore>, zona: &Zona, t
                 ricetta: r.id,
                 tipo: "già prenotata",
                 titolo: format!("{}: la ricetta risulta prenotata", r.nome),
-                testo: format!("{m}. Da ora l'app cerca date prima della prenotazione."),
+                testo: format!(
+                    "{m}. Da ora l'app cerca date prima della prenotazione.{}",
+                    if spenta {
+                        " La prenotazione automatica è spenta: riaccendila da «Modifica» se vuoi."
+                    } else {
+                        ""
+                    }
+                ),
             }]
         }
         Err(e) => {
@@ -341,6 +351,19 @@ pub fn applica(r: &mut Ricetta, esito: Result<Controllo, Errore>, zona: &Zona, t
     }
 }
 
+/// La data da prenotare da sola dopo un controllo, se la ricetta ha la prenotazione automatica accesa: la piu'
+/// vicina tra quelle buone, con una sede, mai per oggi e mai una gia' tentata.
+pub fn da_sola(r: &Ricetta, c: &Controllo, oggi: NaiveDate) -> Option<String> {
+    if !r.automatica || !r.attiva || r.incerta.is_some() || r.operazione.is_some() {
+        return None;
+    }
+    c.migliori
+        .iter()
+        .filter(|s| !s.luogo.sede.trim().is_empty() && s.quando.date() > oggi)
+        .map(Slot::chiave)
+        .find(|k| !r.tentate.contains(k))
+}
+
 pub type Impostazioni = (String, String, String, String, Vec<u32>);
 
 /// Le impostazioni da cui dipende un controllo: se cambiano mentre e' in corso, il suo esito non vale piu'.
@@ -371,13 +394,23 @@ pub fn sul_portale(r: &Ricetta, zona: &Zona, cal: &Calendario) -> Risultato {
     }
 }
 
+/// Com'e' andato un giro: le notifiche e, se la ricetta ha la prenotazione automatica, la data da prenotare.
+#[derive(Debug, Default)]
+pub struct Giro {
+    pub notifiche: Vec<Notifica>,
+    /// (ricetta, chiave della data): gia' segnata tra le tentate e salvata.
+    pub da_sola: Option<(u64, String)>,
+    /// Le date trovate, notificate solo se la prenotazione automatica non riesce (se riesce, basta il suo esito).
+    pub rinviate: Vec<Notifica>,
+}
+
 /// Un giro: se c'e' una ricetta da controllare la controlla con `controlla` e ne salva l'esito. `inizio` si chiama
 /// quando il controllo parte (per mostrarlo nell'interfaccia). None se non c'era niente da fare.
 pub fn giro(
     stato: &Stato,
     controlla: &dyn Fn(&Ricetta, &Zona, &Calendario) -> Risultato,
     inizio: &dyn Fn(),
-) -> Option<Vec<Notifica>> {
+) -> Option<Giro> {
     let r = {
         let mut in_corso = blocca(&stato.in_corso);
         if stato.in_chiusura() {
@@ -432,45 +465,96 @@ pub fn giro(
     });
     // due pagine non riconosciute di fila: una segnalazione allo sviluppatore, se l'utente le ha accese
     segnalazioni::controllo(esito.as_ref().err().is_some_and(non_riconosciuta));
-    let notifiche = {
+    let giro = {
         let mut d = stato.dati();
         // la ricetta puo' essere stata cancellata o cambiata nel frattempo: allora l'esito non vale
         let x = d.ricette.iter_mut().find(|x| x.id == r.id && impostazioni(x) == impostazioni(&r));
-        let notifiche = match x {
+        match x {
             Some(x) => {
                 let attiva = x.attiva;
-                let n = applica(x, esito, &zona, adesso());
+                // sulla ricetta di adesso: l'automatica puo' essere stata spenta durante il controllo
+                let scelta = esito.as_ref().ok().and_then(|c| da_sola(x, c, chrono::Local::now().date_naive()));
+                let mut notifiche = applica(x, esito, &zona, adesso());
                 if attiva && !x.attiva {
                     stato.registro.scrivi(&format!("ricetta {}: controlli in pausa", r.id));
                 }
-                let _ = stato.salva(&d);
-                n
+                // tentata da qui, anche se poi non parte: ogni data una volta sola
+                if let Some(k) = &scelta {
+                    x.tentate.push(k.clone());
+                    let troppe = x.tentate.len().saturating_sub(NOTIFICATE_MAX);
+                    x.tentate.drain(..troppe);
+                }
+                // senza le tentate salvate, dopo un riavvio si riproverebbe la stessa data: meglio non prenotare
+                // (e la data si notifica come sempre)
+                let salvata = stato.salva(&d).is_ok();
+                let scelta = match scelta {
+                    Some(k) if !salvata => {
+                        if let Ok(x) = d.ricetta(r.id) {
+                            x.tentate.retain(|t| *t != k);
+                        }
+                        None
+                    }
+                    s => s,
+                };
+                // l'esito della prenotazione automatica arriva subito dopo, con data, ora e luogo
+                let rinviate = match scelta {
+                    Some(_) => {
+                        let (date, altre) = notifiche.into_iter().partition(|n| n.tipo == "date nuove");
+                        notifiche = altre;
+                        date
+                    }
+                    None => vec![],
+                };
+                Giro { notifiche, da_sola: scelta.map(|k| (r.id, k)), rinviate }
             }
             None => {
                 blocca(&stato.tenute).remove(&r.id); // la sessione di una ricetta cambiata o eliminata non serve
                 stato.registro.scrivi(&format!("ricetta {}: cambiata o eliminata durante il controllo", r.id));
-                vec![]
+                Giro::default()
             }
-        };
-        notifiche
+        }
     };
     stato.libera(r.id);
-    Some(notifiche)
+    Some(giro)
 }
 
-/// Avvia il thread dei controlli. `avvisa` mostra le notifiche, `aggiornato` dice all'interfaccia di ridisegnarsi.
+/// La ricetta ha ancora date buone oltre a quella appena tentata, e nessun esito da controllare.
+fn altre_buone(stato: &Stato, id: u64, tentata: &str) -> bool {
+    stato.dati().ricette.iter().any(|r| {
+        r.id == id
+            && r.incerta.is_none()
+            && r.esito.as_ref().is_some_and(|e| e.buone.iter().any(|d| d.chiave != tentata))
+    })
+}
+
+/// Avvia il thread dei controlli. `avvisa` mostra le notifiche, `aggiornato` dice all'interfaccia di ridisegnarsi,
+/// `prenota` sposta o prenota da sola la ricetta sulla data (prenotazione automatica), nello stesso thread: intanto
+/// non parte nessun altro controllo.
 pub fn avvia(
     stato: Arc<Stato>,
     avvisa: impl Fn(Vec<Notifica>) + Send + 'static,
     aggiornato: impl Fn() + Send + 'static,
+    prenota: impl Fn(u64, &str) -> bool + Send + 'static,
 ) {
     thread::spawn(move || loop {
         thread::sleep(GIRO);
         // un errore imprevisto fuori dal controllo non deve fermare il thread: si riparte al giro dopo
         match catch_unwind(AssertUnwindSafe(|| giro(&stato, &sul_portale, &aggiornato))) {
-            Ok(Some(notifiche)) => {
-                avvisa(notifiche);
+            Ok(Some(g)) => {
+                avvisa(g.notifiche);
                 aggiornato();
+                if let Some((id, chiave)) = g.da_sola {
+                    let riuscita = catch_unwind(AssertUnwindSafe(|| prenota(id, &chiave))).unwrap_or_else(|_| {
+                        stato.registro.scrivi("errore interno nella prenotazione automatica");
+                        false
+                    });
+                    // non riuscita o mai partita: le date trovate si notificano come senza l'automatica, se valgono
+                    // ancora (dopo un esito incerto o una ricetta prenotata altrove l'app le ha tolte)
+                    if !riuscita && altre_buone(&stato, id, &chiave) {
+                        avvisa(g.rinviate);
+                    }
+                    aggiornato();
+                }
             }
             Ok(None) => {}
             Err(_) => {
@@ -513,6 +597,8 @@ mod test {
             nuova: false,
             email: None,
             cellulare: None,
+            automatica: false,
+            tentate: vec![],
         }
     }
 
@@ -692,9 +778,14 @@ mod test {
         assert_eq!((e.cosa.as_str(), e.zona.as_str()), ("ECOGRAFIA + VISITA", "solo nel comune di Torino"));
         // il portale la dice gia' prenotata (dal sito del CUP, al telefono): da ora si cercano date prima, senza pausa
         let m = "La ricetta risulta prenotata al gio 07/01/2027 ore 09:00 · MOLINETTE, AMB, TORINO (TO)";
+        let mut r2 = r.clone();
         let n = applica(&mut r, Err(Errore::GiaPrenotata(m.into())), &zona, 20);
         assert!(!r.nuova && r.attiva && n[0].titolo == "Genetica: la ricetta risulta prenotata");
         assert_eq!(n[0].testo, format!("{m}. Da ora l'app cerca date prima della prenotazione."));
+        // con la prenotazione automatica: si spegne, la data scelta dall'utente non si sposta da sola
+        r2.automatica = true;
+        let n2 = applica(&mut r2, Err(Errore::GiaPrenotata(m.into())), &zona, 20);
+        assert!(!r2.automatica && n2[0].testo.contains("La prenotazione automatica è spenta"));
         let e = r.esito.clone().unwrap();
         assert!(e.buone.is_empty() && e.errore.is_none());
         assert_eq!(
@@ -723,7 +814,7 @@ mod test {
             Ok((controllo(vec![slot(1, "MAURIZIANO")]), None))
         };
         let n = giro(&s, &controlla, &|| iniziato.set(true)).unwrap();
-        assert!(iniziato.get() && chiamate.get() == 1 && n.len() == 1);
+        assert!(iniziato.get() && chiamate.get() == 1 && n.notifiche.len() == 1 && n.da_sola.is_none());
         assert!(s.in_corso().is_empty());
         // salvato sul disco: esito e orario del controllo
         let d = s.archivio.leggi().unwrap();
@@ -751,15 +842,66 @@ mod test {
             s.dati().ricette[0].dove = "tutte".into();
             Ok((controllo(vec![slot(1, "MAURIZIANO")]), None))
         };
-        assert!(giro(&s, &cambia, &|| {}).unwrap().is_empty());
+        assert!(giro(&s, &cambia, &|| {}).unwrap().notifiche.is_empty());
         assert!(s.dati().ricette[0].esito.is_none() && s.dati().ricette[0].ultimo_tentativo.is_some());
         // un panic nel motore: il controllo vale come risposta inattesa, e in_corso si azzera
         s.dati().ricette[0].ultimo_tentativo = None;
         let rotto = |_: &Ricetta, _: &Zona, _: &Calendario| -> Risultato { panic!("indice fuori") };
-        assert!(giro(&s, &rotto, &|| {}).unwrap().is_empty());
+        assert!(giro(&s, &rotto, &|| {}).unwrap().notifiche.is_empty());
         let e = s.dati().ricette[0].esito.clone().unwrap();
         assert_eq!(e.errore.as_deref(), Some("errore interno del controllo"));
         assert!(s.in_corso().is_empty());
+        std::fs::remove_dir_all(&c).unwrap();
+    }
+
+    #[test]
+    fn prenotazione_automatica_sceglie_la_piu_vicina_una_volta_sola() {
+        let mut r = ricetta();
+        let c = controllo(vec![slot(2, ""), slot(3, "CTO"), slot(5, "MAURIZIANO")]);
+        let oggi = quando(1, 0).date();
+        // spenta, in pausa o con un esito incerto: niente
+        assert_eq!(da_sola(&r, &c, oggi), None);
+        r.automatica = true;
+        r.attiva = false;
+        assert_eq!(da_sola(&r, &c, oggi), None);
+        r.attiva = true;
+        r.incerta = Some("da controllare".into());
+        assert_eq!(da_sola(&r, &c, oggi), None);
+        r.incerta = None;
+        // la piu' vicina con una sede; mai per oggi; mai una gia' tentata
+        assert_eq!(da_sola(&r, &c, oggi), Some(slot(3, "CTO").chiave()));
+        assert_eq!(da_sola(&r, &c, quando(3, 0).date()), Some(slot(5, "MAURIZIANO").chiave()));
+        r.tentate = vec![slot(3, "CTO").chiave()];
+        assert_eq!(da_sola(&r, &c, oggi), Some(slot(5, "MAURIZIANO").chiave()));
+        r.tentate.push(slot(5, "MAURIZIANO").chiave());
+        assert_eq!(da_sola(&r, &c, oggi), None);
+    }
+
+    #[test]
+    fn un_giro_con_l_automatica_segna_la_data_tentata() {
+        let mut r = ricetta();
+        r.automatica = true;
+        let (s, c) = stato("automatica", vec![r]);
+        let controlla = |_: &Ricetta, _: &Zona, _: &Calendario| Ok((controllo(vec![slot(2, "CTO")]), None));
+        let g = giro(&s, &controlla, &|| {}).unwrap();
+        // la notifica della data la sostituisce quella dell'esito della prenotazione automatica (si manda solo se
+        // non riesce)
+        assert_eq!(g.da_sola, Some((1, slot(2, "CTO").chiave())));
+        assert!(g.notifiche.is_empty() && g.rinviate.len() == 1);
+        // salvata sul disco prima di prenotare: dopo un riavvio la stessa data non si riprova
+        assert_eq!(s.archivio.leggi().unwrap().ricette[0].tentate, vec![slot(2, "CTO").chiave()]);
+        s.dati().ricette[0].ultimo_tentativo = None;
+        let g = giro(&s, &controlla, &|| {}).unwrap();
+        // gia' tentata e gia' notificata
+        assert!(g.da_sola.is_none() && g.notifiche.is_empty());
+        // spenta durante il controllo: niente
+        s.dati().ricette[0].ultimo_tentativo = None;
+        let spegne = |_: &Ricetta, _: &Zona, _: &Calendario| {
+            s.dati().ricette[0].automatica = false;
+            Ok((controllo(vec![slot(4, "CTO")]), None))
+        };
+        let g = giro(&s, &spegne, &|| {}).unwrap();
+        assert!(g.da_sola.is_none() && g.notifiche.len() == 1 && g.rinviate.is_empty());
         std::fs::remove_dir_all(&c).unwrap();
     }
 
