@@ -13,7 +13,11 @@ Regole contro i falsi allarmi:
   - un elemento nuovo si segnala quando compare per la seconda volta;
   - un elemento stabile (visto quasi sempre) si segnala sparito dopo SPARITO osservazioni di fila senza;
   - lo stesso elemento non si segnala di nuovo prima di RIPETI_GIORNI;
-  - pagine d'errore e risposte non 200 non sono osservazioni (per quelle c'e' l'avviso di portale giu').
+  - pagine d'errore e risposte non 200 non sono osservazioni (per quelle c'e' l'avviso di portale giu');
+  - una pagina che perde insieme piu' della meta' degli elementi stabili e' una risposta incompleta del portale
+    (disservizio), non un cambio: non e' un'osservazione e non fa sparire nulla. Si dice una volta (info) dopo
+    DEGRADATA_AVVISO e una volta quando torna completa; dopo DEGRADATA_MAX diventa il portale com'e' e si confronta;
+  - i cambi della stessa osservazione e dello stesso livello sono una sola segnalazione.
 
 Urgente (avviso subito e prenotazioni automatiche sospese): un segno di captcha o antibot nuovo in una pagina
 pubblica, o un elemento che il bot usa (CRITICI) sparito. Quando gli elementi critici tornano, la sospensione
@@ -35,7 +39,12 @@ STABILE = 0.8  # un elemento e' stabile se c'e' in almeno questa quota delle oss
 STABILE_MIN = 5  # ...e almeno in tante
 CAMBIATO_DI_FILA = 2  # sessioni di fila in cui il bot non riconosce lo stesso passo (o manca un critico): urgente
 RIPETI_GIORNI = 7  # un cambio minore dello stesso elemento non si ripete prima
+DEGRADATA_QUOTA = 0.5  # una pagina che perde piu' di questa quota degli elementi stabili tutti insieme e' incompleta
+DEGRADATA_AVVISO = 30 * 60  # secondi di pagina incompleta, e DEGRADATA_OSSERVAZIONI osservazioni, prima di dirlo
+DEGRADATA_OSSERVAZIONI = 3
+DEGRADATA_MAX = 48 * 3600  # secondi: oltre, la pagina incompleta e' il portale com'e' adesso e si confronta
 URGENTE, INFO, RIPRESA = "urgente", "info", "ripresa"
+DEGRADATA, RECUPERATA, ACCETTATA = "degradata", "recuperata", "accettata"  # solo nel valore di ritorno di osserva()
 SESSIONE = ("form", "campi", "script", "antibot")  # categorie confrontate nelle pagine delle sessioni
 
 # elementi che il codice del bot usa davvero (cup_http: L, R e i campi JSF): se spariscono il bot si ferma
@@ -316,6 +325,35 @@ def _cat(cat):
             "server": "il server"}.get(cat, cat)
 
 
+def _stabili(stato, imp):
+    """(elementi stabili della pagina, quelli che mancano in questa impronta)."""
+    presenti = {f"{cat}|{e}" for cat, v in imp.items() for e in v}
+    stabili = [k for k, v in (stato.get("el") or {}).items() if v[3] != "sparito" and v[0] >= STABILE_MIN
+               and v[0] / max(1, v[2] - v[1] + 1) >= STABILE]
+    return stabili, [k for k in stabili if k not in presenti]
+
+
+def _incompleta(stato, imp, chiave=""):
+    """Una risposta del portale a cui manca piu' della meta' di cio' che la pagina ha quasi sempre, e nient'altro:
+    se manca un elemento che il bot usa, o compare qualcosa di mai visto (un segno di antibot, una pagina rifatta),
+    non e' una risposta troncata ma un cambio, e va confrontata subito."""
+    if (stato.get("n") or 0) <= APPRENDE:
+        return False
+    stabili, mancano = _stabili(stato, imp)
+    if len(stabili) < STABILE_MIN or len(mancano) <= len(stabili) * DEGRADATA_QUOTA:
+        return False
+    if set(mancano) & set(CRITICI.get(chiave, ())):
+        return False
+    visti = stato.get("el") or {}
+    return all(f"{cat}|{e}" in visti for cat, v in imp.items() for e in v)
+
+
+def incomplete(store):
+    """Le pagine che il portale manda incomplete adesso (e che l'amministratore ha gia' letto come disservizio)."""
+    return [pg for pg, st in store.impronte_tutte() if (st.get("degradata") or {}).get("detta")
+            and not st["degradata"].get("accettata")]
+
+
 def osserva(store, chiave, pagina, cookie=(), server="", ora=None):
     """Una pagina vista: aggiorna lo stato salvato e registra i cambi. Un cambio urgente sospende le prenotazioni
     automatiche; quando gli elementi critici di una pagina tornano tutti, la sospensione che avevano causato finisce.
@@ -326,14 +364,44 @@ def osserva(store, chiave, pagina, cookie=(), server="", ora=None):
     if not imp.get("form") and not imp.get("campi") and not imp.get("antibot"):
         return []  # una risposta senza struttura (solo testo, un frammento vuoto): niente da confrontare
     stato = store.impronta(chiave) or {}
+    extra = []
+    if _incompleta(stato, imp, chiave) and not (stato.get("degradata") or {}).get("accettata"):
+        d = stato.setdefault("degradata", {"da": ora, "n": 0})
+        d["n"] += 1
+        if ora - d["da"] < DEGRADATA_MAX:  # disservizio: niente confronto, niente elementi spariti
+            if not d.get("detta") and ora - d["da"] >= DEGRADATA_AVVISO and d["n"] >= DEGRADATA_OSSERVAZIONI:
+                d["detta"] = ora
+                stabili, mancano = _stabili(stato, imp)
+                testo = (f"la pagina arriva incompleta da {(ora - d['da']) / 60:.0f} minuti (mancano {len(mancano)} "
+                         f"elementi stabili su {len(stabili)}): sembra un disservizio del portale, non un cambio")
+                store.cambio_portale(ora, chiave, INFO, testo, rapporto_cambio(
+                    chiave, INFO, testo, {**stato, "ultima": imp, "scheletro": scheletro(pagina, pubblica=pubblica)}))
+                extra.append((DEGRADATA, testo))
+            store.salva_impronta(chiave, stato)
+            return extra
+        d["accettata"] = True  # dura da troppo: e' il portale com'e' adesso, si confronta finche' non torna completa
+        testo = "la pagina arriva incompleta da 48 ore: la prendo come il portale e' adesso e la confronto"
+        store.cambio_portale(ora, chiave, INFO, testo, "")
+        extra.append((ACCETTATA, testo))
+    elif not _incompleta(stato, imp, chiave):
+        d = stato.pop("degradata", None)
+        if d and d.get("detta") and not d.get("accettata"):
+            testo = f"la pagina e' tornata completa dopo {(ora - d['da']) / 60:.0f} minuti"
+            store.cambio_portale(ora, chiave, INFO, testo, "")
+            extra.append((RECUPERATA, testo))
     cambi = confronta(stato, imp, chiave, ora)
     stato["ultima"] = imp
     stato["ts"] = ora
     if cambi:
         stato["scheletro"] = scheletro(pagina, pubblica=pubblica)
     store.salva_impronta(chiave, stato)
+    # una sola segnalazione per livello: un disservizio che toglie dieci elementi non sono dieci avvisi
+    for livello in (URGENTE, INFO, RIPRESA):
+        testi = [t for lv, t in cambi if lv == livello]
+        if testi:
+            testo = testi[0] if len(testi) == 1 else f"{len(testi)} cambi in questa pagina: " + "; ".join(testi)
+            store.cambio_portale(ora, chiave, livello, testo, rapporto_cambio(chiave, livello, testo, stato))
     for livello, testo in cambi:
-        store.cambio_portale(ora, chiave, livello, testo, rapporto_cambio(chiave, livello, testo, stato))
         if livello == URGENTE:
             # un elemento sparito torna da solo; un captcha comparso aspetta l'amministratore (per elemento)
             sospendi(store, ora, chiave if testo.startswith("sparito") else f"{chiave} {testo}", testo,
@@ -341,7 +409,7 @@ def osserva(store, chiave, pagina, cookie=(), server="", ora=None):
     critici = CRITICI.get(chiave, ())
     if critici and all(stato["el"].get(k, [0, 0, 0, ""])[3] != "sparito" for k in critici):
         riprendi(store, chiave, ora, "gli elementi che il bot usa sono tornati")
-    return cambi
+    return extra + cambi
 
 
 def cause(store):

@@ -726,11 +726,25 @@ class App:
             pulsanti.append('<button type="button" hx-get="/ui/admin" hx-target="#foglio" aria-label="Admin">⚙️</button>')
         return f'<header class="barra"><h1>Le tue ricette</h1><nav>{"".join(pulsanti)}</nav></header>'
 
+    def fascia_disservizio(self):
+        """Mentre il portale del CUP e' in disservizio, lo dice in alto: cosi' si capisce che non e' l'app."""
+        try:
+            da = self.store.valore("disservizio_utenti")
+            if not da:
+                return ""
+            ora = botmod.orario(float(da.split()[0]))
+            return (f'<p class="avviso" role="status">⚠️ Il portale del CUP ha dei problemi dalle {ora:%H:%M} del '
+                    f'{ora:%d/%m}. Non è un problema dell’app né della tua ricetta: riprovo da solo e ti avviso '
+                    'quando torna normale.</p>')
+        except (ValueError, TypeError):
+            return ""
+
     def ricette(self, chat, avviso=""):
         pratiche = self.store.della_chat(chat)
         visibili = [p for p in pratiche if p["stato"] in ATTIVE]
         in_attesa = [p for p in pratiche if p["stato"] == "sede" and p.get("attuale")]
         testa = self.barra(chat, pratiche) + (f'<p class="avviso" role="status">{e(avviso)}</p>' if avviso else "")
+        testa += self.fascia_disservizio()
         testa += "".join(self.scheda_in_attesa(p) for p in in_attesa)
         if not visibili and in_attesa:
             return testa

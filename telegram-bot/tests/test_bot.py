@@ -2299,7 +2299,7 @@ def test_sorveglianza_nessun_controllo_riuscito_con_ricette_in_ritardo(b):
     b.ultimo_ok = ora - 46 * 60
     b.store.modifica(pratica(b)["id"], lambda p: p.update(prossimo=ora - 11 * 60))  # controllo mai partito
     b.sorveglia(ora)
-    assert "con controlli in ritardo" in inviati(b)[-1]
+    assert "con controlli in ritardo" in [t for t in inviati(b) if t.startswith("⚙️")][-1]  # all'amministratore
     b.guasto = None
     b.store.modifica(pratica(b)["id"], lambda p: p.update(stato="pausa"))  # nessuna ricetta attiva: nessun guasto
     b.sorveglia(ora)
@@ -3097,3 +3097,70 @@ def test_stesso_errore_per_utenti_diversi_un_solo_avviso(b, monkeypatch):
     b.controlla(pratica(b, 2))
     b.manda_segnalazioni()
     assert len([1 for m, d in b.out if m == "sendDocument"]) == 1
+
+
+def test_disservizio_del_portale_un_messaggio_agli_utenti_e_uno_alla_ripresa(b):
+    registra(b)
+    ora = time.time()
+    b.primo_ko, b.ko_di_fila, b.ultimo_ok = ora - 46 * 60, 9, ora - 50 * 60
+    b.sorveglia(ora)
+    b.sorveglia(ora + 600)
+    avvisi = [t for t in inviati(b) if t.startswith("⚠️ Alle")]
+    assert len(avvisi) == 1 and "Non e' un problema del bot" in avvisi[0] and "non risponde" in avvisi[0]
+    assert b.store.valore("disservizio_utenti")
+    b.portale(lambda: None)
+    b.sorveglia()
+    ripresa = [t for t in inviati(b) if t.startswith("✅ Il portale del CUP funziona")]
+    assert len(ripresa) == 1
+    assert b.store.valore("disservizio_utenti") is None
+    b.sorveglia()
+    assert len([t for t in inviati(b) if t.startswith("✅ Il portale del CUP funziona")]) == 1
+
+
+def test_pagina_incompleta_avvisa_gli_utenti_e_la_ripresa_aspetta_che_tutto_torni(b):
+    registra(b)
+    b.avvisa_utenti_disservizio("mostra pagine incomplete", incompleta=True)
+    b.avvisa_utenti_disservizio("non risponde")  # gia' detto: non si ripete
+    assert len([t for t in inviati(b) if t.startswith("⚠️ Alle")]) == 1
+    b.guasto = time.time()  # un guasto vero e' ancora in corso
+    b.avvisa_utenti_ripresa()
+    assert not [t for t in inviati(b) if t.startswith("✅ Il portale del CUP funziona")]
+    b.guasto = None
+    b.avvisa_utenti_ripresa()
+    assert len([t for t in inviati(b) if t.startswith("✅ Il portale del CUP funziona")]) == 1
+
+
+def test_disservizio_dopo_un_riavvio_si_chiude_alla_prima_sessione_riuscita(b):
+    registra(b)
+    b.avvisa_utenti_disservizio("non risponde")
+    b.ok_vista = False
+    b.sorveglia()  # il bot e' appena partito: nessuna sessione riuscita, non si sa
+    assert b.store.valore("disservizio_utenti")
+    b.portale(lambda: None)
+    b.sorveglia()
+    assert b.store.valore("disservizio_utenti") is None
+    assert len([t for t in inviati(b) if t.startswith("✅ Il portale del CUP funziona")]) == 1
+
+
+def test_disservizio_che_torna_subito_non_riscrive_agli_utenti(b):
+    registra(b)
+    b.avvisa_utenti_disservizio("non risponde")
+    b.avvisa_utenti_ripresa()
+    b.avvisa_utenti_disservizio("non risponde")  # entro DISSERVIZIO_PAUSA: segno si, messaggio no
+    assert b.store.valore("disservizio_utenti").endswith("muto")
+    b.avvisa_utenti_ripresa()
+    assert len([t for t in inviati(b) if t.startswith("⚠️ Alle")]) == 1
+    assert len([t for t in inviati(b) if t.startswith("✅ Il portale del CUP funziona")]) == 1
+
+
+def test_pagina_incompleta_accettata_toglie_il_segno_senza_dire_che_funziona(b):
+    registra(b)
+    b.avvisa_utenti_disservizio("mostra pagine incomplete", incompleta=True)
+    b.avvisa_utenti_ripresa(muto=True)
+    assert b.store.valore("disservizio_utenti") is None
+    assert not [t for t in inviati(b) if t.startswith("✅ Il portale del CUP funziona")]
+
+
+def test_disservizio_non_scrive_a_chi_non_ha_controlli_attivi(b):
+    b.avvisa_utenti_disservizio("non risponde")
+    assert not [t for t in inviati(b) if t.startswith("⚠️ Alle")]

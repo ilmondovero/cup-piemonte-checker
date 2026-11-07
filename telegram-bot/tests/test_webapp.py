@@ -1297,3 +1297,12 @@ def test_segnala_dalle_app_senza_telegram(app):
     assert stato == 200 and json.loads(risposta) == {"ok": True}
     assert app.bot.store.segnalazioni(da_inviare=True)[0]["origine"] == "app"
     assert app.gestisci("POST", "/segnala", {}, b"{}")[0] == 400
+
+
+def test_fascia_disservizio_solo_quando_il_portale_e_in_difficolta(app):
+    assert "problemi dalle" not in app.ricette(1)
+    app.store.imposta("disservizio_utenti", "1793897100")
+    pagina = app.ricette(1)
+    assert "Il portale del CUP ha dei problemi dalle" in pagina and "Non è un problema dell’app" in pagina
+    app.store.imposta("disservizio_utenti", None)
+    assert "problemi dalle" not in app.ricette(1)

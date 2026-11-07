@@ -171,3 +171,80 @@ def test_pulisci_email_e_cellulari():
     for dato in ("mario.rossi@gmail.com", "3331234567", "333 123 4567", "+39 333.123.4567", "(+39) 333-123-4567"):
         t = im.pulisci(f"tel. {dato}, fine")
         assert "1234" not in t and "mario" not in t, (dato, t)
+
+
+# --- risposte incomplete del portale (5/11: un solo menu al posto della pagina) -----------------
+INCOMPLETA = '<html><body><input type="hidden" name="javax.faces.ViewState" value="1" /></body></html>'
+SESSIONE = "sessione/elenco:filterPrescriptionNavigate"
+
+
+def giri(store, pagina, da, volte, passo=600, chiave=SESSIONE):
+    cambi = []
+    for i in range(volte):
+        cambi += im.osserva(store, chiave, pagina, ora=da + i * passo)
+    return cambi
+
+
+def test_pagina_incompleta_non_fa_sparire_nulla_e_si_dice_una_volta(store):
+    giri(store, ricerca(), 1_000_000, 20)
+    cambi = giri(store, INCOMPLETA, 1_020_000, 12)  # 12 osservazioni, due ore
+    assert [lv for lv, _ in cambi] == [im.DEGRADATA]
+    assert not any("sparito" in t for _, t in cambi)
+    segn = store.segnalazioni()
+    assert len(segn) == 1 and segn[0]["livello"] == im.INFO and "disservizio" in segn[0]["testo"]
+    assert store.valore("auto_sospeso") is None
+    el = store.impronta(SESSIONE)["el"]
+    assert all(v[3] != "sparito" for v in el.values())
+    assert store.impronta(SESSIONE)["n"] == 20  # le risposte incomplete non sono osservazioni
+
+
+def test_pagina_incompleta_breve_non_dice_niente(store):
+    giri(store, ricerca(), 1_000_000, 20)
+    assert giri(store, INCOMPLETA, 1_020_000, 2) == []
+    assert store.segnalazioni() == []
+
+
+def test_pagina_che_torna_completa_lo_dice_e_riprende(store):
+    giri(store, ricerca(), 1_000_000, 20)
+    giri(store, INCOMPLETA, 1_020_000, 12)
+    cambi = giri(store, ricerca(), 1_030_000, 3)
+    assert [lv for lv, _ in cambi] == [im.RECUPERATA]
+    assert "degradata" not in store.impronta(SESSIONE)
+    assert [s["livello"] for s in store.segnalazioni()] == [im.INFO, im.INFO]
+
+
+def test_pagina_incompleta_per_troppo_tempo_e_il_portale_com_e_adesso(store):
+    giri(store, ricerca(), 1_000_000, 20)
+    cambi = giri(store, INCOMPLETA, 1_020_000, 40, passo=6000)  # ~66 ore
+    assert any("sparito" in t for _, t in cambi)
+
+
+def test_cambi_della_stessa_osservazione_sono_una_segnalazione(store):
+    osserva(store, ricerca(), 12, chiave="sessione/x:y")
+    osserva(store, ricerca(captcha=True, cf_campo=False), 3, chiave="sessione/x:y")
+    segn = store.segnalazioni(senza_rapporto=True)
+    assert len(segn) == len({(s["origine"], s["livello"], s["ts"]) for s in segn})
+
+
+def test_muro_antibot_su_pagina_pubblica_non_e_un_disservizio(store):
+    osserva(store, ricerca(), 20)
+    muro = '<html><body><input name="x"/><div>Just a moment...</div></body></html>'
+    cambi = giri(store, muro, 2_000_000, 6, chiave="pubblica/ricerca")
+    assert any(lv == im.URGENTE for lv, _ in cambi)
+    assert store.valore("auto_sospeso")
+
+
+def test_pagina_rifatta_con_elementi_critici_mancanti_si_segnala_subito(store):
+    osserva(store, ricerca(), 20)
+    rifatta = ricerca().replace(R, "altroForm").replace("nreInput0", "altro0")
+    cambi = giri(store, rifatta, 2_000_000, 4, passo=1800, chiave="pubblica/ricerca")
+    assert any(lv == im.URGENTE and "che il bot usa" in t for lv, t in cambi)
+    assert store.valore("auto_sospeso")
+
+
+def test_dopo_48_ore_la_pagina_incompleta_e_accettata_senza_dire_che_e_tornata(store):
+    giri(store, ricerca(), 1_000_000, 20)
+    cambi = giri(store, INCOMPLETA, 1_020_000, 60, passo=3600)
+    livelli = [lv for lv, _ in cambi]
+    assert im.DEGRADATA in livelli and im.ACCETTATA in livelli and im.RECUPERATA not in livelli
+    assert im.incomplete(store) == []

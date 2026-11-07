@@ -358,6 +358,10 @@ class Store:
         r = self.db.execute("SELECT stato FROM impronte WHERE pagina = ?", (pagina,)).fetchone()
         return json.loads(r["stato"]) if r else None
 
+    def impronte_tutte(self):
+        """[(pagina, stato)] di tutte le pagine osservate."""
+        return [(r["pagina"], json.loads(r["stato"])) for r in self.db.execute("SELECT pagina, stato FROM impronte")]
+
     def salva_impronta(self, pagina, stato):
         with self.db:
             self.db.execute("INSERT INTO impronte (pagina, stato) VALUES (?, ?) ON CONFLICT (pagina) "

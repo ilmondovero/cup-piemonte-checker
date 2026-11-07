@@ -73,6 +73,7 @@ TZ = ZoneInfo("Europe/Rome")  # gli orari del portale sono italiani, anche se il
 ATTESA_MIN, ATTESA_BASE, ATTESA_MAX = 60, 90, 180  # secondi di attesa di una risposta lenta del portale
 ATTESA_GIORNI = 7  # quanti giorni di controlli guardare per imparare l'attesa
 MAX_RALLENTA = 60  # minuti: con il portale in difficolta' l'intervallo cresce fino a qui (o all'intervallo, se piu' lungo)
+DISSERVIZIO_PAUSA = 2 * 3600  # secondi: un nuovo disservizio entro tanto dalla fine del precedente non riscrive agli utenti
 GUASTO_MIN = 45  # minuti senza una sessione riuscita sul portale (con ricette da controllare): un avviso all'amministratore
 RITARDO_GUASTO = 10 * 60  # secondi: un controllo in ritardo di tanto, senza successi da GUASTO_MIN, e' un guasto
 RIEPILOGO_ORA = 9  # ora italiana del riepilogo giornaliero dei cambi minori del portale
@@ -856,6 +857,7 @@ class Bot:
         self.primo_ko = None  # prima sessione fallita dopo l'ultima riuscita
         self.ko_di_fila = 0
         self.guasto = None  # inizio del guasto gia' segnalato
+        self.ok_vista = False  # da quando e' partito il bot, una sessione e' riuscita
         self.battito = time.time()  # ultimo giro del ciclo principale (lo guarda la Mini App, da un altro thread)
         self.cambiato = {}  # passo -> sessioni di fila in cui il bot non ha riconosciuto la pagina (cup_http.Cambiato)
         self.riuscite_dopo_sospensione = {}  # passo -> sessioni che l'hanno superato da quando ha sospeso l'auto
@@ -1026,7 +1028,12 @@ class Bot:
         try:
             pagine = list(cup_http.PAGINE)
             for passo, origine, testo, cookie, server in pagine:
-                impronte.osserva(self.store, f"sessione/{passo}:{impronte.nome(origine, True)}", testo, cookie, server)
+                chiave = f"sessione/{passo}:{impronte.nome(origine, True)}"
+                for livello, _ in impronte.osserva(self.store, chiave, testo, cookie, server):
+                    if livello == impronte.DEGRADATA:
+                        self.avvisa_utenti_disservizio("mostra pagine incomplete", incompleta=True)
+                    elif livello in (impronte.RECUPERATA, impronte.ACCETTATA):
+                        self.avvisa_utenti_ripresa(muto=livello == impronte.ACCETTATA)
             if passo_ko and pagine:
                 schema = impronte.scheletro(pagine[-1][2], pubblica=False)
         except Exception as e:
@@ -1197,6 +1204,7 @@ class Bot:
             self.osserva_pagine(errore if errore is not None or riuscita else "rete")
             if riuscita:
                 self.ultimo_ok, self.primo_ko, self.ko_di_fila = self.ultimo_portale, None, 0
+                self.ok_vista = True
 
             elif guasto:  # per la sorveglianza contano solo i guasti del portale, non le risposte applicative
                 self.primo_ko, self.ko_di_fila = self.primo_ko or inizio, self.ko_di_fila + 1
@@ -1226,12 +1234,68 @@ class Bot:
                                  + (f" ({self.ko_di_fila} fallite di fila)." if self.ko_di_fila else
                                     ", con controlli in ritardo.") +
                                  " Ti riscrivo quando torna normale.")
+                self.avvisa_utenti_disservizio("non risponde", ora)
         elif self.ultimo_ok >= self.guasto:
             durata = (self.ultimo_ok - self.guasto) / 60 + GUASTO_MIN
             self.guasto = None
             log.info("sorveglianza: portale di nuovo normale")
             self.alert_admin(f"✅ Portale CUP di nuovo normale: una sessione e' riuscita alle "
                              f"{orario(self.ultimo_ok):%H:%M} (guasto di circa {durata:.0f} minuti).")
+            self.avvisa_utenti_ripresa()
+        if self.guasto is None and self.ok_vista and self.store.valore("disservizio_utenti"):
+            self.avvisa_utenti_ripresa()  # anche dopo un riavvio durante il disservizio
+
+    def chat_con_controlli(self):
+        """Le chat che hanno almeno una ricetta con i controlli attivi."""
+        return sorted({p["chat_id"] for p in self.store.tutte() if p["stato"] == "attivo"}, key=str)
+
+    def avvisa_utenti_disservizio(self, cosa, ora=None, incompleta=False):
+        """Un solo messaggio a chi ha controlli attivi quando il portale va in disservizio: non e' il bot e non e'
+        la loro ricetta. Il segno resta nel database (sopravvive ai riavvii) finche' il portale non torna normale.
+        Se un disservizio finisce e ne ricomincia un altro entro DISSERVIZIO_PAUSA secondi, il segno si rimette
+        ma gli utenti non ricevono altri messaggi (un portale che va e viene non e' una raffica di avvisi)."""
+        ora = ora or time.time()
+        try:
+            if self.store.valore("disservizio_utenti"):
+                return
+            fine = float(self.store.valore("disservizio_fine") or 0)
+            muto = ora - fine < DISSERVIZIO_PAUSA
+            self.store.imposta("disservizio_utenti", f"{ora:.0f}" + (" muto" if muto else ""))
+            if muto:
+                return
+            ripiego = "Riprovo da solo, piu' di rado finche' non si riprende." if not incompleta else (
+                "Riprovo da solo.")
+            testo = (f"⚠️ Alle {orario(ora):%H:%M} del {orario(ora):%d/%m} il portale del CUP {cosa}. "
+                     "Non e' un problema del bot e non riguarda la tua ricetta: e' il sito della Regione.\n"
+                     f"{ripiego} Le prenotazioni gia' fatte restano come sono. "
+                     "Ti scrivo una volta sola quando torna normale.")
+            for chat in self.chat_con_controlli():
+                self.send(chat, testo)
+        except Exception as e:
+            log.warning("avviso di disservizio non mandato: %s", type(e).__name__)
+
+    def avvisa_utenti_ripresa(self, muto=False):
+        """Il disservizio e' finito (nessun guasto e nessuna pagina ancora incompleta): un messaggio, una volta.
+        muto: il segno si toglie senza scrivere (pagina incompleta accettata come il portale e' adesso)."""
+        try:
+            if self.guasto is not None or impronte.incomplete(self.store):
+                return
+            da = self.store.valore("disservizio_utenti")
+            if not da:
+                return
+            ora = time.time()
+            self.store.imposta("disservizio_utenti", None)
+            self.store.imposta("disservizio_fine", f"{ora:.0f}")
+            if muto or "muto" in da:
+                return
+            minuti = max(1, round((ora - float(da.split()[0])) / 60))
+            durata = f"{minuti // 60} h {minuti % 60} min" if minuti >= 60 else f"{minuti} min"
+            testo = (f"✅ Il portale del CUP funziona di nuovo (alle {orario(ora):%H:%M} del {orario(ora):%d/%m}, "
+                     f"dopo circa {durata}). Va tutto come prima.")
+            for chat in self.chat_con_controlli():
+                self.send(chat, testo)
+        except Exception as e:
+            log.warning("avviso di ripresa non mandato: %s", type(e).__name__)
 
     # --- controllo periodico ------------------------------------------------------------
     def intervallo_di(self, chat_id):
@@ -1319,7 +1383,7 @@ class Bot:
         self.aggiorna_pannello(chat)
         log.info("controllo %s/%s: errore %d: %s (prossimo tra %d min)", uid(chat), p["id"],
                  p["errori"], type(e).__name__, (p.get("prossimo", dopo) - time.time()) / 60)
-        if manuale or p["errori"] in AVVISA_ERRORI:
+        if manuale or (p["errori"] in AVVISA_ERRORI and not self.store.valore("disservizio_utenti")):
             if cup_http.tipo_errore(e) == "timeout":
                 motivo = "il portale CUP e' lento e non risponde in tempo"
             elif isinstance(e, requests.RequestException) and cup_http.sovraccarico(e):
@@ -1431,7 +1495,7 @@ class Bot:
         nell_area = [x for x in res["slots"] if cup_http.ammesso(x, att, zona)]
         self.fissa_prima(p)  # prima di registra_viste: una ricetta di prima la ricava dall'andamento
         self.registra_viste(p, res, nell_area)
-        if p.get("errori", 0) >= AVVISA_ERRORI[0]:  # aveva avvisato dei problemi: ora che passano, lo dice
+        if p.get("errori", 0) >= AVVISA_ERRORI[0] and not self.store.valore("disservizio_utenti"):  # aveva avvisato: ora lo dice
             self.dire(p, f"✅ Il portale CUP risponde di nuovo: torno a controllare ogni "
                          f"{self.intervallo_di(chat)} minuti.")
         ripresa = bool(p.get("errori"))
