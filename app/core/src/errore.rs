@@ -23,6 +23,11 @@ pub enum Errore {
     /// La stessa prestazione e' prenotata in due appuntamenti: prima se ne disdice uno, poi si cerca.
     #[error("{0}")]
     Doppione(String),
+    /// Il portale risponde, ma senza il modulo che serve (funzione spenta, manutenzione) o con un elenco che non si
+    /// legge. All'inizio non si distingue da un sito cambiato: si riprova, e si segnala solo se dura.
+    /// `pagina`: "elenco" (Recupera Prenotazioni) o "ricerca" (Ricerca ricetta).
+    #[error("il portale CUP non mostra la pagina che serve (di solito è un disservizio temporaneo)")]
+    NonDisponibile { pagina: &'static str },
     /// Pagina diversa da quella attesa: sito cambiato, manutenzione, risposta inattesa.
     #[error("{0}")]
     Inattesa(String),

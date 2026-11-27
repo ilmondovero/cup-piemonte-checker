@@ -108,6 +108,10 @@ struct Modulo {
 impl Modulo {
     fn da_pagina(pagina: &str, id: &str) -> Result<Self, Errore> {
         let p = analisi::modulo(pagina, id).unwrap_or(pagina);
+        // le pagine d'ingresso (Recupera Prenotazioni, Ricerca) senza il loro modulo: disservizio o verifica antibot
+        if (id == L || id == R) && analisi::modulo(pagina, id).is_none() {
+            return Err(analisi::senza_modulo(pagina, if id == L { "elenco" } else { "ricerca" }));
+        }
         let campo = |nome| analisi::nascosto(p, nome);
         match (campo("javax.faces.encodedURL"), campo("javax.faces.ViewState"), campo("ice.window"), campo("ice.view"))
         {
@@ -169,6 +173,9 @@ pub struct Controllo {
     /// Le date da proporre: nella zona, in un giorno si', prima della prenotazione (vedi zona::candidata).
     pub migliori: Vec<Slot>,
     pub area_incompleta: bool,
+    /// La prenotazione si legge ma sulla sua riga manca "Sposta", quindi non ci sono date: la struttura
+    /// dell'elenco (vedi `analisi::diagnosi_sposta`).
+    pub senza_sposta: Option<String>,
     /// Ricetta mai prenotata con piu' prestazioni: va bene solo la data proposta dal portale, per tutte insieme.
     pub solo_proposta: bool,
 }
@@ -203,6 +210,8 @@ pub struct Sessione {
     app: Option<Modulo>,
     slots: Vec<Slot>,
     modo: Modo,
+    /// La pagina d'ingresso ("elenco", "ricerca") che il portale ha mostrato davvero in questa sessione.
+    letta: Option<&'static str>,
     /// Le prestazioni dell'ultimo carrello letto e il numero massimo visto in un passo qualsiasi.
     nomi: Vec<String>,
     n_prestazioni: usize,
@@ -243,6 +252,7 @@ impl Sessione {
             app: None,
             slots: vec![],
             modo: Modo::Nessuno,
+            letta: None,
             nomi: vec![],
             n_prestazioni: 0,
         })
@@ -261,6 +271,11 @@ impl Sessione {
             Some(url) => Ok(self.client.get(url).send()?.error_for_status()?.text()?),
             None => self.pagina(RICETTA),
         }
+    }
+
+    /// La pagina d'ingresso letta in questa sessione, anche se poi un passo successivo non e' andato.
+    pub fn pagina_letta(&self) -> Option<&'static str> {
+        self.letta
     }
 
     /// Il flusso aperto da questa sessione.
@@ -317,7 +332,14 @@ impl Sessione {
             .metti("javax.faces.behavior.event", "action")
             .metti("javax.faces.partial.ajax", "true");
         let xml = modulo.invia(&self.client, &self.base, campi)?;
-        let elenco = analisi::elenco(&xml)?;
+        let elenco = analisi::elenco(&xml);
+        // anche "nessuna prenotazione" o "disdetta" sono la pagina che risponde
+        if !matches!(&elenco, Err(Errore::NonDisponibile { .. }))
+            && !matches!(&elenco, Err(Errore::Inattesa(m)) if m == analisi::ANTIBOT)
+        {
+            self.letta = Some("elenco");
+        }
+        let elenco = elenco?;
         self.lista = Some(Lista { modulo, xml, elenco: elenco.clone() });
         self.app = None;
         self.slots.clear();
@@ -349,6 +371,9 @@ impl Sessione {
             .metti("javax.faces.behavior.event", "action")
             .metti("javax.faces.partial.ajax", "true");
         let xml = modulo.invia(&self.client, &self.base, campi)?;
+        if !analisi::errori(&xml).is_empty() {
+            self.letta = Some("ricerca"); // il portale ha risposto sulla ricetta: la pagina c'e'
+        }
         analisi::esito_ricerca(&xml)?;
         let pagina = self.segui(&xml)?;
         // i passi sono pagine distinte: se c'e' ancora la ricerca, il portale non e' andato avanti
@@ -358,6 +383,7 @@ impl Sessione {
                 analisi::struttura(&pagina)
             )));
         }
+        self.letta = Some("ricerca");
         self.modo = Modo::Nuova;
         self.carrello(&pagina);
         Ok(pagina)
@@ -651,6 +677,23 @@ impl Sessione {
                 )));
             }
         }
+        // senza "Sposta" sulla riga non si preme nulla: si riporta la prenotazione letta, senza date
+        let manca = self
+            .lista
+            .as_ref()
+            .filter(|l| analisi::pulsante_riga(&l.xml, l.elenco.riga, "spostaButton").is_none())
+            .map(|l| analisi::diagnosi_sposta(&l.xml, l.elenco.riga));
+        if manca.is_some() {
+            return Ok(Controllo {
+                elenco: Some(elenco),
+                prestazioni: vec![],
+                slots: vec![],
+                migliori: vec![],
+                area_incompleta: false,
+                senza_sposta: manca,
+                solo_proposta: false,
+            });
+        }
         let alt = self.alternative(zona.estensioni())?;
         let migliori = alt.slots.iter().filter(|s| candidata(s, Some(&elenco.attuale), zona, cal)).cloned().collect();
         Ok(Controllo {
@@ -659,6 +702,7 @@ impl Sessione {
             slots: alt.slots,
             migliori,
             area_incompleta: alt.area_incompleta,
+            senza_sposta: None,
             solo_proposta: false,
         })
     }
@@ -680,6 +724,7 @@ impl Sessione {
             slots: alt.slots,
             migliori,
             area_incompleta: alt.area_incompleta,
+            senza_sposta: None,
             solo_proposta,
         })
     }
@@ -789,7 +834,13 @@ mod test {
 
     #[test]
     fn pagina_senza_stato_jsf_o_errori_http() {
+        // senza il modulo: disservizio; col modulo ma senza il suo stato: la pagina e' cambiata
         let (base, h) = portale(|_| vec![(200, "<html>Manutenzione</html>".into())]);
+        let mut s = sessione(&base);
+        assert!(matches!(s.elenco(), Err(Errore::NonDisponibile { pagina: "elenco" })));
+        assert_eq!(s.pagina_letta(), None);
+        h.join().unwrap();
+        let (base, h) = portale(|_| vec![(200, format!(r#"<form id="{L}"></form>"#))]);
         assert!(matches!(sessione(&base).elenco(), Err(Errore::Inattesa(m)) if m.contains("campi JSF")));
         h.join().unwrap();
         let (base, h) = portale(|_| vec![(503, "giu'".into())]);
@@ -1031,8 +1082,12 @@ mod test {
                 elenco_prenotato("Giovedì 7 Gennaio 2027", "MOLINETTE", "TORINO (TO)").replace("spostaButton", "altro");
             vec![(200, modulo(L, &format!("{b}/lista"), "")), (200, senza)]
         });
-        assert!(matches!(sessione(&base).controlla(&Zona::new(Dove::Tutte), &Calendario::default()),
-            Err(Errore::Inattesa(m)) if m.contains("Sposta")));
+        let mut s = sessione(&base);
+        assert_eq!(s.pagina_letta(), None);
+        let c = s.controlla(&Zona::new(Dove::Tutte), &Calendario::default()).unwrap();
+        assert_eq!(s.pagina_letta(), Some("elenco"));
+        assert!(c.elenco.is_some() && c.slots.is_empty() && c.migliori.is_empty());
+        assert!(c.senza_sposta.unwrap().starts_with(analisi::DIAGNOSI_SPOSTA));
         assert_eq!(h.join().unwrap().len(), 2); // nessun "Sposta" premuto
         assert!(matches!(sessione("http://127.0.0.1:9").alternative(0), Err(Errore::Inattesa(_))));
         // elenco non letto

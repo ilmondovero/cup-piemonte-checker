@@ -34,7 +34,10 @@ dal portale resta bloccata a quella sessione per circa 40 minuti, e non c'è mod
 ogni ricetta si controlla al massimo una volta ogni 20 minuti, anche dopo un riavvio o se la si elimina e la
 si aggiunge di nuovo, e l'app non si apre due volte. Se la stessa visita risulta prenotata due volte, l'app
 non apre "Sposta", mette in pausa e dice quale delle due disdire. Mette in pausa anche se la prenotazione è
-disdetta o erogata, o se il portale non la trova per tre controlli di fila. Se segui la stessa ricetta anche
+disdetta o erogata, o se il portale non la trova per tre controlli di fila. Se legge la prenotazione ma non trova
+il pulsante "Sposta", non cerca date e lo dice (non di nuovo prima di un giorno): conviene guardare sul sito del
+CUP se il pulsante c'è, senza premerlo. Una pagina del CUP che non si apre non è subito segnalata come cambio
+del sito: l'app riprova al controllo dopo. Se segui la stessa ricetta anche
 con il bot, usa uno solo dei due.
 
 **Spostare e disdire.** Senza la prenotazione automatica l'app non sposta mai nulla da sola. Su ogni data
@@ -239,7 +242,8 @@ nuova (vedi [Aggiornamenti](#aggiornamenti)). Manda qualcosa allo sviluppatore s
 Nelle impostazioni (⚙) c'è "Invia allo sviluppatore le segnalazioni dei problemi", spenta all'inizio. Accesa,
 l'app manda una segnalazione quando succede qualcosa di serio: un errore interno (mandato all'avvio dopo), un
 avvio non riuscito, un aggiornamento che non si installa, una pagina del portale che non riconosce per due
-controlli di fila, un esito incerto dopo una conferma o una disdetta. Arriva allo sviluppatore su Telegram,
+controlli di fila, una pagina del CUP che manca da almeno 30 minuti, il pulsante "Sposta" che non trova, un
+esito incerto dopo una conferma o una disdetta. Arriva allo sviluppatore su Telegram,
 passando dal server del bot.
 
 Dentro ci sono versione, sistema, tipo di installazione, che cosa è successo (una frase scritta dall'app) e le

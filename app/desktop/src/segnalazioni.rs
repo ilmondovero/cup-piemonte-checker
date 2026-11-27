@@ -19,6 +19,7 @@
 //! L'identificativo dell'installazione e' un numero a caso, scelto la prima volta: non dice nulla dell'utente o del
 //! computer.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -63,6 +64,28 @@ pub const CHIUSA: &str = "L'app si e' chiusa per un errore interno";
 pub const INTERNO: &str = "Errore interno dell'app (l'app ha continuato)";
 pub const NON_PARTE: &str = "L'app non riesce a partire";
 pub const PORTALE: &str = "Pagina del portale non riconosciuta (2 volte di fila)";
+pub const PROLUNGATO: &str = "Pagina del CUP non disponibile da almeno 30 minuti (guasto prolungato o cambio del sito)";
+pub const SENZA_SPOSTA: &str = "Pulsante Sposta non trovato: nell'elenco non ne vedo";
+pub const SPOSTA_NON_ASSOCIATO: &str = "Pulsante Sposta non associato alla riga (possibile errore dell'app)";
+pub const ANTIBOT: &str = "Il portale chiede una verifica antibot";
+/// Problemi diversi dello stesso tipo: per loro vale solo il limite sulla frase (una volta al giorno). Partono una
+/// volta sola per episodio, quindi il limite sul tipo li farebbe perdere.
+const A_PARTE: [&str; 4] = [PROLUNGATO, SENZA_SPOSTA, SPOSTA_NON_ASSOCIATO, ANTIBOT];
+/// Una pagina senza il suo modulo si segnala se dura tanti secondi, con almeno tanti controlli falliti e nessuno
+/// che l'abbia letta.
+const GIU_DOPO: i64 = 30 * 60;
+const GIU_CONTROLLI: u32 = 2;
+/// Senza controlli falliti da tanto (computer in pausa) non si sa se e' lo stesso guasto: si riparte.
+const GIU_VECCHIO: i64 = 3 * 3600;
+
+/// Un guasto in corso di una pagina d'ingresso.
+#[derive(Debug, Clone, Copy)]
+struct Giu {
+    da: i64,
+    ultimo: i64,
+    controlli: u32,
+    detto: bool,
+}
 pub const INCERTO: &str = "Esito incerto dopo una conferma";
 pub const INCERTA_DISDETTA: &str = "Esito incerto dopo una disdetta";
 
@@ -137,7 +160,10 @@ impl Memoria {
     pub fn accoda(&mut self, s: Segnalazione, ora: i64) -> Result<Option<Segnalazione>, &'static str> {
         // anche quelle "nel futuro" (orologio spostato e poi corretto) si dimenticano
         self.fatte.retain(|(_, _, t)| *t <= ora && ora - t < STESSO_TESTO);
-        if self.fatte.iter().any(|(tipo, _, t)| *tipo == s.tipo && ora - t < STESSO_TIPO) {
+        let a_parte = |testo: &str| A_PARTE.contains(&testo);
+        if !a_parte(&s.testo)
+            && self.fatte.iter().any(|(tipo, f, t)| *tipo == s.tipo && !a_parte(f) && ora - t < STESSO_TIPO)
+        {
             return Err("stesso tipo da meno di 6 ore");
         }
         if self.fatte.iter().any(|(_, testo, _)| *testo == s.testo) {
@@ -377,6 +403,8 @@ pub struct Segnalazioni {
     lavoro: Mutex<()>,
     /// Controlli di fila finiti su una pagina del portale non riconosciuta.
     inattese: AtomicU32,
+    /// Le pagine d'ingresso ("elenco", "ricerca") senza modulo adesso. Solo in memoria.
+    giu: Mutex<HashMap<&'static str, Giu>>,
 }
 
 impl Segnalazioni {
@@ -399,6 +427,7 @@ impl Segnalazioni {
             fermo: AtomicBool::new(false),
             lavoro: Mutex::new(()),
             inattese: AtomicU32::new(0),
+            giu: Mutex::new(HashMap::new()),
         };
         let panici: Vec<Segnalazione> = leggi(&s.file_panico);
         if s.file_panico.exists() {
@@ -508,6 +537,27 @@ impl Segnalazioni {
             return true;
         }
         false
+    }
+
+    /// Un controllo in piu' senza il modulo di `pagina`: true quando il guasto e' da segnalare (una volta sola).
+    pub fn pagina_giu(&self, pagina: &'static str, ora: i64) -> bool {
+        let mut giu = blocca(&self.giu);
+        let nuovo = Giu { da: ora, ultimo: ora, controlli: 0, detto: false };
+        let g = giu.entry(pagina).or_insert(nuovo);
+        // anche con l'orologio tornato indietro si riparte da capo
+        if ora < g.ultimo || (!g.detto && ora - g.ultimo > GIU_VECCHIO) {
+            *g = nuovo;
+        }
+        g.ultimo = ora;
+        g.controlli = g.controlli.saturating_add(1);
+        let dire = !g.detto && g.controlli >= GIU_CONTROLLI && ora - g.da >= GIU_DOPO;
+        g.detto |= dire;
+        dire
+    }
+
+    /// Un controllo ha letto `pagina`: il suo guasto e' finito.
+    pub fn pagina_letta(&self, pagina: &str) {
+        blocca(&self.giu).remove(pagina);
     }
 
     /// Dal gancio del panico: niente rete e nessun lock dello stato, solo un file accanto alle impostazioni.
@@ -659,6 +709,28 @@ pub fn controllo(inattesa: bool) {
     if globali().is_some_and(|s| s.controllo(inattesa)) {
         segnala(Tipo::Portale, PORTALE);
     }
+}
+
+/// L'esito di un controllo senza il modulo della pagina: si segnala solo un guasto che dura.
+pub fn pagina_giu(pagina: &'static str) {
+    if globali().is_some_and(|s| s.pagina_giu(pagina, adesso())) {
+        segnala(Tipo::Portale, PROLUNGATO);
+    }
+}
+
+pub fn pagina_letta(pagina: &str) {
+    if let Some(s) = globali() {
+        s.pagina_letta(pagina);
+    }
+}
+
+pub fn antibot() {
+    segnala(Tipo::Portale, ANTIBOT);
+}
+
+/// La prenotazione si legge ma manca "Sposta"; `non_associato`: un pulsante Sposta c'e', su un'altra riga o nome.
+pub fn senza_sposta(non_associato: bool) {
+    segnala(Tipo::Portale, if non_associato { SPOSTA_NON_ASSOCIATO } else { SENZA_SPOSTA });
 }
 
 #[cfg(test)]
@@ -931,6 +1003,40 @@ mod test {
         });
         assert_eq!(*invii.borrow(), 1);
         assert!(s.memoria().in_attesa.is_empty() && !s.memoria().accese);
+        fs::remove_dir_all(&c).unwrap();
+    }
+
+    #[test]
+    fn i_problemi_a_parte_non_si_scartano_per_il_tipo() {
+        let mut m = Memoria::default();
+        let s = |testo: &str| segnalazione(Tipo::Portale, testo);
+        assert!(m.accoda(s(SENZA_SPOSTA), ORA).is_ok());
+        for (n, testo) in [PORTALE, PROLUNGATO, SPOSTA_NON_ASSOCIATO, ANTIBOT].into_iter().enumerate() {
+            assert!(m.accoda(s(testo), ORA + 1 + n as i64).is_ok(), "{testo}");
+        }
+        // la stessa frase resta una volta al giorno, e per le altre vale ancora il limite sul tipo
+        assert!(m.accoda(s(PROLUNGATO), ORA + 100).is_err());
+        assert!(m.accoda(s("altra pagina"), ORA + 100).is_err());
+    }
+
+    #[test]
+    fn pagina_non_disponibile_solo_se_dura() {
+        let c = cartella("giu");
+        let s = accese(&c);
+        // due ricette a pochi secondi, poi ancora prima dei 30 minuti: niente
+        assert!(!s.pagina_giu("elenco", ORA) && !s.pagina_giu("elenco", ORA + 5));
+        assert!(!s.pagina_giu("elenco", ORA + GIU_DOPO - 1));
+        // dopo 30 minuti una volta sola
+        assert!(s.pagina_giu("elenco", ORA + GIU_DOPO));
+        assert!(!s.pagina_giu("elenco", ORA + GIU_DOPO + 1200));
+        // letta: si riparte; l'altra pagina conta per se'
+        s.pagina_letta("elenco");
+        assert!(!s.pagina_giu("elenco", ORA + 9000) && !s.pagina_giu("ricerca", ORA + 9000 + GIU_DOPO));
+        s.pagina_letta("ricerca");
+        assert!(s.pagina_giu("elenco", ORA + 9000 + GIU_DOPO));
+        // un fallimento di ore prima (computer in pausa) non conta
+        s.pagina_letta("elenco");
+        assert!(!s.pagina_giu("elenco", ORA) && !s.pagina_giu("elenco", ORA + GIU_VECCHIO + 1));
         fs::remove_dir_all(&c).unwrap();
     }
 

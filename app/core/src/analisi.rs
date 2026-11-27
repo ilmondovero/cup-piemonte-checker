@@ -196,9 +196,7 @@ pub fn elenco(xml: &str) -> Result<Elenco, Errore> {
         // cambiato) non deve far credere che la ricetta sia libera da prenotare
         return Err(match NESSUNA.find(xml) {
             Some(m) => Errore::NonTrovata(m.as_str().trim().to_string()),
-            None => {
-                Errore::Inattesa("Elenco delle prenotazioni non leggibile (portale in manutenzione o cambiato?)".into())
-            }
+            None => senza_modulo(xml, "elenco"),
         });
     }
     let fini = inizi.iter().skip(1).copied().chain([xml.len()]);
@@ -225,6 +223,85 @@ pub fn elenco(xml: &str) -> Result<Elenco, Errore> {
         n_prenotate: pren.len(),
         riga: prima,
     })
+}
+
+// segni di una verifica antibot vera. Le pagine normali del CUP hanno gia' lo script e il campo token di reCAPTCHA e
+// la parola "captcha": quelli non contano (le stesse regole del bot, impronte.ANTIBOT)
+re!(
+    SFIDA_ANTIBOT,
+    r#"(?i)class="[^"]*g-recaptcha|grecaptcha\.|hcaptcha\.com|h-captcha|challenges\.cloudflare\.com|cf-turnstile|cf-chl|__cf_chl|cf_clearance|Just a moment\.\.\.|friendlycaptcha|frc-captcha|altcha|datadome|captcha-delivery\.com|perimeterx|px-captcha|_pxhd|_Incapsula_Resource|incap_ses|visid_incap|_abck|bm_sz|ak_bmsc"#
+);
+
+/// La frase di una verifica antibot: e' una pagina non riconosciuta da segnalare subito.
+pub const ANTIBOT: &str = "Il portale chiede una verifica antibot";
+
+/// L'errore per una risposta senza il modulo atteso: una verifica antibot vera, o un disservizio.
+pub fn senza_modulo(pagina: &str, nome: &'static str) -> Errore {
+    if SFIDA_ANTIBOT.is_match(pagina) {
+        Errore::Inattesa(ANTIBOT.into())
+    } else {
+        Errore::NonDisponibile { pagina: nome }
+    }
+}
+
+const STATI_NOTI: [&str; 6] = ["prenotato", "disdetto", "erogato", "annullato", "cancellato", "sospeso"];
+static ID_LISTA: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(&format!(r#"id="({}:[^"]*)""#, regex::escape(L))).unwrap());
+re!(PAROLA_STATO, r"Stato:\s*([A-Za-z]+)");
+re!(NUMERO_RIGA, r":(\d{1,3}):[^:]*$");
+
+/// Il prefisso di `diagnosi_sposta`.
+pub const DIAGNOSI_SPOSTA: &str = "senza Sposta: ";
+
+/// Righe e pulsanti dell'elenco, senza dati personali (stati noti, nomi dei pulsanti e numero di riga): dice se il
+/// portale non offre "Sposta" o se il pulsante c'e' e non lo si associa alla riga. Come il bot (diagnosi_sposta).
+pub fn diagnosi_sposta(xml: &str, riga: usize) -> String {
+    let inizi: Vec<usize> = xml.match_indices("Stato:").map(|(i, _)| i).collect();
+    let fini = inizi.iter().skip(1).copied().chain([xml.len()]);
+    let righe: Vec<&str> = inizi.iter().zip(fini).map(|(&a, b)| &xml[a..b]).collect();
+    let stati: Vec<String> = righe
+        .iter()
+        .take(20)
+        .map(|r| {
+            let s = PAROLA_STATO.captures(&testo(primi(r, 400))).map_or(String::new(), |c| c[1].to_lowercase());
+            if STATI_NOTI.contains(&s.as_str()) {
+                s
+            } else {
+                "altro".into()
+            }
+        })
+        .collect();
+    let mut pulsanti: Vec<String> = ID_LISTA
+        .captures_iter(xml)
+        .filter_map(|c| {
+            let id = &c[1];
+            let nome = id.rsplit(':').next().unwrap_or_default().to_lowercase();
+            (nome.contains("button") || nome.contains("sposta")).then(|| {
+                let numero = NUMERO_RIGA.captures(id).map_or("-".to_string(), |n| n[1].to_string());
+                format!("{}@{numero}", id_breve(id))
+            })
+        })
+        .collect();
+    pulsanti.sort();
+    pulsanti.dedup();
+    pulsanti.truncate(30);
+    let scritte: Vec<&str> =
+        righe.iter().take(20).map(|r| if testo(r).contains("Sposta") { "si" } else { "no" }).collect();
+    format!(
+        "{DIAGNOSI_SPOSTA}righe {}, stati [{}], riga attuale {riga}, pulsanti [{}], scritta Sposta [{}]",
+        righe.len(),
+        stati.join(", "),
+        pulsanti.join(", "),
+        scritte.join(", ")
+    )
+}
+
+/// Nella diagnosi c'e' un pulsante "Sposta" (che non e' quello della riga attuale): forse l'errore e' nostro.
+pub fn sposta_non_associato(diagnosi: &str) -> bool {
+    diagnosi
+        .split_once("pulsanti [")
+        .and_then(|(_, r)| r.split_once(']'))
+        .is_some_and(|(p, _)| p.to_lowercase().contains("sposta"))
 }
 
 /// Il pulsante della riga `riga` dell'elenco: "spostaButton", "disdiciButton".
@@ -896,7 +973,7 @@ mod test {
         assert!(disdetta.solo_disdette());
         assert!(!elenco("<span>Stato:</span> EROGATO").unwrap_err().solo_disdette());
         // una pagina di manutenzione non e' "nessuna prenotazione"
-        assert!(matches!(elenco("<html>Manutenzione</html>"), Err(Errore::Inattesa(_))));
+        assert!(matches!(elenco("<html>Manutenzione</html>"), Err(Errore::NonDisponibile { pagina: "elenco" })));
         assert!(matches!(elenco("<span>Stato:</span> PRENOTATO senza data"), Err(Errore::Inattesa(_))));
     }
 
@@ -951,6 +1028,38 @@ mod test {
         let fuori = appuntamento("Lunedì 6 Settembre 2027", "SEDE", "AMB", "TORINO (TO)", None)
             + &format!(r#"<div id="{A}:s9"></div><span>Seleziona</span>"#);
         assert_eq!(date_disponibili(&fuori, None)[0].seleziona, None);
+    }
+
+    #[test]
+    fn pagina_senza_modulo_disservizio_o_antibot() {
+        // quello che le pagine normali hanno gia' non e' una verifica
+        let guscio = r#"<script src="https://www.google.com/recaptcha/api.js"></script><form id="hrefFm"></form><div class="captcha-box"></div><input name="g-recaptcha-token">"#;
+        assert!(matches!(senza_modulo(guscio, "ricerca"), Errore::NonDisponibile { pagina: "ricerca" }));
+        for segno in [r#"<div class="g-recaptcha"></div>"#, r#"<div class="h-captcha">"#, "challenges.cloudflare.com"] {
+            let e = senza_modulo(&format!("{guscio}{segno}"), "elenco");
+            assert!(matches!(&e, Errore::Inattesa(m) if m == ANTIBOT), "{segno}: {e:?}");
+        }
+    }
+
+    #[test]
+    fn diagnosi_di_sposta_senza_dati_personali() {
+        let riga = |i: usize, stato: &str| {
+            format!(
+                r#"<span>Stato:</span> {stato} <span>ROSSI 010A00000000001</span><div id="{L}:righe:{i}:disdiciButton">Disdici</div>"#
+            )
+        };
+        let xml = riga(0, "PRENOTATO") + &riga(1, "Qualcosa");
+        let d = diagnosi_sposta(&xml, 0);
+        assert_eq!(
+            d,
+            "senza Sposta: righe 2, stati [prenotato, altro], riga attuale 0, pulsanti [disdiciButton@0, \
+             disdiciButton@1], scritta Sposta [no, no]"
+        );
+        assert!(!sposta_non_associato(&d));
+        let con = xml + &format!(r#"<div id="{L}:righe:1:spostaButton">Sposta appuntamento</div>"#);
+        let d = diagnosi_sposta(&con, 0);
+        assert!(d.contains("spostaButton@1") && d.ends_with("scritta Sposta [no, si]"), "{d}");
+        assert!(sposta_non_associato(&d));
     }
 
     #[test]

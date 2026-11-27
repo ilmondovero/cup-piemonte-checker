@@ -22,6 +22,15 @@ use crate::segnalazioni;
 pub const INTERVALLO: i64 = 20 * 60;
 /// Il portale a volte non trova una prenotazione che c'e': si sospende solo dopo tante volte di fila.
 pub const ASSENZE_PAUSA: u32 = 3;
+/// "Non trovo Sposta" per la stessa ricetta non si notifica di nuovo prima di (secondi).
+const AVVISO_SPOSTA: i64 = 24 * 3600;
+/// Cosa vede l'utente quando la prenotazione si legge ma manca "Sposta".
+const SENZA_SPOSTA: &str = "ho letto la prenotazione, ma non trovo il pulsante «Sposta appuntamento», quindi per ora \
+                            non posso cercare date. Puoi guardare sul sito del CUP (Recupera Prenotazioni) se il \
+                            pulsante c'è: basta guardare, senza premerlo (premerlo blocca una data). Continuo a \
+                            controllare";
+/// Il tipo della notifica di `SENZA_SPOSTA`.
+const TIPO_SENZA_SPOSTA: &str = "senza Sposta";
 /// Date nuove scritte per intero in una notifica (le altre si vedono nell'app).
 const NOTIFICA_DATE: usize = 3;
 /// Ogni quanto il thread guarda se c'e' un controllo da fare.
@@ -188,6 +197,7 @@ pub fn tipo(e: &Errore) -> String {
         Errore::DatiNonValidi(_) => "dati della ricetta non validi".into(),
         Errore::Timeout => "timeout".into(),
         Errore::Sovraccarico(m) => format!("portale sovraccarico ({m})"),
+        Errore::NonDisponibile { pagina } => format!("pagina del CUP non disponibile ({pagina})"),
         Errore::Inattesa(m) => format!("risposta inattesa ({})", senza_testo_del_portale(m)),
         Errore::Incerto(_) => "esito incerto".into(),
     }
@@ -201,6 +211,10 @@ pub fn non_riconosciuta(e: &Errore) -> bool {
 
 const INTERNO: &str = "errore interno del controllo";
 
+fn antibot(e: &Errore) -> bool {
+    matches!(e, Errore::Inattesa(m) if m == cup_core::analisi::ANTIBOT)
+}
+
 #[derive(Debug)]
 pub struct Notifica {
     /// Per il registro, che non scrive titolo e testo (nome scelto dall'utente, date della visita).
@@ -208,6 +222,11 @@ pub struct Notifica {
     pub tipo: &'static str,
     pub titolo: String,
     pub testo: String,
+}
+
+fn maiuscola(s: &str) -> String {
+    let mut c = s.chars();
+    c.next().map_or(String::new(), |p| p.to_uppercase().chain(c).collect())
 }
 
 fn data(s: &Slot) -> Data {
@@ -219,7 +238,42 @@ fn data(s: &Slot) -> Data {
 pub fn applica(r: &mut Ricetta, esito: Result<Controllo, Errore>, zona: &Zona, ts: i64) -> Vec<Notifica> {
     let prima = r.esito.take().unwrap_or_default();
     match esito {
+        Ok(c) if c.senza_sposta.is_some() => {
+            let attuale = c.elenco.as_ref().map(|e| Visita::da(&e.attuale));
+            let avvisa = !r.senza_sposta && r.senza_sposta_avviso.is_none_or(|t| ts - t >= AVVISO_SPOSTA);
+            r.senza_sposta = true;
+            r.assenze = 0;
+            let notifiche = match (&attuale, avvisa) {
+                (Some(v), true) => {
+                    r.senza_sposta_avviso = Some(ts);
+                    vec![Notifica {
+                        ricetta: r.id,
+                        tipo: TIPO_SENZA_SPOSTA,
+                        titolo: format!("{}: non trovo «Sposta»", r.nome),
+                        // data, ora e luogo della prenotazione, poi che cosa fare
+                        testo: format!("{} · {}\n{}.", v.quando, v.luogo, maiuscola(SENZA_SPOSTA)),
+                    }]
+                }
+                _ => vec![],
+            };
+            r.esito = Some(Esito {
+                ts,
+                controllo: true,
+                zona: zona.dove.descrizione(c.elenco.as_ref().map(|e| &e.attuale)),
+                attuale,
+                date: 0,
+                buone: vec![],
+                area_incompleta: false,
+                errore: Some(SENZA_SPOSTA.into()),
+                nota: None,
+                note_visita: prima.note_visita,
+                cosa: String::new(),
+                solo_proposta: false,
+            });
+            notifiche
+        }
         Ok(c) => {
+            r.senza_sposta = false;
             let a = c.elenco.as_ref().map(|e| &e.attuale);
             let buone: Vec<Data> = c.migliori.iter().map(data).collect();
             let mut nuove: Vec<&Data> = vec![];
@@ -322,6 +376,7 @@ pub fn applica(r: &mut Ricetta, esito: Result<Controllo, Errore>, zona: &Zona, t
                 // portale lento, sovraccarico o cambiato: si riprova al prossimo giro
                 Errore::Timeout
                 | Errore::Sovraccarico(_)
+                | Errore::NonDisponibile { .. }
                 | Errore::Inattesa(_)
                 | Errore::Incerto(_)
                 | Errore::GiaPrenotata(_) => None,
@@ -377,11 +432,15 @@ pub type Risultato = Result<(Controllo, Option<Sessione>), Errore>;
 /// Un controllo vero sul portale: "Sposta" per una ricetta prenotata, Ricerca e Prestazioni per una mai prenotata.
 pub fn sul_portale(r: &Ricetta, zona: &Zona, cal: &Calendario) -> Risultato {
     let mut s = Sessione::nuova(&r.cf, &r.nre)?;
-    if !r.nuova {
-        let c = s.controlla(zona, cal)?;
-        return Ok((c, Some(s)));
+    let esito = if r.nuova { s.controlla_nuova(zona, cal) } else { s.controlla(zona, cal) };
+    // la pagina d'ingresso letta chiude il suo guasto anche se poi il controllo non e' arrivato in fondo
+    if let Some(pagina) = s.pagina_letta() {
+        segnalazioni::pagina_letta(pagina);
     }
-    match s.controlla_nuova(zona, cal) {
+    if !r.nuova {
+        return Ok((esito?, Some(s)));
+    }
+    match esito {
         Ok(c) => Ok((c, Some(s))),
         // la Ricerca dice solo "gia' presente": data, ora e luogo si leggono dall'elenco (solo lettura)
         Err(Errore::GiaPrenotata(m)) => {
@@ -453,7 +512,9 @@ pub fn giro(
         Ok((zona, Err(e))) => (zona, Err(e)),
         Err(e) => (Zona::new(Dove::Tutte), Err(e)),
     };
+    let diagnosi = esito.as_ref().ok().and_then(|c| c.senza_sposta.clone());
     stato.registro.scrivi(&match &esito {
+        Ok(Controllo { senza_sposta: Some(d), .. }) => format!("ricetta {}: {d}, {secondi} s", r.id),
         Ok(c) => format!(
             "ricetta {}: {} date offerte, {} buone, {secondi} s{}",
             r.id,
@@ -464,7 +525,21 @@ pub fn giro(
         Err(e) => format!("ricetta {}: {} dopo {secondi} s", r.id, tipo(e)),
     });
     // due pagine non riconosciute di fila: una segnalazione allo sviluppatore, se l'utente le ha accese
-    segnalazioni::controllo(esito.as_ref().err().is_some_and(non_riconosciuta));
+    // una verifica antibot si segnala subito, senza aspettare che si ripeta
+    if esito.as_ref().err().is_some_and(antibot) {
+        segnalazioni::antibot();
+    }
+    segnalazioni::controllo(esito.as_ref().err().is_some_and(|e| non_riconosciuta(e) && !antibot(e)));
+    // una pagina d'ingresso senza modulo si segnala solo se dura; un controllo che l'ha letta chiude il guasto
+    let pagina = if r.nuova { "ricerca" } else { "elenco" };
+    match &esito {
+        Err(Errore::NonDisponibile { pagina }) => segnalazioni::pagina_giu(pagina),
+        Ok(_)
+        | Err(Errore::NonTrovata(_) | Errore::NonAttiva { .. } | Errore::Doppione(_) | Errore::GiaPrenotata(_)) => {
+            segnalazioni::pagina_letta(pagina)
+        }
+        Err(_) => {}
+    }
     let giro = {
         let mut d = stato.dati();
         // la ricetta puo' essere stata cancellata o cambiata nel frattempo: allora l'esito non vale
@@ -475,6 +550,10 @@ pub fn giro(
                 // sulla ricetta di adesso: l'automatica puo' essere stata spenta durante il controllo
                 let scelta = esito.as_ref().ok().and_then(|c| da_sola(x, c, chrono::Local::now().date_naive()));
                 let mut notifiche = applica(x, esito, &zona, adesso());
+                // la prima volta che manca "Sposta": la struttura dell'elenco (nel registro) allo sviluppatore
+                if let Some(d) = diagnosi.as_ref().filter(|_| notifiche.iter().any(|n| n.tipo == TIPO_SENZA_SPOSTA)) {
+                    segnalazioni::senza_sposta(cup_core::analisi::sposta_non_associato(d));
+                }
                 if attiva && !x.attiva {
                     stato.registro.scrivi(&format!("ricetta {}: controlli in pausa", r.id));
                 }
@@ -592,6 +671,8 @@ mod test {
             esito: None,
             notificate: vec![],
             assenze: 0,
+            senza_sposta: false,
+            senza_sposta_avviso: None,
             operazione: None,
             incerta: None,
             nuova: false,
@@ -633,8 +714,47 @@ mod test {
             slots: migliori.clone(),
             migliori,
             area_incompleta: false,
+            senza_sposta: None,
             solo_proposta: false,
         }
+    }
+
+    #[test]
+    fn senza_sposta_legge_la_prenotazione_e_avvisa_una_volta() {
+        let mut r = ricetta();
+        let zona = zona_di(&r).unwrap().0;
+        let senza = || {
+            let mut c = controllo(vec![]);
+            c.senza_sposta = Some("senza Sposta: righe 1".into());
+            c
+        };
+        let n = applica(&mut r, Ok(senza()), &zona, 100);
+        assert_eq!((n.len(), n[0].tipo, n[0].titolo.as_str()), (1, TIPO_SENZA_SPOSTA, "Genetica: non trovo «Sposta»"));
+        assert!(n[0].testo.starts_with("gio 31/12/2026 ore 11:00 · MOLINETTE"), "{}", n[0].testo);
+        assert!(n[0].testo.contains("senza premerlo"));
+        let e = r.esito.clone().unwrap();
+        // la ricetta resta attiva, con la prenotazione letta e il motivo senza date
+        assert!(r.attiva && r.senza_sposta && e.attuale.is_some() && e.buone.is_empty());
+        assert_eq!(e.errore.as_deref(), Some(SENZA_SPOSTA));
+        assert!(applica(&mut r, Ok(senza()), &zona, 1300).is_empty());
+        // torna e sparisce di nuovo entro un giorno: nessuna seconda notifica; il giorno dopo si'
+        applica(&mut r, Ok(controllo(vec![])), &zona, 2500);
+        assert!(!r.senza_sposta && r.esito.as_ref().unwrap().errore.is_none());
+        assert!(applica(&mut r, Ok(senza()), &zona, 3700).is_empty());
+        applica(&mut r, Ok(controllo(vec![])), &zona, 4000);
+        assert_eq!(applica(&mut r, Ok(senza()), &zona, 100 + AVVISO_SPOSTA).len(), 1);
+    }
+
+    #[test]
+    fn disservizio_non_e_una_pagina_non_riconosciuta() {
+        let e = Errore::NonDisponibile { pagina: "elenco" };
+        assert!(!non_riconosciuta(&e));
+        assert_eq!(tipo(&e), "pagina del CUP non disponibile (elenco)");
+        // la verifica antibot invece e' una cosa a se', segnalata subito
+        assert!(antibot(&Errore::Inattesa(cup_core::analisi::ANTIBOT.into())) && !antibot(&e));
+        let mut r = ricetta();
+        let zona = zona_di(&r).unwrap().0;
+        assert!(applica(&mut r, Err(e), &zona, 10).is_empty() && r.attiva);
     }
 
     fn stato(nome: &str, ricette: Vec<Ricetta>) -> (Stato, PathBuf) {

@@ -87,7 +87,7 @@ fn segna(stato: &Stato, id: u64, tipo: &str, fase: Fase, descrizione: &str) -> R
 /// La voce del registro per un'operazione non riuscita: il tipo, mai il testo (date, luoghi, prestazioni).
 fn voce(e: &Errore) -> String {
     match e {
-        Errore::Inattesa(_) => "fermato prima della conferma".into(),
+        Errore::Inattesa(_) | Errore::NonDisponibile { .. } => "fermato prima della conferma".into(),
         e => tipo(e),
     }
 }
@@ -220,7 +220,7 @@ fn fallita(stato: &Stato, d: &mut Dati, r: &Ricetta, cosa: &str, descrizione: &s
 /// trovata, errori interni) spegne la prenotazione automatica: riprovare da sola terrebbe occupate altre date.
 fn a_vuoto(e: &Errore) -> bool {
     match e {
-        Errore::Timeout | Errore::Sovraccarico(_) => true,
+        Errore::Timeout | Errore::Sovraccarico(_) | Errore::NonDisponibile { .. } => true,
         Errore::Inattesa(m) => {
             m.starts_with("La data scelta non è più disponibile") || m.starts_with("La data scelta non va più bene")
         }
@@ -686,6 +686,8 @@ mod test {
             }),
             notificate: vec![],
             assenze: 0,
+            senza_sposta: false,
+            senza_sposta_avviso: None,
             operazione: None,
             incerta: None,
             nuova: false,

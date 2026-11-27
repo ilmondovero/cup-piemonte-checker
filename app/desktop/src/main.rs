@@ -322,6 +322,8 @@ async fn aggiungi(
         }),
         notificate: vec![],
         assenze: 0,
+        senza_sposta: false,
+        senza_sposta_avviso: None,
         operazione: None,
         incerta: None,
         nuova,

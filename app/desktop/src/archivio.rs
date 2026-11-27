@@ -137,6 +137,12 @@ pub struct Ricetta {
     /// Controlli di fila in cui il portale non ha trovato la prenotazione (a volte sbaglia: si sospende dopo 3).
     #[serde(default)]
     pub assenze: u32,
+    /// La prenotazione si legge ma sulla sua riga manca "Sposta": niente date finche' non torna.
+    #[serde(default)]
+    pub senza_sposta: bool,
+    /// Quando l'utente e' stato avvisato l'ultima volta che manca "Sposta" (se va e viene non lo si ripete).
+    #[serde(default)]
+    pub senza_sposta_avviso: Option<i64>,
     /// Lo spostamento o la disdetta in corso oltre la Conferma (vedi `Operazione`).
     #[serde(default)]
     pub operazione: Option<Operazione>,
@@ -450,6 +456,8 @@ pub(crate) mod test {
             esito: None,
             notificate: vec![],
             assenze: 0,
+            senza_sposta: false,
+            senza_sposta_avviso: None,
             operazione: None,
             incerta: None,
             nuova: false,
