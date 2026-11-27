@@ -74,6 +74,13 @@ ATTESA_MIN, ATTESA_BASE, ATTESA_MAX = 60, 90, 180  # secondi di attesa di una ri
 ATTESA_GIORNI = 7  # quanti giorni di controlli guardare per imparare l'attesa
 MAX_RALLENTA = 60  # minuti: con il portale in difficolta' l'intervallo cresce fino a qui (o all'intervallo, se piu' lungo)
 DISSERVIZIO_PAUSA = 2 * 3600  # secondi: un nuovo disservizio entro tanto dalla fine del precedente non riscrive agli utenti
+# una pagina d'ingresso senza il suo modulo (cup_http.NonDisponibile) si segnala solo se dura: tanti secondi, almeno
+# tanti controlli falliti e nessuno che l'abbia letta
+GIU_DOPO = 30 * 60
+GIU_CONTROLLI = 2
+GIU_VECCHIO = 3 * 3600  # senza controlli falliti da tanto non si sa se dura ancora: non si segnala
+GIU_SCADUTO = 24 * 3600  # e dopo tanto il disservizio si dimentica (nessuno legge piu' quella pagina)
+AVVISO_SPOSTA = 24 * 3600  # "non trovo Sposta" per la stessa ricetta non si riscrive prima
 GUASTO_MIN = 45  # minuti senza una sessione riuscita sul portale (con ricette da controllare): un avviso all'amministratore
 RITARDO_GUASTO = 10 * 60  # secondi: un controllo in ritardo di tanto, senza successi da GUASTO_MIN, e' un guasto
 RIEPILOGO_ORA = 9  # ora italiana del riepilogo giornaliero dei cambi minori del portale
@@ -860,6 +867,7 @@ class Bot:
         self.ok_vista = False  # da quando e' partito il bot, una sessione e' riuscita
         self.battito = time.time()  # ultimo giro del ciclo principale (lo guarda la Mini App, da un altro thread)
         self.cambiato = {}  # passo -> sessioni di fila in cui il bot non ha riconosciuto la pagina (cup_http.Cambiato)
+        self.rapporti_giu = {}  # pagina non disponibile -> rapporto dell'ultimo controllo fallito
         self.riuscite_dopo_sospensione = {}  # passo -> sessioni che l'hanno superato da quando ha sospeso l'auto
         self.segnalazioni_pausa = 0.0  # epoch prima del quale non si riprova a mandare segnalazioni
         self.sospensione_detta = set()  # (id pratica, sospensione): l'utente sa gia' che l'automatico e' sospeso
@@ -1025,6 +1033,9 @@ class Bot:
         azzera il suo conto e conta per la ripresa delle prenotazioni automatiche sospese per quel passo."""
         schema = ""
         passo_ko = cup_http.PASSO if isinstance(errore, cup_http.Cambiato) else None
+        # una pagina d'ingresso senza modulo, in lettura: disservizio finche' non dura (durante una prenotazione
+        # invece vale come ogni pagina non riconosciuta)
+        giu = errore.pagina if isinstance(errore, cup_http.NonDisponibile) and passo_ko not in PASSI_PRENOTAZIONE else None
         try:
             pagine = list(cup_http.PAGINE)
             for passo, origine, testo, cookie, server in pagine:
@@ -1040,6 +1051,8 @@ class Bot:
             log.warning("impronte: errore imprevisto %s", type(e).__name__)
         finally:
             cup_http.PAGINE.clear()  # contengono dati personali: non restano oltre la sessione
+        for pagina in set(cup_http.LETTE) - {giu}:
+            self.pagina_tornata(pagina)
         if errore is None or passo_ko:  # un errore di rete non dice nulla sulle pagine
             superati = {r[1] for r in cup_http.RICHIESTE if r[3] == "ok"} - {passo_ko}
             for passo in superati:
@@ -1047,34 +1060,128 @@ class Bot:
             self.riprendi_passi(superati)
         if not passo_ko:
             return
+        if giu:
+            self.cambiato.pop(passo_ko, None)  # interrompe la serie di pagine sconosciute "di fila"
+            self.pagina_giu(giu, passo_ko, errore, schema)
+            return
         self.cambiato[passo_ko] = self.cambiato.get(passo_ko, 0) + 1
-        di_fila = 1 if passo_ko in PASSI_PRENOTAZIONE else impronte.CAMBIATO_DI_FILA
+        antibot = isinstance(errore, cup_http.Antibot)
+        # una verifica antibot o una pagina sconosciuta in prenotazione si segnalano alla prima; per il resto serve
+        # che si ripeta
+        di_fila = 1 if antibot or passo_ko in PASSI_PRENOTAZIONE else impronte.CAMBIATO_DI_FILA
         log.warning("portale: pagina non riconosciuta al passo %s (%d di fila)", passo_ko, self.cambiato[passo_ko])
-        if self.cambiato[passo_ko] != di_fila:
+        gia = impronte.cause(self.store).get(f"sessione/{passo_ko}")
+        # una volta per serie; un antibot dopo pagine sconosciute gia' segnalate si dice lo stesso
+        if self.cambiato[passo_ko] != di_fila and not (antibot and self.admin and (not gia or gia[2])
+                                                       and self.cambiato[passo_ko] > di_fila):
             return
         try:
-            antibot = isinstance(errore, cup_http.Antibot)
             testo = (f"il portale chiede una verifica antibot (passo {passo_ko})" if antibot else
                      f"il bot non riconosce piu' la pagina al passo {passo_ko}")
-            # del messaggio solo la parte fissa scritta dal bot e, se c'e', la struttura della pagina
-            fisso, _, resto = str(errore).partition(": ")
-            struttura = resto if impronte.diario_sicuro([f"dopo la ricerca: {resto}, carrello 0"])[0].startswith(
-                "dopo la ricerca: sezioni") else ""
-            rapporto = "\n".join([
-                f"Pagina non riconosciuta {di_fila} volte di fila al passo {passo_ko}",
-                f"Versione del bot: {self.versione or '?'}",
-                f"Errore: {type(errore).__name__}: {impronte.pulisci(fisso)[:300]}" + (f": {struttura}" if struttura else ""),
-                "", "== Stack ==", impronte.stack(errore), "",
-                "== Diario della sessione (solo righe strutturali) ==", *impronte.diario_sicuro(cup_http.DIARIO), "",
-                "== Schema dell'ultima pagina (solo nomi, mai valori) ==", schema or "(nessuna pagina)", "",
-                "== Richieste al portale (passo, secondi, esito, codice) ==",
-                *impronte.righe_richieste(cup_http.RICHIESTE)])
+            rapporto = self.rapporto_pagina(f"Pagina non riconosciuta {di_fila} volte di fila al passo {passo_ko}",
+                                            errore, schema)
             self.store.cambio_portale(time.time(), f"sessione/{passo_ko}", impronte.URGENTE, testo, rapporto)
             # un captcha aspetta l'amministratore; una pagina non riconosciuta riprende da sola (riprendi_passi)
             if self.admin:
                 impronte.sospendi(self.store, time.time(), f"sessione/{passo_ko}", testo, riprende=not antibot)
         except Exception as e:
             log.warning("segnalazione non salvata: %s", type(e).__name__)
+
+    def rapporto_pagina(self, titolo_rapporto, errore, schema):
+        """Il rapporto per l'amministratore su una pagina del portale: niente testo libero ne' dati personali."""
+        # del messaggio solo la parte fissa scritta dal bot e, se c'e', la struttura della pagina
+        fisso, _, resto = str(errore).partition(": ")
+        struttura = resto if impronte.diario_sicuro([f"dopo la ricerca: {resto}, carrello 0"])[0].startswith(
+            "dopo la ricerca: sezioni") else ""
+        return "\n".join([
+            titolo_rapporto,
+            f"Versione del bot: {self.versione or '?'}",
+            f"Errore: {type(errore).__name__}: {impronte.pulisci(fisso)[:300]}" + (f": {struttura}" if struttura else ""),
+            "", "== Stack ==", impronte.stack(errore), "",
+            "== Diario della sessione (solo righe strutturali) ==", *impronte.diario_sicuro(cup_http.DIARIO), "",
+            "== Schema dell'ultima pagina (solo nomi, mai valori) ==", schema or "(nessuna pagina)", "",
+            "== Richieste al portale (passo, secondi, esito, codice) ==",
+            *impronte.righe_richieste(cup_http.RICHIESTE)])
+
+    # --- pagine d'ingresso non disponibili ----------------------------------------------
+    def pagine_giu(self):
+        """{pagina: {"da", "ultimo", "n", "detta"}}: sta nel database, un riavvio non azzera i 30 minuti."""
+        try:
+            return json.loads(self.store.valore("pagine_giu") or "{}")
+        except ValueError:
+            return {}
+
+    def salva_pagine_giu(self, giu):
+        self.store.imposta("pagine_giu", json.dumps(giu) if giu else None)
+
+    def pagina_giu(self, pagina, passo, errore, schema, ora=None):
+        """Un controllo in piu' senza il modulo di `pagina`."""
+        ora = ora or time.time()
+        try:
+            giu = self.pagine_giu()
+            s = giu.get(pagina)
+            if not s or (not s.get("detta") and ora - s["ultimo"] > GIU_VECCHIO):
+                s = {"da": ora, "ultimo": ora, "n": 0, "detta": None}
+            s.update(ultimo=ora, n=s["n"] + 1)
+            giu[pagina] = s
+            self.salva_pagine_giu(giu)
+            self.rapporti_giu[pagina] = self.rapporto_pagina(
+                f"Pagina {pagina} non disponibile (passo {passo})", errore, schema)
+            log.warning("portale: pagina %s non disponibile (%d controlli di fila)", pagina, s["n"])
+        except Exception as e:
+            log.warning("pagina non disponibile non registrata: %s", type(e).__name__)
+        self.segnala_pagine_giu(ora)
+
+    def segnala_pagine_giu(self, ora=None):
+        """Un disservizio che dura: un avviso all'amministratore e uno a chi ha controlli attivi. Gira anche dal
+        ciclo del bot: con gli errori i controlli si diradano, e l'avviso non deve aspettare il prossimo."""
+        ora = ora or time.time()
+        try:
+            giu, cambiato = self.pagine_giu(), False
+            for pagina, s in list(giu.items()):
+                if ora - s["ultimo"] > GIU_SCADUTO:
+                    giu.pop(pagina)
+                    cambiato = True
+                    self.salva_pagine_giu(giu)
+                    if s.get("detta"):
+                        self.store.cambio_portale(
+                            ora, f"sessione/{pagina}", impronte.RIPRESA,
+                            f"nessun controllo della pagina {pagina} da 24 ore: chiudo il guasto senza conferma", "")
+                        self.avvisa_utenti_ripresa(muto=True)
+                    continue
+                if (s.get("detta") or s["n"] < GIU_CONTROLLI or ora - s["da"] < GIU_DOPO
+                        or ora - s["ultimo"] > GIU_VECCHIO):
+                    continue
+                s["detta"] = ora
+                cambiato = True
+                self.salva_pagine_giu(giu)
+                self.store.cambio_portale(
+                    ora, f"sessione/{pagina}", "errore",
+                    f"La pagina {pagina} del CUP non e' disponibile da {(ora - s['da']) / 60:.0f} minuti "
+                    f"({s['n']} controlli falliti): guasto prolungato o cambio del sito",
+                    self.rapporti_giu.get(pagina, ""))
+                self.avvisa_utenti_disservizio("non mostra una pagina che mi serve", incompleta=True)
+            if cambiato:
+                self.salva_pagine_giu(giu)
+        except Exception as e:
+            log.warning("pagine non disponibili non segnalate: %s", type(e).__name__)
+
+    def pagina_tornata(self, pagina):
+        try:
+            giu = self.pagine_giu()
+            s = giu.pop(pagina, None)
+            if not s:
+                return
+            self.salva_pagine_giu(giu)
+            self.rapporti_giu.pop(pagina, None)
+            if s.get("detta"):
+                ora = time.time()
+                self.store.cambio_portale(ora, f"sessione/{pagina}", impronte.RIPRESA,
+                                          f"la pagina {pagina} del CUP e' di nuovo disponibile "
+                                          f"dopo {(ora - s['da']) / 60:.0f} minuti", "")
+                self.avvisa_utenti_ripresa()
+        except Exception as e:
+            log.warning("ritorno di una pagina non registrato: %s", type(e).__name__)
 
     def riprendi_passi(self, superati):
         """Le sospensioni per una pagina non riconosciuta finiscono da sole dopo CAMBIATO_DI_FILA sessioni che hanno
@@ -1169,6 +1276,7 @@ class Bot:
         cup_http.DIARIO.clear()
         cup_http.RICHIESTE.clear()
         cup_http.PAGINE.clear()
+        cup_http.LETTE.clear()
         self.battito = time.time()
         inizio, riuscita, lenta, scaduta = time.time(), False, 0.0, False
         errore = None
@@ -1278,7 +1386,8 @@ class Bot:
         """Il disservizio e' finito (nessun guasto e nessuna pagina ancora incompleta): un messaggio, una volta.
         muto: il segno si toglie senza scrivere (pagina incompleta accettata come il portale e' adesso)."""
         try:
-            if self.guasto is not None or impronte.incomplete(self.store):
+            if self.guasto is not None or impronte.incomplete(self.store) or any(
+                    s.get("detta") for s in self.pagine_giu().values()):
                 return
             da = self.store.valore("disservizio_utenti")
             if not da:
@@ -1414,12 +1523,60 @@ class Bot:
                      "Per seguirne un'altra: /aggiungi.")
         self.aggiorna_pannello(p["chat_id"])
 
+    def senza_sposta(self, p, res, manuale, disservizio):
+        """La prenotazione si legge ma sulla sua riga manca "Sposta": si aggiorna la prenotazione, niente date.
+        L'utente lo sa una volta (non di nuovo prima di AVVISO_SPOSTA, anche se va e viene), l'amministratore
+        riceve la struttura dell'elenco."""
+        chat, att, ora = p["chat_id"], res["attuale"], time.time()
+        self.scarta(p["id"])  # non ci sono date da prenotare
+        if p.get("errori", 0) >= AVVISA_ERRORI[0] and not (disservizio or self.store.valore("disservizio_utenti")):
+            self.dire(p, f"✅ Il portale CUP risponde di nuovo: torno a controllare ogni "
+                         f"{self.intervallo_di(chat)} minuti.")
+        ripresa = bool(p.get("errori"))
+        if ripresa:
+            p["prossimo"] = min(p.get("prossimo") or float("inf"), ora + self.intervallo_di(chat) * 60)
+        avvisa = not p.get("senza_sposta") and ora - (p.get("senza_sposta_avviso") or 0) >= AVVISO_SPOSTA
+        p.pop("assenze", None)
+        p.update(errori=0, attuale=pren_to_dict(att), senza_sposta=True, viste=[],
+                 ultimo={"ts": ora, "testo": f"{descrivi_prenotazione(att)}\n\nNon trovo il pulsante «Sposta "
+                                             "appuntamento»: non posso cercare date."},
+                 riassunto={"ts": ora, "senza_sposta": True, "viste": 0, "area": 0, "migliori": 0,
+                            "estesa": False, "prima_area": ""})
+        if avvisa:
+            p["senza_sposta_avviso"] = ora
+        self.salva(p, "errori", "assenze", "attuale", "ultimo", "riassunto", "viste", "senza_sposta",
+                   "senza_sposta_avviso",
+                   *(("prossimo",) if ripresa else ()))
+        self.fissa_prima(p)
+        self.chiudi_incerta(p, att)
+        self.chiudi_disdetta_incerta(p, att)
+        self.aggiorna_note(p, att, res.get("note"))
+        log.info("controllo %s/%s: %s", uid(chat), p["id"], res["senza_sposta"])
+        if avvisa or manuale:
+            self.dire(p, f"⚠️ Ho letto la prenotazione, ma non trovo il pulsante «Sposta appuntamento», quindi per "
+                         f"ora non posso cercare date prima.\n\n{descrivi_prenotazione(att)}\n\nPuoi guardare sul "
+                         "sito del CUP (Recupera Prenotazioni) se il pulsante c'e': basta guardare, senza premerlo "
+                         "(premerlo blocca una data). Continuo a controllare.")
+        if avvisa and self.admin:
+            nostro = re.search(r"pulsanti \[[^\]]*sposta", res["senza_sposta"], re.I)
+            testo = "Pulsante «Sposta» non trovato su una prenotazione" + (
+                ": nell'elenco c'e' un pulsante Sposta che il bot non associa alla riga (possibile errore del bot)"
+                if nostro else ": nell'elenco non vedo pulsanti Sposta")
+            rapporto = "\n".join([testo, f"Versione del bot: {self.versione or '?'}", "",
+                                  *impronte.diario_sicuro([res["senza_sposta"]])])
+            try:
+                self.store.cambio_portale(ora, "bot/sposta", "errore", testo, rapporto)
+            except Exception as e:
+                log.warning("segnalazione non salvata: %s", type(e).__name__)
+        self.aggiorna_pannello(chat)
+
     def controlla(self, p, manuale=False):
         chat = p["chat_id"]
         if passata(p):
             self.archivia_passata(p)
             return None
         nuova = da_prenotare(p)
+        disservizio = self.store.valore("disservizio_utenti")  # prima della sessione, che puo' chiuderlo
         try:
             if nuova:
                 try:
@@ -1491,11 +1648,16 @@ class Bot:
                          "questa ricetta. Per seguirne un'altra: /aggiungi.")
             self.aggiorna_pannello(chat)
             return None
+        if res.get("senza_sposta"):
+            self.senza_sposta(p, res, manuale, disservizio)
+            return None
+        p.pop("senza_sposta", None)
         zona = zona_di(p)
         nell_area = [x for x in res["slots"] if cup_http.ammesso(x, att, zona)]
         self.fissa_prima(p)  # prima di registra_viste: una ricetta di prima la ricava dall'andamento
         self.registra_viste(p, res, nell_area)
-        if p.get("errori", 0) >= AVVISA_ERRORI[0] and not self.store.valore("disservizio_utenti"):  # aveva avvisato: ora lo dice
+        # aveva avvisato: ora lo dice (se non lo dice gia' l'avviso di disservizio finito)
+        if p.get("errori", 0) >= AVVISA_ERRORI[0] and not (disservizio or self.store.valore("disservizio_utenti")):
             self.dire(p, f"✅ Il portale CUP risponde di nuovo: torno a controllare ogni "
                          f"{self.intervallo_di(chat)} minuti.")
         ripresa = bool(p.get("errori"))
@@ -1512,7 +1674,7 @@ class Bot:
             notificati = dict.fromkeys(notificati, 0)
         ignorati = set(p.get("ignorati", []))
         self.salva(p, "errori", "assenze", "attuale", "ultimo", "riassunto", "viste", "luoghi", "storico",
-                   *(("prossimo",) if ripresa else ()))
+                   "senza_sposta", *(("prossimo",) if ripresa else ()))
         self.fissa_prima(p)
         self.chiudi_incerta(p, att)
         self.chiudi_disdetta_incerta(p, att)
@@ -2145,6 +2307,8 @@ class Bot:
         p.pop("disdetta_incerta", None)
         p.pop("ics", None)  # l'evento nel calendario e' della ricetta vecchia
         p.pop("non_trovata", None)
+        p.pop("senza_sposta", None)
+        p.pop("senza_sposta_avviso", None)
         self.scarta(p["id"])
         p.pop("libera", None)
         p.update(stato="cf", creato=time.time(), auto=None, notificati={}, ignorati=[], tentati_auto=[])
@@ -2723,6 +2887,8 @@ class Bot:
         ora = orario(r["ts"]).strftime("%H:%M")
         if r.get("errore"):
             return f"⏱ {ora} · il portale non ha risposto, riprovo da solo"
+        if r.get("senza_sposta"):
+            return f"⏱ {ora} · prenotazione letta, ma non trovo il pulsante «Sposta»"
         att, zona = attuale_di(p), zona_di(p)
         pezzi = [("1 data trovata" if r['viste'] == 1 else f"{r['viste']} date trovate") + (" in Piemonte" if r.get("estesa") else "")]
         if area_breve(zona, att):
@@ -3280,7 +3446,8 @@ class Bot:
                         z = {"tipo": "tutte", "valore": ""}  # senza prenotazione non c'e' una sede da cui ricavarla
                     f.update(nuovi, zona=z, prima=prima_con(f, nuovi["attuale"], stessa=f.get("nre") == nre))
                     f.pop("guida", None)
-                    for k in ("libera", "viste", "storico", "riassunto", "ultimo", "luoghi", "ics", "non_trovata"):
+                    for k in ("libera", "viste", "storico", "riassunto", "ultimo", "luoghi", "ics", "non_trovata",
+                              "senza_sposta", "senza_sposta_avviso"):
                         f.pop(k, None)
                 p = self.store.modifica(pid, cambia)
                 self.scarta(pid)
@@ -3430,6 +3597,7 @@ class Bot:
                 self.battito = time.time()
                 self.sorveglia()
                 try:  # una segnalazione che non parte non deve fermare controlli e prenotazioni
+                    self.segnala_pagine_giu()
                     self.manda_segnalazioni()
                 except Exception as e:
                     log.warning("segnalazioni non mandate: %s", type(e).__name__)

@@ -31,6 +31,8 @@ from zoneinfo import ZoneInfo
 
 import requests
 
+import impronte
+
 CUP = "https://cup.isan.csi.it"
 LISTA_URL = CUP + "/web/guest/lista-prenotazioni"
 RICETTA_URL = CUP + "/ricetta-dematerializzata"
@@ -52,6 +54,9 @@ RICHIESTE = collections.deque(maxlen=500)
 # pagine della sessione in corso, per le impronte (impronte.py): (passo, origine, testo, nomi dei cookie, server).
 # Restano solo in memoria: il bot ne tiene l'impronta (solo nomi e strutture) e le azzera a ogni sessione
 PAGINE = collections.deque(maxlen=20)
+# pagine d'ingresso ("elenco", "ricerca") lette davvero nella sessione in corso, non solo arrivate con un 200: e' il
+# segno che un disservizio e' finito. Il bot le azzera a ogni sessione
+LETTE = set()
 ULTIMA = 0.0  # epoch dell'ultima risposta (o errore) del portale: un ciclo lento ma vivo non sembra fermo
 TEMPI = {}  # fasi dell'ultima prenotazione: {"elenco": secondi, ...} (vedi prenota)
 NOTE = []  # righe delle note del Riepilogo dell'ultima prenotazione (vedi note_riepilogo)
@@ -130,6 +135,25 @@ class Cambiato(CupError):
 
 class Antibot(Cambiato):
     """Il portale chiede un captcha o una verifica antibot."""
+
+
+class NonDisponibile(Cambiato):
+    """Il portale risponde, ma senza il modulo che serve (funzione spenta, manutenzione) o con un elenco che non
+    si legge. All'inizio non si distingue da un sito cambiato: il bot riprova e lo segnala solo se dura.
+    pagina: "elenco" (Recupera Prenotazioni) o "ricerca" (Ricerca ricetta)."""
+
+    def __init__(self, pagina):
+        super().__init__("il portale CUP non mostra la pagina che mi serve (di solito e' un disservizio temporaneo)")
+        self.pagina = pagina
+
+
+class SenzaSposta(CupError):
+    """La prenotazione si legge, ma sulla sua riga non c'e' il pulsante "Sposta appuntamento". Non si sa se il
+    portale non lo offre o se il bot lo cerca male: diagnosi descrive righe e pulsanti, senza dati personali."""
+
+    def __init__(self, diagnosi):
+        super().__init__("Pulsante 'Sposta appuntamento' non presente")
+        self.diagnosi = diagnosi
 
 
 class NonTrovata(CupError):
@@ -313,11 +337,50 @@ def _form_fields(page, form_id):
 
 
 # --- JSF / ICEfaces ---------------------------------------------------------------------
+# segni che le pagine normali del CUP hanno gia' (script e campo token di reCAPTCHA, la parola "captcha"): non
+# dicono che il portale sta chiedendo una verifica
+ANTIBOT_NORMALI = ("reCAPTCHA (script)", "reCAPTCHA (campo token)", "captcha generico")
+
+
+def _senza_modulo(page, pagina):
+    """L'errore per una risposta senza il modulo atteso: una verifica antibot vera, o un disservizio."""
+    if any(re.search(rx, page, re.I) for n, rx in impronte.ANTIBOT if n not in ANTIBOT_NORMALI):
+        return Antibot("Il portale chiede una verifica antibot")
+    return NonDisponibile(pagina)
+
+
+STATI_NOTI = ("prenotato", "disdetto", "erogato", "annullato", "cancellato", "sospeso")
+
+
+def diagnosi_sposta(xml, riga):
+    """Righe e pulsanti dell'elenco, senza dati personali (stati noti, nomi dei pulsanti e numero di riga):
+    dice se il portale non offre "Sposta" o se il pulsante c'e' e il bot non lo associa alla riga."""
+    inizi = [m.start() for m in re.finditer(r"Stato:", xml)]
+    righe = [xml[a:b] for a, b in zip(inizi, inizi[1:] + [len(xml)])]
+    stati = []
+    for r in righe:
+        m = re.search(r"Stato:\s*([A-Za-z]+)", _text(r[:400]))
+        stato = m.group(1).lower() if m else ""
+        stati.append(stato if stato in STATI_NOTI else "altro")
+    pulsanti = set()
+    for i in re.findall(r'id="(%s:[^"]*)"' % re.escape(L), xml):
+        nome = i.rsplit(":", 1)[-1]
+        if re.search(r"button|sposta", nome, re.I):
+            numero = re.search(r":(\d{1,3}):[^:]*$", i)
+            pulsanti.add(f"{_id(nome)}@{numero.group(1) if numero else '-'}")
+    scritte = ["si" if "Sposta" in _text(r) else "no" for r in righe]
+    return (f"senza Sposta: righe {len(righe)}, stati [{', '.join(stati[:20])}], riga attuale {riga}, "
+            f"pulsanti [{', '.join(sorted(pulsanti)[:30])}], scritta Sposta [{', '.join(scritte[:20])}]")
+
+
 class _Form:
     """Stato JSF/ICEfaces di un form, per replicare i POST del browser campo per campo."""
 
     def __init__(self, session, page_html, form_id):
         self.s, self.form = session, form_id
+        # le pagine d'ingresso (Recupera Prenotazioni, Ricerca) senza il loro modulo: disservizio o verifica antibot
+        if form_id in (L, R) and _form_html(page_html, form_id) is None:
+            raise _senza_modulo(page_html, "elenco" if form_id == L else "ricerca")
         page_html = _form_html(page_html, form_id) or page_html
         self.enc = _hidden(page_html, "javax.faces.encodedURL")
         self.vs = _hidden(page_html, "javax.faces.ViewState")
@@ -453,8 +516,10 @@ class CupSession:
             # sito cambiato) non deve far credere che la ricetta sia libera da prenotare
             msg = re.search(r"Non esistono[^<]*|Nessun record[^<]*", x)
             if not msg:
-                raise Cambiato("Elenco delle prenotazioni non leggibile (portale in manutenzione o cambiato?)")
+                raise _senza_modulo(x, "elenco")
+            LETTE.add("elenco")
             raise NonTrovata(msg.group(0).strip())
+        LETTE.add("elenco")
         righe = [x[a:b] for a, b in zip(inizi, inizi[1:] + [len(x)])]
         stati =[(re.search(r"Stato:\s*(\S+)", _text(r[:400])) or [None, "?"])[1] for r in righe]
         pren = [i for i, s in enumerate(stati) if s.upper() == "PRENOTATO"]
@@ -523,7 +588,9 @@ class CupSession:
         solo se hanno posti); l'elenco finale comprende le aree precedenti."""
         sposta = re.search(r'id="(%s:[^"]*:%d:spostaButton)"' % (re.escape(L), self.riga), self.lista_xml)
         if not sposta:
-            raise CupError("Pulsante 'Sposta appuntamento' non presente")
+            diagnosi = diagnosi_sposta(self.lista_xml, self.riga)
+            DIARIO.append(diagnosi)
+            raise SenzaSposta(diagnosi)
         _passo("appuntamenti")
         self.lista.post({**self.search, **_event(sposta.group(1), "activate")})
         page = _get(self.s, RICETTA_URL)  # qui il portale calcola le disponibilita': puo' essere lento
@@ -554,6 +621,8 @@ class CupSession:
                              "javax.faces.behavior.event": "action", "javax.faces.partial.ajax": "true"})
         errori = _errori(xml)
         DIARIO.append(f"ricerca: messaggi d'errore {len(errori)}")
+        if errori:
+            LETTE.add("ricerca")  # il portale ha risposto sulla ricetta: la pagina c'e'
         if any(re.search(r"\bgi(?:à|a'?)\s+presente", e, re.I) for e in errori):
             raise GiaPrenotata(errori[0])
         if any(re.search(r"ricett|\bnre\b|codice fiscale|scadut|inesistent", e, re.I)
@@ -567,6 +636,7 @@ class CupSession:
         page = self._segui(xml)
         if R + ":CFInput" in page:  # i passi sono pagine distinte: se c'e' ancora la ricerca, non e' andato avanti
             raise Cambiato("Il portale e' rimasto alla ricerca della ricetta: " + _struttura(page))
+        LETTE.add("ricerca")
         self._carrello(page)
         DIARIO.append(f"dopo la ricerca: {_struttura(page)}, carrello {len(self.nomi)}")
         return page
@@ -1053,7 +1123,11 @@ def check(cf, nre, zona="sede"):
     doppio = doppione(cup.prenotate)
     if doppio and cup.n_prenotate == len(cup.prenotate):  # due prenotazioni: prima si sistema, poi si cerca
         return {"attuale": att, "slots": [], "sessione": cup, "migliori": [], "doppione": doppio}
-    slots = cup.alternative(estendi=estensioni(zona))
+    try:
+        slots = cup.alternative(estendi=estensioni(zona))
+    except SenzaSposta as e:  # la prenotazione si legge lo stesso: si aggiorna quella, senza date
+        return {"attuale": att, "slots": [], "sessione": cup, "note": cup.note_attuale, "migliori": [],
+                "senza_sposta": e.diagnosi}
     return {"attuale": att, "slots": slots, "sessione": cup, "note": cup.note_attuale,
             "migliori": [x for x in slots if candidata(x, att, zona)]}
 

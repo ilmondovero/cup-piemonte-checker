@@ -119,6 +119,8 @@ DIARIO_SICURO = [re.compile(x) for x in (
     r"^[a-z]+: " + _ERRORE_RETE + r"$",
     r"^elenco: righe \d+, prenotate \d+, con data \d+, date prenotate diverse \d+, descrizioni vuote \d+$",
     r"^ricerca: messaggi d'errore \d+$",
+    r"^senza Sposta: righe \d+, stati \[[a-z, ]*\], riga attuale \d+, pulsanti \[[\w?@, -]*\], "
+    r"scritta Sposta \[[a-z, ]*\]$",
     r"^dopo la ricerca: " + _STRUTTURA + r", carrello \d+$",
     r"^passo: " + _STRUTTURA + r", carrello \d+, caselle spuntate \d+/\d+, avanti [A-Za-z_?][\w?*#.-]{0,60}$",
     r"^avanti: redirect (?:si|no), messaggi d'errore \d+, " + _STRUTTURA + r"$",

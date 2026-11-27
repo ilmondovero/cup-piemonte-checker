@@ -330,11 +330,21 @@ Come è protetta:
     Le prime osservazioni insegnano com'è fatta la pagina; poi un elemento nuovo si segnala alla seconda
     volta, uno stabile sparito dopo 3 osservazioni senza.
     - **Urgente**, con un avviso subito: un captcha nuovo, un campo che il bot usa sparito, o una pagina che
-      il bot non riconosce 2 volte di fila (1 nei passi della prenotazione). Le prenotazioni automatiche si
+      il bot non riconosce 2 volte di fila (1 nei passi della prenotazione e per una verifica antibot). Le prenotazioni automatiche si
       sospendono per tutti e le date arrivano col pulsante. Ripartono da sole quando la causa sparisce;
       un captcha aspetta il gestore. `/automatico` mostra le cause, `/automatico si` riattiva, `/automatico no`
       sospende a mano.
     - **Minore** (un pulsante in più, uno script nuovo): in un riepilogo al giorno dopo le 9.
+  - **Pagina non disponibile.** Se Recupera Prenotazioni o la Ricerca arrivano senza il loro modulo (funzione
+    spenta, manutenzione), o l'elenco non si legge, in lettura non è subito un cambio del sito: il controllo si
+    ferma e riprova, senza sospendere nulla. Se dura almeno 30 minuti, con almeno 2 controlli falliti e nessuno
+    che abbia letto la pagina, parte un solo avviso al gestore ("guasto prolungato o cambio del sito") e uno a
+    chi ha controlli attivi, più uno al ritorno. La sonda delle pagine pubbliche resta com'era: un campo che il bot usa sparito è urgente.
+  - **"Sposta" che manca.** Se la prenotazione si legge ma sulla sua riga non c'è "Sposta appuntamento", il bot
+    aggiorna la prenotazione senza cercare date e lo dice all'utente (non di nuovo prima di 24 ore), invitando a
+    guardare sul sito senza premerlo. La ricetta resta attiva. Al gestore arriva la struttura dell'elenco (stati
+    delle righe, nomi e numeri di riga dei pulsanti, mai altri testi), che dice anche se c'è un pulsante Sposta
+    che il bot non associa alla riga.
   - **Segnalazioni con rapporto.** Ogni avviso (cambi del portale, errori imprevisti del bot, segnalazioni
     delle app desktop) arriva al gestore con un file `.txt`: cosa è cambiato, schema delle pagine, stack
     dell'errore, diario della sessione ridotto alle righe strutturali, tempi delle richieste, versione del bot.
